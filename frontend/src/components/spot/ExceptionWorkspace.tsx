@@ -1,13 +1,18 @@
 "use client";
 
 import React, { useState } from "react";
-import { AlertCircle, CheckCircle, ChevronDown, ChevronUp, Info, ShieldAlert, FileText, ArrowLeft } from "lucide-react";
+import { CheckCircle, ChevronDown, ChevronUp, Info, ShieldAlert, FileText, ArrowLeft } from "lucide-react";
 import { DraftQuote } from "../../lib/draft-quote-types";
 import { humanizeRate, friendlyStatus } from "@/lib/spot-workspace-helpers";
 import { MapExistingForm } from "./workspace/MapExistingForm";
 import { RequestProductCodeForm } from "./workspace/RequestProductCodeForm";
 import { AddChargeForm } from "./workspace/AddChargeForm";
 import { useSpotResolutionWorkflow } from "./workspace/useSpotResolutionWorkflow";
+import { NeedsAttentionPanel } from "./workspace/NeedsAttentionPanel";
+import { ReviewDecisionsPanel } from "./workspace/ReviewDecisionsPanel";
+import { VerificationWarningsPanel } from "./workspace/VerificationWarningsPanel";
+import { IgnoredItemsPanel } from "./workspace/IgnoredItemsPanel";
+import { FinalReviewPanel } from "./workspace/FinalReviewPanel";
 
 export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: { initialData: DraftQuote; isLive?: boolean; envelopeId?: string }) {
     const [draftQuote] = useState(initialData);
@@ -385,55 +390,16 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                 )}
 
                 {/* "Still Needs Attention" block list matches checklist issues */}
-                {combinedUnresolved.length > 0 && (
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
-                        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Still Needs Attention</h2>
-                        <div className="flex flex-col gap-2.5">
-                            {combinedUnresolved.map(item => (
-                                <div key={`${item.type}-${item.id}`} className="bg-slate-950 border border-slate-850 rounded-xl p-3 flex justify-between items-center text-xs">
-                                    <div>
-                                        <strong className="block text-slate-200">{item.title}</strong>
-                                        <span className="text-slate-400 mt-0.5 block">{item.problem}</span>
-                                    </div>
-                                    <button
-                                        onClick={() => actions.selectIssue(item.id)}
-                                        className="px-2.5 py-1.5 bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-900 text-indigo-300 hover:text-white rounded font-semibold transition"
-                                    >
-                                        Resolve Now
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
+                <NeedsAttentionPanel
+                    items={combinedUnresolved}
+                    onSelectIssue={actions.selectIssue}
+                />
 
                 {/* decisions Log / Review Decisions Panel */}
-                {decisions.length > 0 && (
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
-                        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Review Decisions</h2>
-                        <div className="flex flex-col gap-2 text-xs">
-                            {decisions.map(d => (
-                                <div key={d.id} className="bg-slate-950 border border-slate-850 p-2.5 rounded-lg flex justify-between items-center">
-                                    <span className="text-slate-300">✓ {d.description}</span>
-                                    <div className="flex gap-2">
-                                        <button
-                                            onClick={() => actions.undoDecision(d.id)}
-                                            className="text-xs text-indigo-400 font-semibold hover:underline"
-                                        >
-                                            {d.type === "map" ? "Edit Mapping" : d.type === "request" ? "Edit Request" : "Reopen"}
-                                        </button>
-                                        <button
-                                            onClick={() => actions.undoDecision(d.id)}
-                                            className="text-xs text-slate-500 font-semibold hover:underline"
-                                        >
-                                            Undo
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
+                <ReviewDecisionsPanel
+                    decisions={decisions}
+                    onUndoDecision={actions.undoDecision}
+                />
 
                 {/* Suggested Charges Accordion */}
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
@@ -519,177 +485,36 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                 </div>
 
                 {/* Totals split display warnings */}
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
-                    <button
-                        onClick={() => setShowTotalsPanel(!showTotalsPanel)}
-                        className="w-full px-6 py-4 flex items-center justify-between text-left font-bold text-slate-50 bg-slate-900 hover:bg-slate-800/40 transition"
-                    >
-                        <div className="flex items-center gap-2">
-                            <ShieldAlert className="h-5 w-5 text-indigo-400" />
-                            <span>Verification Warnings & Totals</span>
-                        </div>
-                        {showTotalsPanel ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
-                    </button>
-                    
-                    {showTotalsPanel && (
-                        <div className="border-t border-slate-800 p-5 bg-slate-900/40 flex flex-col gap-4">
-                            {uniqueCurrencies.length > 1 ? (
-                                <div className="bg-amber-955 border border-amber-900/60 rounded-xl p-4 flex flex-col gap-2">
-                                    <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
-                                        <AlertCircle className="h-4 w-4" />
-                                        <span>Totals Need Review</span>
-                                    </div>
-                                    <p className="text-xs text-slate-300">
-                                        Reason: This quote contains multiple currencies. A single calculations total is not safe to display.
-                                    </p>
-                                    
-                                    <div className="mt-2 divide-y divide-slate-800 text-xs">
-                                        {Object.entries(subtotals).map(([curr, sum]) => (
-                                            <div key={curr} className="py-1.5 flex justify-between font-mono">
-                                                <span className="text-slate-400">{curr} subtotal:</span>
-                                                <span className="text-slate-200">{sum.toFixed(2)}</span>
-                                            </div>
-                                        ))}
-                                        <div className="py-2 flex justify-between font-mono text-sm border-t border-slate-700">
-                                            <span className="text-indigo-300 font-semibold">Supplier extracted total:</span>
-                                            <span className="text-indigo-200 font-bold">USD {draftQuote.totals_validation.extracted_total?.toFixed(2)}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="flex flex-col gap-3">
-                                    <div className="flex justify-between items-center bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm">
-                                        <span className="text-slate-400">Calculated sum difference:</span>
-                                        <div className="flex items-center gap-2">
-                                            <span className={`font-semibold ${draftQuote.totals_validation.difference ? "text-red-400" : "text-emerald-400"}`}>
-                                                USD {draftQuote.totals_validation.difference?.toFixed(2) || "0.00"}
-                                            </span>
-                                            <button 
-                                                onClick={() => setExplainTotals(!explainTotals)}
-                                                className="text-xs text-indigo-400 font-semibold hover:underline"
-                                            >
-                                                [Explain]
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    {explainTotals && (
-                                        <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 flex flex-col gap-2 text-xs">
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">Calculated Sum:</span>
-                                                <span>USD {draftQuote.totals_validation.calculated_total?.toFixed(2)}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-slate-400">Extracted Total from document:</span>
-                                                <span>USD {draftQuote.totals_validation.extracted_total?.toFixed(2)}</span>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
+                <VerificationWarningsPanel
+                    showTotalsPanel={showTotalsPanel}
+                    onToggleTotalsPanel={() => setShowTotalsPanel(!showTotalsPanel)}
+                    uniqueCurrencies={uniqueCurrencies}
+                    subtotals={subtotals}
+                    totalsValidation={draftQuote.totals_validation}
+                    explainTotals={explainTotals}
+                    onToggleExplainTotals={() => setExplainTotals(!explainTotals)}
+                />
 
                 {/* Muted Ignored Items */}
-                {ignoredItems.length > 0 && (
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
-                        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Ignored Items</h2>
-                        <div className="flex flex-col gap-2.5">
-                            {ignoredItems.map(item => (
-                                <div key={item.id} className="bg-slate-950 border border-slate-855 rounded-xl p-3 text-xs flex justify-between items-center">
-                                    <div>
-                                        <span className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Reason: {item.ignored_reason}</span>
-                                        <p className="text-slate-400 italic font-mono mt-1">&quot;{item.raw_text}&quot;</p>
-                                    </div>
-                                    <button
-                                        onClick={() => actions.undoDecision(item.id)}
-                                        className="text-xs text-indigo-400 font-semibold hover:underline"
-                                    >
-                                        Reopen
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
+                <IgnoredItemsPanel
+                    ignoredItems={ignoredItems}
+                    onUndoDecision={actions.undoDecision}
+                />
 
                 {/* Final Checklist Review */}
-                <div className="mt-4 flex flex-col items-center gap-4 border-t border-slate-800 pt-6">
-                    
-                    <div className="w-full bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs flex flex-col gap-2.5">
-                        <h3 className="font-bold text-slate-300 uppercase tracking-wider mb-1">Final Review Checklist</h3>
-                        
-                        <div className="flex items-center justify-between border-b border-slate-850 pb-2">
-                            <div>
-                                <span className="text-slate-200 block font-semibold">All review items resolved</span>
-                                <span className="text-slate-400 text-[10px]">{checklistIssuesResolved ? "Complete" : `${combinedUnresolved.length} charges still need action.`}</span>
-                            </div>
-                            <span className={checklistIssuesResolved ? "text-emerald-400 font-semibold" : "text-amber-400"}>
-                                {checklistIssuesResolved ? "Complete" : "Pending"}
-                            </span>
-                        </div>
-                        
-                        <div className="flex items-center justify-between border-b border-slate-850 pb-2">
-                            <div>
-                                <span className="text-slate-200 block font-semibold">No unknown commercial charges remain</span>
-                                <span className="text-slate-400 text-[10px]">{checklistNoUnknown ? "Complete" : "Unmapped extracted charge block exists."}</span>
-                            </div>
-                            <span className={checklistNoUnknown ? "text-emerald-400 font-semibold" : "text-amber-400"}>
-                                {checklistNoUnknown ? "Complete" : "Pending"}
-                            </span>
-                        </div>
-
-                        <div className="flex items-center justify-between pb-2">
-                            <div>
-                                <span className="text-slate-200 block font-semibold">No included charge is missing a ProductCode mapping</span>
-                                <span className="text-slate-400 text-[10px]">{checklistProductCodesVerified ? "Complete" : "Include charge has no mapped billing code."}</span>
-                            </div>
-                            <span className={checklistProductCodesVerified ? "text-emerald-400 font-semibold" : "text-amber-400"}>
-                                {checklistProductCodesVerified ? "Complete" : "Pending"}
-                            </span>
-                        </div>
-                    </div>
-
-                    {!canFinishReview && !canUsePrototypeOverride && (
-                        <div className="w-full bg-red-950/20 border border-red-900/60 rounded-xl p-4 text-xs text-red-200">
-                            <span className="font-bold block mb-1">Finish Review unavailable</span>
-                            <span>Resolve all pending issues and verify ProductCode mappings to complete review.</span>
-                        </div>
-                    )}
-
-                    <div className="w-full flex flex-col sm:flex-row justify-between items-center gap-4">
-                        {!isLive && (
-                            <div className="flex items-center gap-2 text-xs">
-                                <input
-                                    type="checkbox"
-                                    id="proto-override"
-                                    checked={prototypeOverride}
-                                    onChange={actions.togglePrototypeOverride}
-                                    className="rounded bg-slate-950 border-slate-800 text-indigo-600 focus:ring-indigo-500 w-4.5 h-4.5"
-                                />
-                                <label htmlFor="proto-override" className="text-slate-400 cursor-pointer font-medium select-none">
-                                    Prototype override only — not available for production.
-                                </label>
-                            </div>
-                        )}
-                        {isLive && <div />} {/* spacer to maintain justify-between layout alignment when checkbox is hidden */}
-
-                        <button
-                            disabled={isReviewLocked || (!canFinishReview && !canUsePrototypeOverride)}
-                            onClick={actions.finalizeReview}
-                            className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 text-white rounded-xl font-bold text-sm shadow-xl shadow-indigo-900/40 w-full sm:w-auto text-center transition"
-                        >
-                            {isReviewLocked ? "Review Finalized" : "Finalize Review"}
-                        </button>
-                    </div>
-                    
-                    {!isLive && (
-                        <div className="text-center text-xs text-slate-500 mt-2">
-                            Prototype only — Changes made will not be permanently saved.
-                        </div>
-                    )}
-                </div>
+                <FinalReviewPanel
+                    checklistIssuesResolved={checklistIssuesResolved}
+                    checklistNoUnknown={checklistNoUnknown}
+                    checklistProductCodesVerified={checklistProductCodesVerified}
+                    unresolvedCount={combinedUnresolved.length}
+                    canFinishReview={canFinishReview}
+                    canUsePrototypeOverride={canUsePrototypeOverride}
+                    isLive={isLive}
+                    isReviewLocked={isReviewLocked}
+                    prototypeOverride={prototypeOverride}
+                    onTogglePrototypeOverride={actions.togglePrototypeOverride}
+                    onFinalizeReview={actions.finalizeReview}
+                />
 
             </div>
         </div>

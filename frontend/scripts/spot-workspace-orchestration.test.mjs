@@ -5,11 +5,26 @@ import path from "node:path";
 const frontendRoot = path.resolve(process.cwd());
 const workspacePath = path.join(frontendRoot, "src", "components", "spot", "ExceptionWorkspace.tsx");
 const hookPath = path.join(frontendRoot, "src", "components", "spot", "workspace", "useSpotResolutionWorkflow.ts");
+const panelNames = [
+    "NeedsAttentionPanel",
+    "ReviewDecisionsPanel",
+    "VerificationWarningsPanel",
+    "IgnoredItemsPanel",
+    "FinalReviewPanel"
+];
 
 console.log("Starting Spot Workspace Orchestration Contract Assertions...");
 
 const workspaceSrc = await readFile(workspacePath, "utf8");
 const hookSrc = await readFile(hookPath, "utf8");
+const panelSources = new Map(
+    await Promise.all(
+        panelNames.map(async panelName => [
+            panelName,
+            await readFile(path.join(frontendRoot, "src", "components", "spot", "workspace", `${panelName}.tsx`), "utf8")
+        ])
+    )
+);
 
 // 1. Verify ExceptionWorkspace imports and consumes the hook
 assert.ok(
@@ -23,6 +38,20 @@ assert.ok(
 );
 
 console.log("✓ Verified useSpotResolutionWorkflow is imported and consumed by ExceptionWorkspace.");
+
+// 1b. Verify presentation panels are imported and rendered by ExceptionWorkspace
+for (const panelName of panelNames) {
+    assert.ok(
+        workspaceSrc.includes(`import { ${panelName} } from "./workspace/${panelName}";`),
+        `ExceptionWorkspace must import ${panelName}`
+    );
+    assert.ok(
+        workspaceSrc.includes(`<${panelName}`),
+        `ExceptionWorkspace must render ${panelName}`
+    );
+}
+
+console.log("✓ Verified extracted presentation panels are imported and rendered by ExceptionWorkspace.");
 
 // 2. Verify state and handler functions are NOT declared inside ExceptionWorkspace anymore
 const forbiddenStates = [
@@ -85,5 +114,30 @@ assert.ok(hookSrc.includes("resolveDraftQuoteDecisions"), "useSpotResolutionWork
 assert.ok(hookSrc.includes("finalizeDraftQuoteReview"), "useSpotResolutionWorkflow must call finalizeDraftQuoteReview");
 
 console.log("✓ Verified useSpotResolutionWorkflow owns resolve and finalization API calls.");
+
+// 5. Verify extracted presentation panels are stateless and do not own workflow/API behavior
+for (const [panelName, panelSrc] of panelSources) {
+    assert.ok(!panelSrc.includes("useSpotResolutionWorkflow"), `${panelName} must not import or call workflow hook`);
+    assert.ok(!panelSrc.includes("useState("), `${panelName} must not own local React state`);
+    assert.ok(!/import.*from.*(api|lib\/api)/i.test(panelSrc), `${panelName} must not import API clients`);
+    assert.ok(!panelSrc.includes("fetch("), `${panelName} must not perform fetch operations`);
+    assert.ok(!panelSrc.includes("resolveDraftQuoteDecisions"), `${panelName} must not call resolve API`);
+    assert.ok(!panelSrc.includes("finalizeDraftQuoteReview"), `${panelName} must not call finalize API`);
+}
+
+console.log("✓ Verified extracted presentation panels are stateless and API-free.");
+
+// 6. Verify resolution callbacks remain parent-bound through the actions object
+const parentBoundCallbacks = [
+    "onSelectIssue={actions.selectIssue}",
+    "onUndoDecision={actions.undoDecision}",
+    "onTogglePrototypeOverride={actions.togglePrototypeOverride}",
+    "onFinalizeReview={actions.finalizeReview}"
+];
+for (const callbackBinding of parentBoundCallbacks) {
+    assert.ok(workspaceSrc.includes(callbackBinding), `ExceptionWorkspace must keep callback binding ${callbackBinding}`);
+}
+
+console.log("✓ Verified extracted panels receive parent-bound callbacks.");
 
 console.log("All Spot Workspace Orchestration contract assertions passed successfully!");
