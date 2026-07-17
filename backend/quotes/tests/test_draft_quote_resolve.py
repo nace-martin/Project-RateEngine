@@ -265,6 +265,121 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self._post([decision], key=key)
         self.assertEqual(DraftQuoteDecisionDB.objects.filter(idempotency_key=key).count(), 1)
 
+    def test_classify_unclassified_charge_persists_line_and_preserves_evidence(self):
+        res = self._post([
+            self._decision(
+                "classify_unclassified",
+                target_id="unclass-1",
+                details={
+                    "classification": "charge",
+                    "display_label": "Documentation fee",
+                    "bucket": SPEChargeLineDB.Bucket.DESTINATION_CHARGES,
+                    "currency": "USD",
+                    "amount": "25.00",
+                    "unit": SPEChargeLineDB.Unit.FLAT,
+                    "product_code": self.product_code.code,
+                },
+                decision_id="classify-charge",
+            )
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["rejected_decisions"], [])
+        created = SPEChargeLineDB.objects.get(description="Documentation fee")
+        self.assertEqual(created.manual_resolved_product_code_id, self.product_code.id)
+        self.assertEqual(created.source_excerpt, "Documentation fee USD 25")
+        self.assertEqual(created.rule_meta["unclassified_item_evidence"]["source_text"], "Documentation fee USD 25")
+        self.batch.refresh_from_db()
+        summary = self.batch.analysis_summary_json
+        self.assertFalse(any(item.get("id") == "unclass-1" for item in summary["unclassified_items"]))
+        self.assertFalse(any(item.get("id") == "unclass-1" for item in summary.get("ignored_items", [])))
+
+    def test_classify_unclassified_charge_rejects_wrong_domain_and_invalid_fields(self):
+        export_product_code = ProductCode.objects.create(
+            id=1001,
+            code="EXP-DOC-FEE",
+            description="Export documentation fee",
+            domain=ProductCode.DOMAIN_EXPORT,
+            category=ProductCode.CATEGORY_DOCUMENTATION,
+            is_gst_applicable=False,
+            gl_revenue_code="4000",
+            gl_cost_code="5000",
+            default_unit=ProductCode.UNIT_SHIPMENT,
+        )
+        base_details = {
+            "classification": "charge",
+            "display_label": "Documentation fee",
+            "bucket": SPEChargeLineDB.Bucket.DESTINATION_CHARGES,
+            "currency": "USD",
+            "amount": "25.00",
+            "unit": SPEChargeLineDB.Unit.FLAT,
+            "product_code": export_product_code.code,
+        }
+        res = self._post([self._decision("classify_unclassified", target_id="unclass-1", details=base_details, decision_id="wrong-domain")])
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "PRODUCT_CODE_DOMAIN_MISMATCH")
+        self.assertFalse(SPEChargeLineDB.objects.filter(description="Documentation fee").exists())
+
+        invalid_cases = [
+            ({"bucket": "bad"}, "INVALID_BUCKET"),
+            ({"currency": "USDX"}, "INVALID_CURRENCY"),
+            ({"amount": "-1"}, "NEGATIVE_NUMERIC_VALUE"),
+            ({"unit": "bad"}, "INVALID_UNIT"),
+        ]
+        for idx, (override, error_code) in enumerate(invalid_cases):
+            details = {**base_details, "product_code": self.product_code.code, **override}
+            res = self._post([self._decision("classify_unclassified", target_id="unclass-1", details=details, decision_id=f"invalid-{idx}")])
+            self.assertEqual(res.data["rejected_decisions"][0]["error_code"], error_code)
+
+    def test_classify_unclassified_rejects_missing_direction(self):
+        self.envelope.shipment_context_json = {"origin_country": "SG", "destination_country": "AU", "mode": "AIR"}
+        self.envelope.save(update_fields=["shipment_context_json"])
+        res = self._post([
+            self._decision(
+                "classify_unclassified",
+                target_id="unclass-1",
+                details={"classification": "charge", "display_label": "Doc", "bucket": SPEChargeLineDB.Bucket.DESTINATION_CHARGES, "currency": "USD", "amount": "25", "unit": SPEChargeLineDB.Unit.FLAT, "product_code": self.product_code.code},
+                decision_id="missing-direction",
+            )
+        ])
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "PRODUCT_CODE_DIRECTION_UNAVAILABLE")
+
+    def test_classify_unclassified_ignored_and_note_persist_after_reload(self):
+        res = self._post([
+            self._decision("classify_unclassified", target_id="unclass-1", details={"classification": "ignored", "reason": "Not billable"}, decision_id="ignore-unknown"),
+            self._decision("classify_unclassified", target_id="unclass-2", details={"classification": "note", "reason": "Commercial note"}, decision_id="note-unknown"),
+        ])
+        self.assertEqual(res.data["rejected_decisions"], [])
+        payload = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/").data
+        self.assertFalse(any(item["id"] in {"unclass-1", "unclass-2"} for item in payload["unclassified_items"]))
+        self.assertTrue(any(item["id"] == "unclass-1" for item in payload["ignored_items"]))
+        self.assertTrue(any(term["type"] == "note" and "Have a nice day" in term["text"] for term in payload["commercial_terms"]))
+
+    def test_unknown_product_code_request_creates_provisional_charge_and_can_apply_approved_code(self):
+        res = self._post([
+            self._decision(
+                "request_product_code",
+                target_id="unclass-1",
+                details={"proposed_code": "IMP-DOC-NEW", "description": "Documentation fee", "display_label": "Documentation fee", "bucket": SPEChargeLineDB.Bucket.DESTINATION_CHARGES, "currency": "USD", "amount": "25", "unit": SPEChargeLineDB.Unit.FLAT, "reason": "Missing code"},
+                decision_id="request-unknown",
+            )
+        ])
+        self.assertEqual(res.data["rejected_decisions"], [])
+        request = ProductCodeCreationRequest.objects.get(suggested_name="IMP-DOC-NEW")
+        self.assertIsNotNone(request.source_charge_line_id)
+        charge = request.source_charge_line
+        self.assertEqual(charge.source_excerpt, "Documentation fee USD 25")
+        self.assertEqual(charge.normalization_status, SPEChargeLineDB.NormalizationStatus.UNMAPPED)
+        request.status = ProductCodeCreationRequest.STATUS_APPROVED
+        request.approved_product_code = self.product_code
+        request.approved_at = timezone.now()
+        request.approved_by = self.manager
+        request.save(update_fields=["status", "approved_product_code", "approved_at", "approved_by"])
+        res = self._post([
+            self._decision("use_approved_product_code", target_id=str(charge.id), details={"product_code_request_id": request.id, "product_code_id": self.product_code.id}, decision_id="use-approved-unknown")
+        ])
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
+        charge.refresh_from_db()
+        self.assertEqual(charge.manual_resolved_product_code_id, self.product_code.id)
+
     def test_edit_charge_updates_allowed_fields_and_preserves_evidence(self):
         res = self._post([
             self._decision(
@@ -353,7 +468,7 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self.assertEqual(created.source_excerpt, "Documentation fee USD 25")
         self.batch.refresh_from_db()
         self.assertEqual([i["id"] for i in self.batch.analysis_summary_json["unclassified_items"]], ["unclass-2"])
-        self.assertEqual(self.batch.analysis_summary_json["ignored_items"][0]["raw_text"], "Documentation fee USD 25")
+        self.assertFalse(any(i.get("id") == "unclass-1" for i in self.batch.analysis_summary_json.get("ignored_items", [])))
 
     def test_classify_unclassified_without_product_code_is_skipped(self):
         res = self._post([
@@ -367,12 +482,13 @@ class DraftQuoteResolveHighValueTests(TestCase):
                     "product_code": "MISSING",
                     "amount": "25.00",
                     "currency": "USD",
+                    "unit": SPEChargeLineDB.Unit.FLAT,
                 },
             )
         ])
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertEqual(res.data["applied_decisions"][0]["status"], "skipped")
-        self.assertEqual(res.data["applied_decisions"][0]["error_code"], "PRODUCT_CODE_REQUIRED")
+        self.assertEqual(res.data["rejected_decisions"][0]["status"], "rejected")
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "PRODUCT_CODE_REQUIRED")
 
     def test_classify_unclassified_as_ignored_preserves_text(self):
         res = self._post([self._decision("classify_unclassified", target_id="unclass-2", details={"classification": "ignored", "reason": "Greeting"})])

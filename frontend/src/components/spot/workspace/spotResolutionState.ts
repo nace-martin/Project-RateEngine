@@ -51,6 +51,8 @@ export interface SpotResolutionState {
         source: string;
         currency: string;
         amount: string;
+        bucket: string;
+        unit: string;
     };
     unknownWizard: {
         step: number;
@@ -69,9 +71,10 @@ export interface SpotResolutionState {
 }
 
 export type SpotResolutionAction =
+    | { type: "RESET_FROM_SERVER"; payload: DraftQuote }
     | { type: "SELECT_ISSUE"; payload: { issueId: string | null } }
     | { type: "OPEN_MAP_EXISTING" }
-    | { type: "OPEN_REQUEST_PRODUCT_CODE"; payload: { label: string; source: string; currency: string; amount: string } }
+    | { type: "OPEN_REQUEST_PRODUCT_CODE"; payload: { label: string; source: string; currency: string; amount: string; bucket?: string; unit?: string } }
     | { type: "OPEN_ADD_UNKNOWN_CHARGE"; payload: { name: string; amount: string } }
     | { type: "CANCEL_ACTION" }
     | { type: "UPDATE_REQUEST_FORM"; payload: Partial<SpotResolutionState["requestForm"]> }
@@ -115,7 +118,9 @@ export function createSpotResolutionState(initialData: DraftQuote): SpotResoluti
             label: "",
             source: "",
             currency: "",
-            amount: ""
+            amount: "",
+            bucket: "",
+            unit: "flat"
         },
         unknownWizard: {
             step: 1,
@@ -123,10 +128,10 @@ export function createSpotResolutionState(initialData: DraftQuote): SpotResoluti
         },
         addChargeForm: {
             name: "New Charge",
-            bucket: "origin_charges",
-            currency: "SGD",
+            bucket: "",
+            currency: initialData.suggested_charges?.find(charge => charge.currency)?.currency || "",
             amount: "0",
-            unit: "set",
+            unit: "flat",
             productCode: ""
         },
         actionMessage: null,
@@ -150,6 +155,9 @@ function captureSnapshotHelper(state: SpotResolutionState, id: string, type: Dec
 
 export function spotResolutionReducer(state: SpotResolutionState, action: SpotResolutionAction): SpotResolutionState {
     switch (action.type) {
+        case "RESET_FROM_SERVER":
+            return createSpotResolutionState(action.payload);
+
         case "SELECT_ISSUE":
             return {
                 ...state,
@@ -171,7 +179,9 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
                     label: action.payload.label,
                     source: action.payload.source,
                     currency: action.payload.currency,
-                    amount: action.payload.amount
+                    amount: action.payload.amount,
+                    bucket: action.payload.bucket || state.requestForm.bucket,
+                    unit: action.payload.unit || state.requestForm.unit
                 },
                 selectedActionType: "request_product_code"
             };

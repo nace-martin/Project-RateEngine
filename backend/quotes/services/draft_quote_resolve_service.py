@@ -214,6 +214,15 @@ def _unclassified_item(envelope, target_id):
     return None, None
 
 
+def _remove_unclassified(batch: SPESourceBatchDB, item: dict):
+    summary = dict(batch.analysis_summary_json or {})
+    summary["unclassified_items"] = [
+        i for i in summary.get("unclassified_items") or [] if str(i.get("id")) != str(item.get("id"))
+    ]
+    batch.analysis_summary_json = summary
+    batch.save(update_fields=["analysis_summary_json", "updated_at"])
+
+
 def _ignore_unclassified(batch: SPESourceBatchDB, item: dict, reason: str):
     summary = dict(batch.analysis_summary_json or {})
     unclassified = [i for i in summary.get("unclassified_items") or [] if str(i.get("id")) != str(item.get("id"))]
@@ -232,29 +241,128 @@ def _ignore_unclassified(batch: SPESourceBatchDB, item: dict, reason: str):
     batch.save(update_fields=["analysis_summary_json", "updated_at"])
 
 
-def _create_classified_charge(envelope, batch, item, product_code, decision, payload, user):
-    details = decision.details
+def _persist_unclassified_note(envelope, batch: SPESourceBatchDB, item: dict, reason: str | None = None):
+    conditions = dict(envelope.conditions_json or {}) if isinstance(envelope.conditions_json, dict) else {}
+    terms = list(conditions.get("commercial_terms") or [])
+    terms.append(
+        {
+            "type": "note",
+            "text": item.get("raw_text") or item.get("text") or "",
+            "normalized_value": None,
+            "status": "suggested",
+            "evidence": item.get("evidence"),
+            "review_reason": reason or "Operator classified unclassified item as commercial note.",
+        }
+    )
+    conditions["commercial_terms"] = terms
+    envelope.conditions_json = conditions
+    envelope.save(update_fields=["conditions_json"])
+    _remove_unclassified(batch, item)
+
+
+def _validate_charge_details(details):
+    required = ["display_label", "bucket", "currency", "amount", "unit", "product_code"]
+    missing = [field for field in required if details.get(field) in {None, ""}]
+    if missing:
+        return None, f"Classifying this item as a charge requires: {', '.join(missing)}.", "MISSING_CHARGE_FIELD"
+    if details["bucket"] not in _valid_choice_values(SPEChargeLineDB.Bucket.choices):
+        return None, "Bucket is not supported for SPOT charge lines.", "INVALID_BUCKET"
+    if details["unit"] not in _valid_choice_values(SPEChargeLineDB.Unit.choices):
+        return None, "Unit is not supported for SPOT charge lines.", "INVALID_UNIT"
+    currency = str(details.get("currency") or "").strip().upper()
+    if len(currency) != 3 or not currency.isalpha():
+        return None, "Currency must be a 3-letter ISO code.", "INVALID_CURRENCY"
+    try:
+        amount = Decimal(str(details.get("amount")))
+    except (InvalidOperation, TypeError, ValueError):
+        return None, "amount must be numeric.", "INVALID_NUMERIC_VALUE"
+    if amount < 0:
+        return None, "amount cannot be negative.", "NEGATIVE_NUMERIC_VALUE"
+    normalized = dict(details)
+    normalized["currency"] = currency
+    normalized["amount"] = amount
+    return normalized, "", None
+
+
+def _validate_product_code_domain(envelope, product_code):
+    expected_domain = _expected_product_code_domain(envelope)
+    if not expected_domain:
+        return "rejected", "Shipment direction could not be determined from trusted route evidence. ProductCode mapping was not applied.", "PRODUCT_CODE_DIRECTION_UNAVAILABLE"
+    if product_code.domain != expected_domain:
+        return "rejected", f"ProductCode domain {product_code.domain} does not match shipment direction {expected_domain}.", "PRODUCT_CODE_DOMAIN_MISMATCH"
+    return None, None, None
+
+
+def _build_unclassified_charge(envelope, batch, item, details, user, product_code=None):
     now = timezone.now()
-    charge_line = SPEChargeLineDB(
+    source_text = item.get("raw_text") or item.get("text") or ""
+    return SPEChargeLineDB(
         envelope=envelope,
         source_batch=batch,
-        code=product_code.code,
+        code=product_code.code if product_code else "UNCLASSIFIED-PROVISIONAL",
         description=details["display_label"],
         amount=details["amount"],
         currency=details["currency"],
-        unit=details.get("unit") or SPEChargeLineDB.Unit.FLAT,
+        unit=details["unit"],
         bucket=details["bucket"],
         rate=details.get("rate"),
         min_charge=details.get("minimum_charge"),
-        source_label=item.get("raw_text") or item.get("text") or details["display_label"],
-        source_excerpt=item.get("raw_text") or item.get("text") or "",
+        normalization_status=SPEChargeLineDB.NormalizationStatus.UNMAPPED if not product_code else SPEChargeLineDB.NormalizationStatus.MATCHED,
+        source_label=source_text or details["display_label"],
+        source_excerpt=source_text,
         source_reference=batch.file_name or batch.label or "draft quote unclassified item",
+        rule_meta={"unclassified_item_evidence": item.get("evidence"), "unclassified_item_id": item.get("id")},
         entered_by=user,
         entered_at=now,
     )
+
+
+def _create_classified_charge(envelope, batch, item, product_code, decision, payload, user):
+    details, message, error_code = _validate_charge_details(decision.details)
+    if error_code:
+        return "rejected", message, error_code
+    status, message, error_code = _validate_product_code_domain(envelope, product_code)
+    if error_code:
+        return status, message, error_code
+    charge_line = _build_unclassified_charge(envelope, batch, item, details, user, product_code=product_code)
     _stamp_manual_resolution(charge_line, product_code, user, decision, payload)
     charge_line.save()
-    _ignore_unclassified(batch, item, details.get("reason") or "Classified as charge")
+    _remove_unclassified(batch, item)
+    return "accepted", "Unclassified item classified as charge.", None
+
+
+def _create_product_code_request_for_unclassified(envelope, decision, user):
+    batch, item = _unclassified_item(envelope, decision.target_id)
+    if not item:
+        return "rejected", "Target unclassified item was not found in this envelope.", "TARGET_NOT_FOUND", None
+
+    details, message, error_code = _validate_charge_details({**decision.details, "product_code": "PENDING"})
+    if error_code and error_code != "PRODUCT_CODE_REQUIRED":
+        return "rejected", message, error_code, None
+
+    expected_domain = _expected_product_code_domain(envelope)
+    if not expected_domain:
+        return "rejected", "Shipment direction could not be determined from trusted route evidence. ProductCode request was not created.", "PRODUCT_CODE_DIRECTION_UNAVAILABLE", None
+
+    charge_line = _build_unclassified_charge(envelope, batch, item, details, user)
+    charge_line.save()
+    _remove_unclassified(batch, item)
+    pc_request = ProductCodeCreationRequest.objects.create(
+        source_label=item.get("raw_text") or item.get("text") or details["display_label"],
+        suggested_name=decision.details.get("proposed_code") or details["display_label"],
+        suggested_bucket=details["bucket"],
+        suggested_basis=details["unit"],
+        suggested_reason=decision.details.get("reason") or "Operator requested ProductCode for unclassified item.",
+        source_envelope=envelope,
+        source_charge_line=charge_line,
+        source_quote=envelope.quote if hasattr(envelope, "quote") else None,
+        source_context_json={**decision.details, "domain": expected_domain, "evidence": item.get("evidence")},
+        created_by=user,
+        status=ProductCodeCreationRequest.STATUS_PENDING,
+    )
+    decision.target_id = str(charge_line.id)
+    decision.details["product_code_request_id"] = pc_request.id
+    return "skipped", "ProductCode request created and pending admin review.", None, charge_line
 
 
 def _apply_classify_unclassified(envelope, decision, payload, user):
@@ -264,18 +372,24 @@ def _apply_classify_unclassified(envelope, decision, payload, user):
 
     classification = str(decision.details.get("classification") or "charge").lower()
     if classification in {"ignored", "ignore", "non_commercial", "non-commercial"}:
-        _ignore_unclassified(batch, item, decision.details.get("reason") or "Classified as non-commercial")
+        reason = str(decision.details.get("reason") or "").strip()
+        if not reason:
+            return "rejected", "Ignoring an unclassified item requires a reason.", "REASON_REQUIRED"
+        _ignore_unclassified(batch, item, reason)
         return "accepted", "Unclassified item classified as ignored.", None
+
+    if classification == "note":
+        _persist_unclassified_note(envelope, batch, item, decision.details.get("reason"))
+        return "accepted", "Unclassified item classified as note.", None
 
     if classification != "charge":
         return "rejected", "Unsupported unclassified classification.", "UNSUPPORTED_CLASSIFICATION"
 
     product_code = _product_code(decision.details.get("product_code"))
     if not product_code:
-        return "skipped", "Classifying this item as a charge requires an existing ProductCode.", "PRODUCT_CODE_REQUIRED"
+        return "rejected", "Classifying this item as a charge requires an existing ProductCode.", "PRODUCT_CODE_REQUIRED"
 
-    _create_classified_charge(envelope, batch, item, product_code, decision, payload, user)
-    return "accepted", "Unclassified item classified as charge.", None
+    return _create_classified_charge(envelope, batch, item, product_code, decision, payload, user)
 
 
 def apply_draft_quote_decisions(
@@ -344,22 +458,31 @@ def apply_draft_quote_decisions(
             elif decision_type == "classify_unclassified":
                 status_val, message_val, error_code_val = _apply_classify_unclassified(envelope, dec_item, payload, user)
             elif decision_type == "request_product_code":
-                pc_request = ProductCodeCreationRequest.objects.create(
-                    source_label=(charge_line.source_label or charge_line.description) if charge_line else dec_item.details.get("description", ""),
-                    suggested_name=dec_item.details.get("proposed_code", ""),
-                    suggested_bucket=dec_item.details.get("category", ""),
-                    suggested_basis="FLAT",
-                    suggested_reason=dec_item.details.get("reason", ""),
-                    source_envelope=envelope,
-                    source_charge_line=charge_line,
-                    source_quote=envelope.quote if hasattr(envelope, "quote") else None,
-                    source_context_json=dec_item.details,
-                    created_by=user,
-                    status=ProductCodeCreationRequest.STATUS_PENDING,
-                )
-                dec_item.details["product_code_request_id"] = pc_request.id
-                status_val = "skipped"
-                message_val = "ProductCode request created and pending admin review."
+                if not charge_line:
+                    status_val, message_val, error_code_val, charge_line = _create_product_code_request_for_unclassified(envelope, dec_item, user)
+                else:
+                    expected_domain = _expected_product_code_domain(envelope)
+                    if not expected_domain:
+                        status_val = "rejected"
+                        message_val = "Shipment direction could not be determined from trusted route evidence. ProductCode request was not created."
+                        error_code_val = "PRODUCT_CODE_DIRECTION_UNAVAILABLE"
+                    else:
+                        pc_request = ProductCodeCreationRequest.objects.create(
+                            source_label=(charge_line.source_label or charge_line.description) if charge_line else dec_item.details.get("description", ""),
+                            suggested_name=dec_item.details.get("proposed_code", ""),
+                            suggested_bucket=dec_item.details.get("category", ""),
+                            suggested_basis=dec_item.details.get("unit") or "FLAT",
+                            suggested_reason=dec_item.details.get("reason", ""),
+                            source_envelope=envelope,
+                            source_charge_line=charge_line,
+                            source_quote=envelope.quote if hasattr(envelope, "quote") else None,
+                            source_context_json={**dec_item.details, "domain": expected_domain},
+                            created_by=user,
+                            status=ProductCodeCreationRequest.STATUS_PENDING,
+                        )
+                        dec_item.details["product_code_request_id"] = pc_request.id
+                        status_val = "skipped"
+                        message_val = "ProductCode request created and pending admin review."
             elif decision_type == "use_approved_product_code":
                 req_id = dec_item.details.get("product_code_request_id")
                 pc_request = ProductCodeCreationRequest.objects.filter(id=req_id).first() if req_id else None

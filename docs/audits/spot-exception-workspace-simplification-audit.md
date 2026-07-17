@@ -352,3 +352,21 @@ Implemented safeguards:
 Intentional non-changes:
 - No pricing, quote total, GST, finalization, ProductCode approval, or RBAC behavior changed.
 - ProductCode creation requests remain under the existing admin-review lifecycle.
+
+---
+
+## 17. Phase 14G Unknown Item Resolution Persistence
+
+Phase 14G persists Unknown Charge Block decisions through the Draft Quote resolve API instead of relying on local-only frontend state.
+
+Implemented safeguards:
+- Live unknown-item actions submit `classify_unclassified` decisions rather than charge-line `map_to_product_code` decisions.
+- Unknown items classified as charges create persisted `SPEChargeLineDB` rows, preserve source text/evidence, validate required charge fields, and validate ProductCode domain from route-derived shipment direction.
+- Unknown items classified as ignored are removed from `unclassified_items` and copied to `ignored_items` with evidence and reason.
+- Unknown items classified as notes are removed from `unclassified_items` and persisted as commercial terms with evidence, outside quote totals.
+- Unknown-item ProductCode requests create a provisional unresolved charge line linked to a pending `ProductCodeCreationRequest`, preserving finalization blocking until the request is approved/resolved.
+- Live frontend unknown-item success paths reload the Draft Quote from the backend; failures surface an error and do not mutate local resolution state.
+
+Intentional non-changes:
+- No quote pricing, GST, FX, public quote rendering, RBAC, or finalization-rule changes.
+- Demo mode remains local/prototype-only and isolated from live persistence.

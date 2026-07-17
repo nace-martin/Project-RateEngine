@@ -111,7 +111,13 @@ console.log("✓ Verified ExceptionWorkspace does not locally declare resolution
 // 4. Verify hook owns the API calls
 assert.ok(hookSrc.includes('import("../../../lib/api")'), "useSpotResolutionWorkflow hook must import API functions");
 assert.ok(hookSrc.includes("resolveDraftQuoteDecisions"), "useSpotResolutionWorkflow must call resolveDraftQuoteDecisions");
+assert.ok(hookSrc.includes("getDraftQuote"), "useSpotResolutionWorkflow must reload the Draft Quote after live unknown-item decisions");
 assert.ok(hookSrc.includes("finalizeDraftQuoteReview"), "useSpotResolutionWorkflow must call finalizeDraftQuoteReview");
+assert.ok(hookSrc.includes('type: "classify_unclassified"'), "Unknown-item live actions must submit classify_unclassified decisions");
+assert.ok(!hookSrc.includes('type: "map_to_product_code",\n            target_id: itemId'), "Unknown-item mapping must not submit map_to_product_code with an unclassified item ID");
+assert.ok(!hookSrc.includes('newChargeId = `chg-new-${Date.now()}`;\n            try'), "Live unknown charge creation must not create synthetic IDs");
+assert.ok(!hookSrc.includes('domain: "IMPORT"'), "ProductCode requests must not hardcode IMPORT domain");
+assert.ok(!hookSrc.includes('currency: "SGD"'), "Unknown ProductCode requests must not hardcode SGD currency");
 
 console.log("✓ Verified useSpotResolutionWorkflow owns resolve and finalization API calls.");
 
