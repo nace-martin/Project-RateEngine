@@ -8,11 +8,16 @@ const livePagePath = path.join(frontendRoot, "src", "app", "quotes", "spot", "[s
 const demoPagePath = path.join(frontendRoot, "src", "app", "quotes", "spot", "exception-workspace-demo", "page.tsx");
 const workspacePath = path.join(frontendRoot, "src", "components", "spot", "ExceptionWorkspace.tsx");
 
-const [spotPage, livePage, demoPage, workspace] = await Promise.all([
+const hookPath = path.join(frontendRoot, "src", "components", "spot", "workspace", "useSpotResolutionWorkflow.ts");
+const statePath = path.join(frontendRoot, "src", "components", "spot", "workspace", "spotResolutionState.ts");
+
+const [spotPage, livePage, demoPage, workspace, hook, stateFile] = await Promise.all([
   readFile(spotPagePath, "utf8"),
   readFile(livePagePath, "utf8"),
   readFile(demoPagePath, "utf8"),
   readFile(workspacePath, "utf8"),
+  readFile(hookPath, "utf8"),
+  readFile(statePath, "utf8"),
 ]);
 
 assert.match(
@@ -63,14 +68,14 @@ assert.ok(
 );
 
 assert.match(
-  workspace,
+  hook,
   /type: "accept_suggestion"/,
   "live accept-suggestion actions must persist through the Draft Quote resolve API",
 );
 
 assert.match(
-  workspace,
-  /const canUsePrototypeOverride = !isLive && prototypeOverride;/,
+  stateFile,
+  /!isLive\s*&&\s*state\.prototypeOverride/,
   "prototype finalization override must be disabled in live workspace mode",
 );
 

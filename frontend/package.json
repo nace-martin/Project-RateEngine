@@ -20,6 +20,7 @@
     "test:spot-workspace-helpers": "node scripts/spot-workspace-helpers.test.mjs",
     "test:exception-workspace-routing": "node scripts/exception-workspace-routing.test.mjs",
     "test:draft-quote-contract": "node --experimental-strip-types scripts/draft-quote-contract.test.mjs",
+    "test:spot-resolution-state": "node --experimental-strip-types scripts/spot-resolution-state.test.mjs",
     "test:quote-financial-helpers": "node scripts/quote-financial-helpers.test.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",

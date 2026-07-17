@@ -1,0 +1,456 @@
+import { useReducer } from "react";
+import { DraftCharge, DraftQuote } from "../../../lib/draft-quote-types";
+import {
+    createSpotResolutionState,
+    spotResolutionReducer,
+    selectCombinedUnresolved,
+    selectCurrentIssue,
+    selectActiveCharges,
+    selectUniqueCurrencies,
+    selectSubtotals,
+    selectChecklistIssuesResolved,
+    selectChecklistNoUnknown,
+    selectChecklistProductCodesVerified,
+    selectCanFinishReview,
+    selectIsReviewLocked,
+    selectCanUsePrototypeOverride,
+    selectNextStepGuidance,
+    SpotResolutionState
+} from "./spotResolutionState";
+
+interface UseSpotResolutionWorkflowProps {
+    initialData: DraftQuote;
+    isLive: boolean;
+    envelopeId?: string;
+}
+
+export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: UseSpotResolutionWorkflowProps) {
+    const [state, dispatch] = useReducer(spotResolutionReducer, initialData, createSpotResolutionState);
+
+    // API submission helper
+    const submitLiveDecision = async (decisionItem: {
+        decision_id: string;
+        type: string;
+        target_id: string;
+        details: Record<string, unknown>;
+        audit_metadata: { user_id: number; timestamp: string };
+    }) => {
+        if (state.reviewSession.status === "finalized") {
+            throw new Error("Draft Quote review is finalized and locked.");
+        }
+        if (!isLive || !envelopeId) {
+            return;
+        }
+        const { resolveDraftQuoteDecisions } = await import("../../../lib/api");
+        const cryptoObj = typeof window !== "undefined" ? window.crypto : null;
+        const idempotencyKey = cryptoObj && cryptoObj.randomUUID 
+            ? cryptoObj.randomUUID() 
+            : "3b128522-a89e-4055-bf51-199eecc5628b";
+
+        await resolveDraftQuoteDecisions(envelopeId, {
+            idempotency_key: idempotencyKey,
+            decisions: [decisionItem]
+        });
+    };
+
+    // Actions
+    const selectIssue = (issueId: string | null) => {
+        dispatch({ type: "SELECT_ISSUE", payload: { issueId } });
+    };
+
+    const openMapExisting = () => {
+        dispatch({ type: "OPEN_MAP_EXISTING" });
+    };
+
+    const openRequestProductCode = (charge: DraftCharge) => {
+        dispatch({
+            type: "OPEN_REQUEST_PRODUCT_CODE",
+            payload: {
+                label: charge.display_label,
+                source: charge.evidence?.source_text || charge.raw_label,
+                currency: charge.currency,
+                amount: String(charge.amount)
+            }
+        });
+    };
+
+    const openUnknownProductCodeRequest = (rawText: string) => {
+        dispatch({
+            type: "OPEN_REQUEST_PRODUCT_CODE",
+            payload: {
+                label: "Unknown Charge Item",
+                source: rawText,
+                currency: "SGD",
+                amount: "0"
+            }
+        });
+    };
+
+    const openAddUnknownCharge = (name: string, amount: string) => {
+        dispatch({
+            type: "OPEN_ADD_UNKNOWN_CHARGE",
+            payload: { name, amount }
+        });
+    };
+
+    const cancelAction = () => {
+        dispatch({ type: "CANCEL_ACTION" });
+    };
+
+    const updateRequestForm = (fields: Partial<SpotResolutionState["requestForm"]>) => {
+        dispatch({ type: "UPDATE_REQUEST_FORM", payload: fields });
+    };
+
+    const updateAddChargeForm = (fields: Partial<SpotResolutionState["addChargeForm"]>) => {
+        dispatch({ type: "UPDATE_ADD_CHARGE_FORM", payload: fields });
+    };
+
+    const classifyUnknown = (classification: string | null) => {
+        dispatch({
+            type: "CLASSIFY_UNKNOWN",
+            payload: { classification, step: 2 }
+        });
+    };
+
+    const returnToUnknownClassification = () => {
+        dispatch({
+            type: "CLASSIFY_UNKNOWN",
+            payload: { classification: null, step: 1 }
+        });
+    };
+
+    const mapProductCode = async (chargeId: string, productCode: string, displayLabel: string) => {
+        const decisionId = `dec-${Date.now()}`;
+        const newDecisionItem = {
+            decision_id: decisionId,
+            type: "map_to_product_code",
+            target_id: chargeId,
+            details: { product_code: productCode },
+            audit_metadata: {
+                user_id: 1,
+                timestamp: new Date().toISOString()
+            }
+        };
+
+        try {
+            await submitLiveDecision(newDecisionItem);
+        } catch (err) {
+            console.error("Failed to submit resolve decision:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error resolving mapping: ${errMsg}` });
+            return;
+        }
+
+        dispatch({
+            type: "MAP_PRODUCT_CODE",
+            payload: { chargeId, productCode, displayLabel }
+        });
+    };
+
+    const submitProductCodeRequest = async (chargeId: string) => {
+        const decisionId = `dec-${Date.now()}`;
+        const newDecisionItem = {
+            decision_id: decisionId,
+            type: "request_product_code",
+            target_id: chargeId,
+            details: {
+                proposed_code: state.requestForm.label,
+                description: state.requestForm.source || state.requestForm.label,
+                category: "destination_charges",
+                domain: "IMPORT",
+                reason: "Operator edited and resubmitted ProductCode request"
+            },
+            audit_metadata: {
+                user_id: 1,
+                timestamp: new Date().toISOString()
+            }
+        };
+
+        try {
+            await submitLiveDecision(newDecisionItem);
+        } catch (err) {
+            console.error("Failed to submit ProductCode request:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error submitting ProductCode request: ${errMsg}` });
+            return;
+        }
+
+        dispatch({
+            type: "SUBMIT_PRODUCT_CODE_REQUEST",
+            payload: { chargeId, proposedCode: state.requestForm.label, sourceText: state.requestForm.source }
+        });
+    };
+
+    const useApprovedProductCode = async (chargeId: string, charge: DraftCharge) => {
+        const reqId = charge.product_code_request_id;
+        const pcId = charge.approved_product_code_id;
+        const code = charge.approved_product_code || charge.suggested_product_code || "";
+
+        if (!reqId || !pcId) {
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: "Missing approved ProductCode request metadata." });
+            return;
+        }
+
+        const decisionId = `dec-${Date.now()}`;
+        const newDecisionItem = {
+            decision_id: decisionId,
+            type: "use_approved_product_code",
+            target_id: chargeId,
+            details: {
+                product_code_request_id: Number(reqId),
+                product_code_id: Number(pcId)
+            },
+            audit_metadata: {
+                user_id: 1,
+                timestamp: new Date().toISOString()
+            }
+        };
+
+        try {
+            await submitLiveDecision(newDecisionItem);
+        } catch (err) {
+            console.error("Failed to submit resolve decision:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error resolving mapping: ${errMsg}` });
+            return;
+        }
+
+        dispatch({
+            type: "USE_APPROVED_PRODUCT_CODE",
+            payload: { chargeId, code, displayLabel: charge.display_label }
+        });
+    };
+
+    const acceptSuggestedMapping = async (chargeId: string, displayLabel: string, suggestedCode: string) => {
+        if (selectIsReviewLocked(state)) return;
+        const decisionId = `dec-${Date.now()}`;
+        const newDecisionItem = {
+            decision_id: decisionId,
+            type: "accept_suggestion",
+            target_id: chargeId,
+            details: {},
+            audit_metadata: {
+                user_id: 1,
+                timestamp: new Date().toISOString()
+            }
+        };
+
+        try {
+            await submitLiveDecision(newDecisionItem);
+        } catch (err) {
+            console.error("Failed to submit accept suggestion decision:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error accepting suggested mapping: ${errMsg}` });
+            return;
+        }
+
+        dispatch({
+            type: "ACCEPT_SUGGESTED_MAPPING",
+            payload: { chargeId, displayLabel, suggestedCode }
+        });
+    };
+
+    const ignoreCharge = async (chargeId: string, charge: DraftCharge) => {
+        const decisionId = `dec-${Date.now()}`;
+        const newDecisionItem = {
+            decision_id: decisionId,
+            type: "ignore",
+            target_id: chargeId,
+            details: { reason: "Operator ignored rejected ProductCode blocker as non-commercial" },
+            audit_metadata: {
+                user_id: 1,
+                timestamp: new Date().toISOString()
+            }
+        };
+
+        try {
+            await submitLiveDecision(newDecisionItem);
+        } catch (err) {
+            console.error("Failed to submit ignore decision:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error ignoring charge: ${errMsg}` });
+            return;
+        }
+
+        dispatch({
+            type: "IGNORE_CHARGE",
+            payload: { chargeId, displayLabel: charge.display_label, rawLabel: charge.raw_label, evidence: charge.evidence || null }
+        });
+    };
+
+    const ignoreUnknownCharge = (itemId: string, rawText: string) => {
+        if (selectIsReviewLocked(state)) return;
+        const evidence = state.unclassifiedItems.find(i => i.id === itemId)?.evidence || null;
+        dispatch({
+            type: "IGNORE_UNKNOWN_CHARGE",
+            payload: { itemId, rawText, evidence }
+        });
+    };
+
+    const approveUnknownNote = (itemId: string, rawText: string) => {
+        dispatch({
+            type: "APPROVE_UNKNOWN_NOTE",
+            payload: { itemId, rawText }
+        });
+    };
+
+    const addUnknownAsCharge = (itemId: string) => {
+        if (selectIsReviewLocked(state)) return;
+        const newChargeId = `chg-new-${Date.now()}`;
+        const evidence = state.unclassifiedItems.find(i => i.id === itemId)?.evidence || null;
+        
+        dispatch({
+            type: "ADD_UNKNOWN_AS_CHARGE",
+            payload: {
+                itemId,
+                newChargeId,
+                chargeName: state.addChargeForm.name,
+                chargeBucket: state.addChargeForm.bucket,
+                chargeCurrency: state.addChargeForm.currency,
+                chargeAmount: Number(state.addChargeForm.amount) || 0,
+                chargeUnit: state.addChargeForm.unit,
+                chargeProductCode: state.addChargeForm.productCode,
+                evidence
+            }
+        });
+    };
+
+    const toggleIncludeInTotals = (chargeId: string) => {
+        if (selectIsReviewLocked(state)) return;
+        dispatch({ type: "TOGGLE_INCLUDE_IN_TOTALS", payload: { chargeId } });
+    };
+
+    const undoDecision = (decisionId: string) => {
+        dispatch({ type: "UNDO_DECISION", payload: { decisionId } });
+    };
+
+    const finalizeReview = async () => {
+        const canFinalize = selectCanFinishReview(state);
+        const isLocked = selectIsReviewLocked(state);
+        if (!canFinalize || isLocked) {
+            return;
+        }
+
+        if (isLive && envelopeId) {
+            try {
+                const { finalizeDraftQuoteReview } = await import("../../../lib/api");
+                const cryptoObj = typeof window !== "undefined" ? window.crypto : null;
+                const idempotencyKey = cryptoObj && cryptoObj.randomUUID 
+                    ? cryptoObj.randomUUID() 
+                    : "47c7fa2d-8a4f-4cdb-9fbf-a396ed7f7f88";
+
+                const result = await finalizeDraftQuoteReview(envelopeId, idempotencyKey);
+                dispatch({
+                    type: "FINALIZE_REVIEW",
+                    payload: {
+                        status: result.review_status,
+                        finalized_by: result.finalized_by ?? null,
+                        finalized_at: result.finalized_at ?? null,
+                        remaining_blockers: result.remaining_blockers,
+                        available_actions: ["reopen"]
+                    }
+                });
+            } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error finalizing review: ${errMsg}` });
+                return;
+            }
+        } else {
+            dispatch({
+                type: "FINALIZE_REVIEW",
+                payload: {
+                    status: "finalized",
+                    finalized_by: null,
+                    finalized_at: new Date().toISOString(),
+                    remaining_blockers: 0,
+                    available_actions: ["reopen"]
+                }
+            });
+        }
+    };
+
+    const dismissActionMessage = () => {
+        dispatch({ type: "DISMISS_ACTION_MESSAGE" });
+    };
+
+    const togglePrototypeOverride = () => {
+        dispatch({ type: "TOGGLE_PROTOTYPE_OVERRIDE" });
+    };
+
+    const toggleHelpText = () => {
+        dispatch({ type: "TOGGLE_HELP_TEXT" });
+    };
+
+    // Derived State Computations
+    const combinedUnresolved = selectCombinedUnresolved(state);
+    const currentIssue = selectCurrentIssue(state);
+    const activeCharges = selectActiveCharges(state);
+    const uniqueCurrencies = selectUniqueCurrencies(state);
+    const subtotals = selectSubtotals(state);
+    const checklistIssuesResolved = selectChecklistIssuesResolved(state);
+    const checklistNoUnknown = selectChecklistNoUnknown(state);
+    const checklistProductCodesVerified = selectChecklistProductCodesVerified(state);
+    const canFinishReview = selectCanFinishReview(state);
+    const isReviewLocked = selectIsReviewLocked(state);
+    const canUsePrototypeOverride = selectCanUsePrototypeOverride(state, isLive);
+    const nextStepGuidance = selectNextStepGuidance(state);
+
+    return {
+        state: {
+            suggestedCharges: state.suggestedCharges,
+            reviewQueue: state.reviewQueue,
+            unclassifiedItems: state.unclassifiedItems,
+            ignoredItems: state.ignoredItems,
+            decisions: state.decisions,
+            reviewSession: state.reviewSession,
+            activeIssueId: state.activeIssueId,
+            selectedActionType: state.selectedActionType,
+            requestForm: state.requestForm,
+            unknownWizard: state.unknownWizard,
+            addChargeForm: state.addChargeForm,
+            actionMessage: state.actionMessage,
+            prototypeOverride: state.prototypeOverride,
+            showHelpText: state.showHelpText
+        },
+        derived: {
+            combinedUnresolved,
+            currentIssue,
+            activeCharges,
+            uniqueCurrencies,
+            subtotals,
+            checklistIssuesResolved,
+            checklistNoUnknown,
+            checklistProductCodesVerified,
+            canFinishReview,
+            isReviewLocked,
+            canUsePrototypeOverride,
+            nextStepGuidance
+        },
+        actions: {
+            selectIssue,
+            openMapExisting,
+            openRequestProductCode,
+            openUnknownProductCodeRequest,
+            openAddUnknownCharge,
+            cancelAction,
+            updateRequestForm,
+            updateAddChargeForm,
+            classifyUnknown,
+            returnToUnknownClassification,
+            mapProductCode,
+            submitProductCodeRequest,
+            useApprovedProductCode,
+            acceptSuggestedMapping,
+            ignoreCharge,
+            ignoreUnknownCharge,
+            approveUnknownNote,
+            addUnknownAsCharge,
+            toggleIncludeInTotals,
+            undoDecision,
+            finalizeReview,
+            dismissActionMessage,
+            togglePrototypeOverride,
+            toggleHelpText
+        }
+    };
+}

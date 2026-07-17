@@ -61,35 +61,33 @@ assert.ok(
 console.log("✓ Verified MapExistingForm enforces non-empty checks before callback.");
 
 // 6. Parent integration: verify callbacks and state ownership
-// Verify the parent binds context using currentIssue.id and handles the submissions
+// Verify the parent binds context using currentIssue.id and handles the submissions via actions
 assert.ok(
-  /handleMapProductCode\s*\(\s*currentIssue\.id\s*,\s*productCode\s*,\s*currentIssue\.title\s*\)/.test(workspaceSrc),
-  "ExceptionWorkspace must wrap handleMapProductCode mapping callback with currentIssue context"
+  /actions\.mapProductCode\s*\(\s*currentIssue\.id\s*,\s*productCode\s*,\s*currentIssue\.title\s*\)/.test(workspaceSrc),
+  "ExceptionWorkspace must wrap actions.mapProductCode mapping callback with currentIssue context"
 );
 
 assert.ok(
-  /handleSubmitProductCodeRequest\s*\(\s*currentIssue\.id\s*\)/.test(workspaceSrc),
-  "ExceptionWorkspace must wrap handleSubmitProductCodeRequest callback with currentIssue context"
+  /actions\.submitProductCodeRequest\s*\(\s*currentIssue\.id\s*\)/.test(workspaceSrc),
+  "ExceptionWorkspace must wrap actions.submitProductCodeRequest callback with currentIssue context"
 );
 
 assert.ok(
-  /handleAddUnknownAsCharge\s*\(\s*currentIssue\.id\s*\)/.test(workspaceSrc),
-  "ExceptionWorkspace must wrap handleAddUnknownAsCharge callback with currentIssue context"
+  /actions\.addUnknownAsCharge\s*\(\s*currentIssue\.id\s*\)/.test(workspaceSrc),
+  "ExceptionWorkspace must wrap actions.addUnknownAsCharge callback with currentIssue context"
 );
 
-// Verify parent retains state ownership and handler definitions
-assert.ok(workspaceSrc.includes("const handleMapProductCode ="), "ExceptionWorkspace must define and own handleMapProductCode");
-assert.ok(workspaceSrc.includes("const handleSubmitProductCodeRequest ="), "ExceptionWorkspace must define and own handleSubmitProductCodeRequest");
-assert.ok(workspaceSrc.includes("const handleAddUnknownAsCharge ="), "ExceptionWorkspace must define and own handleAddUnknownAsCharge");
+// Verify parent does NOT locally define state variables and handler functions
+assert.ok(!workspaceSrc.includes("const handleMapProductCode ="), "ExceptionWorkspace must not locally define handleMapProductCode");
+assert.ok(!workspaceSrc.includes("const handleSubmitProductCodeRequest ="), "ExceptionWorkspace must not locally define handleSubmitProductCodeRequest");
+assert.ok(!workspaceSrc.includes("const handleAddUnknownAsCharge ="), "ExceptionWorkspace must not locally define handleAddUnknownAsCharge");
+assert.ok(!workspaceSrc.includes("const [suggestedCharges"), "ExceptionWorkspace must not locally define suggestedCharges state");
 
-console.log("✓ Verified parent-bound callbacks wrap handlers and preserve local state ownership.");
+// 7. Verify API ownership sits in the hook
+const hookPath = path.join(frontendRoot, "src", "components", "spot", "workspace", "useSpotResolutionWorkflow.ts");
+const hookSrc = await readFile(hookPath, "utf8");
+assert.ok(hookSrc.includes('import("../../../lib/api")'), "useSpotResolutionWorkflow hook must import API functions");
+assert.ok(hookSrc.includes("resolveDraftQuoteDecisions"), "useSpotResolutionWorkflow must call resolveDraftQuoteDecisions");
+assert.ok(hookSrc.includes("finalizeDraftQuoteReview"), "useSpotResolutionWorkflow must call finalizeDraftQuoteReview");
 
-// 7. Verify wizard variables and decision constructs remain in ExceptionWorkspace
-assert.ok(workspaceSrc.includes("unknownStep"), "ExceptionWorkspace must own and manage unknownStep state");
-assert.ok(workspaceSrc.includes("unknownClassification"), "ExceptionWorkspace must own and manage unknownClassification state");
-assert.ok(workspaceSrc.includes("interface Decision"), "ExceptionWorkspace must own Decision interfaces");
-assert.ok(workspaceSrc.includes("const [decisions"), "ExceptionWorkspace must own the decisions array state");
-
-console.log("✓ Verified unknown-charge wizard flow and decision logging reside strictly in parent.");
-
-console.log("All Phase 14C form-extraction contract assertions passed successfully!");
+console.log("All Spot Workspace Form Extraction contract assertions passed successfully!");
