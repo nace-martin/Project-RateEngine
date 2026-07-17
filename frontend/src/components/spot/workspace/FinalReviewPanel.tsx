@@ -129,8 +129,7 @@ export function FinalReviewPanel({
             </label>
           </div>
         )}
-        {isLive && <div />}{" "}
-        {/* spacer to maintain justify-between layout alignment when checkbox is hidden */}
+        {isLive && <div />} {/* spacer to maintain justify-between layout alignment when checkbox is hidden */}
         <button
           disabled={
             isReviewLocked || (!canFinishReview && !canUsePrototypeOverride)
