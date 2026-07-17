@@ -42,6 +42,9 @@ assert.ok(mapFormSrc.includes('import { Combobox } from "@/components/ui/combobo
 assert.ok(mapFormSrc.includes("productCodes.map"), "MapExistingForm must render ProductCode options supplied by its parent");
 assert.ok(!mapFormSrc.includes("AF-FREIGHT"), "MapExistingForm must not hardcode ProductCode options");
 assert.ok(!mapFormSrc.includes("<select"), "MapExistingForm must not use the legacy hardcoded select");
+assert.ok(mapFormSrc.includes("Loading ProductCodes for this shipment direction"), "MapExistingForm must render a visible loading state");
+assert.ok(mapFormSrc.includes("productCodeLoadError"), "MapExistingForm must render a visible ProductCode load error state");
+assert.ok(mapFormSrc.includes("Retry"), "MapExistingForm must expose an explicit retry action");
 
 console.log("✓ Verified MapExistingForm renders parent-supplied Combobox options without hardcoded ProductCodes.");
 
@@ -81,6 +84,7 @@ const hookPath = path.join(frontendRoot, "src", "components", "spot", "workspace
 const hookSrc = await readFile(hookPath, "utf8");
 assert.ok(hookSrc.includes('import("../../../lib/api")'), "useSpotResolutionWorkflow hook must import API functions");
 assert.ok(hookSrc.includes("getProductCodes({ domain: productCodeDomain })"), "useSpotResolutionWorkflow must load ProductCodes by shipment direction domain");
+assert.ok(hookSrc.includes("retryProductCodeLoad"), "useSpotResolutionWorkflow must expose an explicit ProductCode reload action");
 assert.ok(hookSrc.includes("resolveDraftQuoteDecisions"), "useSpotResolutionWorkflow must call resolveDraftQuoteDecisions");
 assert.ok(hookSrc.includes("finalizeDraftQuoteReview"), "useSpotResolutionWorkflow must call finalizeDraftQuoteReview");
 

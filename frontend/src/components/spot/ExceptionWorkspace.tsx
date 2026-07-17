@@ -339,6 +339,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                 productCodes={productCodes}
                                 isLoadingProductCodes={isLoadingProductCodes}
                                 productCodeLoadError={productCodeLoadError}
+                                onRetry={actions.retryProductCodeLoad}
                                 onMap={(productCode) =>
                                     actions.mapProductCode(
                                         currentIssue.id,

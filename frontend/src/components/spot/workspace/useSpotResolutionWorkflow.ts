@@ -37,6 +37,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
     const [productCodes, setProductCodes] = useState<ProductCodeSelectorOption[]>([]);
     const [isLoadingProductCodes, setIsLoadingProductCodes] = useState(false);
     const [productCodeLoadError, setProductCodeLoadError] = useState<string | null>(null);
+    const [productCodeRetryNonce, setProductCodeRetryNonce] = useState(0);
 
     const shipmentDirection = String(initialData.shipment_context.direction || "").toUpperCase();
     const productCodeDomain = PRODUCT_CODE_DOMAINS.has(shipmentDirection) ? shipmentDirection : null;
@@ -79,7 +80,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         return () => {
             cancelled = true;
         };
-    }, [productCodeDomain]);
+    }, [productCodeDomain, productCodeRetryNonce]);
 
     // API submission helper
     const submitLiveDecision = async (decisionItem: {
@@ -114,6 +115,10 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
     const openMapExisting = () => {
         dispatch({ type: "OPEN_MAP_EXISTING" });
+    };
+
+    const retryProductCodeLoad = () => {
+        setProductCodeRetryNonce((value) => value + 1);
     };
 
     const openRequestProductCode = (charge: DraftCharge) => {
@@ -486,6 +491,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         actions: {
             selectIssue,
             openMapExisting,
+            retryProductCodeLoad,
             openRequestProductCode,
             openUnknownProductCodeRequest,
             openAddUnknownCharge,

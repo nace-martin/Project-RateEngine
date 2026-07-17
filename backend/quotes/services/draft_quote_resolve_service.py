@@ -50,25 +50,17 @@ def _normalize_product_code_domain(value):
 
 def _expected_product_code_domain(envelope):
     shipment_context = envelope.shipment_context_json if isinstance(envelope.shipment_context_json, dict) else {}
-    explicit_direction = _normalize_product_code_domain(shipment_context.get("direction"))
-    if explicit_direction:
-        return explicit_direction
-
     origin_country = shipment_context.get("origin_country", "")
     destination_country = shipment_context.get("destination_country", "")
-    try:
-        from quotes.spot_services import classify_png_shipment
-        return _normalize_product_code_domain(classify_png_shipment(origin_country, destination_country))
-    except Exception:
-        origin_country = str(origin_country).upper()
-        destination_country = str(destination_country).upper()
-        if origin_country == "PG" and destination_country != "PG":
-            return ProductCode.DOMAIN_EXPORT
-        if origin_country != "PG" and destination_country == "PG":
-            return ProductCode.DOMAIN_IMPORT
-        if origin_country == "PG" and destination_country == "PG":
-            return ProductCode.DOMAIN_DOMESTIC
-    return None
+
+    if origin_country and destination_country:
+        try:
+            from quotes.spot_services import classify_png_shipment
+            return _normalize_product_code_domain(classify_png_shipment(origin_country, destination_country))
+        except Exception:
+            return None
+
+    return _normalize_product_code_domain(shipment_context.get("direction"))
 
 
 def _valid_choice_values(choices):
@@ -336,7 +328,11 @@ def apply_draft_quote_decisions(
                     error_code_val = "PRODUCT_CODE_NOT_FOUND"
                 else:
                     expected_domain = _expected_product_code_domain(envelope)
-                    if expected_domain and product_code.domain != expected_domain:
+                    if not expected_domain:
+                        status_val = "rejected"
+                        message_val = "Shipment direction could not be determined from trusted route evidence. ProductCode mapping was not applied."
+                        error_code_val = "PRODUCT_CODE_DIRECTION_UNAVAILABLE"
+                    elif product_code.domain != expected_domain:
                         status_val = "rejected"
                         message_val = f"ProductCode domain {product_code.domain} does not match shipment direction {expected_domain}."
                         error_code_val = "PRODUCT_CODE_DOMAIN_MISMATCH"

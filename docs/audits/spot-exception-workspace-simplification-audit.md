@@ -343,10 +343,11 @@ The fix was verified by:
 Phase 14F replaces the Exception Workspace's hardcoded Map Existing ProductCode list with a direction-scoped selector. The child form remains presentation-only and API-free; ProductCode loading is owned by the workspace orchestration hook.
 
 Implemented safeguards:
-- Draft Quote payloads now include normalized `shipment_context.direction` (`IMPORT`, `EXPORT`, or `DOMESTIC`).
-- `useSpotResolutionWorkflow` loads ProductCodes with `getProductCodes({ domain })` using the trusted draft quote direction.
-- `MapExistingForm` renders parent-supplied options through the shared `Combobox` instead of a fixed HTML select.
-- Backend `map_to_product_code` decisions reject ProductCodes whose domain does not match the trusted shipment direction.
+- Draft Quote payloads now include normalized `shipment_context.direction` (`IMPORT`, `EXPORT`, or `DOMESTIC`) only when trusted route evidence supports a direction.
+- Origin/destination country pairs are authoritative; a raw JSON `direction` value cannot override the route-derived direction.
+- `useSpotResolutionWorkflow` loads ProductCodes with `getProductCodes({ domain })` using the trusted draft quote direction and exposes a retry action for failed loads.
+- `MapExistingForm` renders parent-supplied options through the shared `Combobox` instead of a fixed HTML select, with visible loading/error states and an explicit Retry action.
+- Backend `map_to_product_code` decisions fail closed when direction is unavailable and reject ProductCodes whose domain does not match the trusted shipment direction.
 
 Intentional non-changes:
 - No pricing, quote total, GST, finalization, ProductCode approval, or RBAC behavior changed.

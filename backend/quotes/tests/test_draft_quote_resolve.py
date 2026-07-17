@@ -196,7 +196,7 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self.charge.refresh_from_db()
         self.assertIsNone(self.charge.manual_resolved_product_code_id)
 
-    def test_map_to_product_code_uses_trusted_shipment_context_direction(self):
+    def test_map_to_product_code_route_countries_override_explicit_json_direction(self):
         self.envelope.shipment_context_json = {"direction": "EXPORT", "origin_country": "SG", "destination_country": "PG", "mode": "AIR"}
         self.envelope.save(update_fields=["shipment_context_json"])
         export_product_code = ProductCode.objects.create(
@@ -212,9 +212,43 @@ class DraftQuoteResolveHighValueTests(TestCase):
         )
         res = self._post([self._decision("map_to_product_code", details={"product_code": export_product_code.code})])
         self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "PRODUCT_CODE_DOMAIN_MISMATCH")
+        self.charge.refresh_from_db()
+        self.assertIsNone(self.charge.manual_resolved_product_code_id)
+
+    def test_map_to_product_code_rejects_when_direction_unavailable(self):
+        self.envelope.shipment_context_json = {"origin_country": "SG", "destination_country": "AU", "mode": "AIR"}
+        self.envelope.save(update_fields=["shipment_context_json"])
+        res = self._post([self._decision("map_to_product_code", details={"product_code": self.product_code.code})])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "PRODUCT_CODE_DIRECTION_UNAVAILABLE")
+        self.charge.refresh_from_db()
+        self.assertIsNone(self.charge.manual_resolved_product_code_id)
+
+    def test_draft_quote_payload_direction_uses_route_countries_over_json_direction(self):
+        from quotes.services.draft_quote_adapter import build_draft_quote_payload
+
+        self.envelope.shipment_context_json = {"direction": "EXPORT", "origin_country": "SG", "destination_country": "PG", "mode": "AIR"}
+        self.envelope.save(update_fields=["shipment_context_json"])
+        payload = build_draft_quote_payload(self.envelope)
+        self.assertEqual(payload["shipment_context"]["direction"], "IMPORT")
+
+    def test_draft_quote_payload_omits_direction_when_route_countries_are_unsupported(self):
+        from quotes.services.draft_quote_adapter import build_draft_quote_payload
+
+        self.envelope.shipment_context_json = {"direction": "IMPORT", "origin_country": "SG", "destination_country": "AU", "mode": "AIR"}
+        self.envelope.save(update_fields=["shipment_context_json"])
+        payload = build_draft_quote_payload(self.envelope)
+        self.assertNotIn("direction", payload["shipment_context"])
+
+    def test_map_to_product_code_uses_explicit_direction_when_route_countries_missing(self):
+        self.envelope.shipment_context_json = {"direction": "IMPORT", "mode": "AIR"}
+        self.envelope.save(update_fields=["shipment_context_json"])
+        res = self._post([self._decision("map_to_product_code", details={"product_code": self.product_code.code})])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
         self.charge.refresh_from_db()
-        self.assertEqual(self.charge.manual_resolved_product_code_id, export_product_code.id)
+        self.assertEqual(self.charge.manual_resolved_product_code_id, self.product_code.id)
 
     def test_map_to_product_code_replay_is_idempotent(self):
         key = uuid.uuid4()
