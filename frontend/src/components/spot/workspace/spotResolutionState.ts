@@ -155,7 +155,7 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
                 ...state,
                 activeIssueId: action.payload.issueId,
                 selectedActionType: null,
-                unknownWizard: { step: 1, classification: null }
+                unknownWizard: { ...state.unknownWizard, step: 1 }
             };
 
         case "OPEN_MAP_EXISTING":
@@ -180,12 +180,9 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
             return {
                 ...state,
                 addChargeForm: {
+                    ...state.addChargeForm,
                     name: action.payload.name,
-                    bucket: "origin_charges",
-                    currency: "SGD",
-                    amount: action.payload.amount,
-                    unit: "set",
-                    productCode: ""
+                    amount: action.payload.amount
                 },
                 selectedActionType: "add_charge"
             };
@@ -217,10 +214,13 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
         case "CLASSIFY_UNKNOWN":
             return {
                 ...state,
-                unknownWizard: {
-                    step: action.payload.step,
-                    classification: action.payload.classification
-                }
+                unknownWizard:
+                    action.payload.step === 1
+                        ? { ...state.unknownWizard, step: 1 }
+                        : {
+                              step: action.payload.step,
+                              classification: action.payload.classification
+                          }
             };
 
         case "MAP_PRODUCT_CODE": {
@@ -325,7 +325,7 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
                 unclassifiedItems: state.unclassifiedItems.filter(i => i.id !== itemId),
                 actionMessage: `Ignored unknown text block. Excluded from draft.`,
                 selectedActionType: null,
-                unknownWizard: { step: 1, classification: null }
+                unknownWizard: { ...state.unknownWizard, step: 1 }
             };
         }
 
@@ -338,7 +338,7 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
                 unclassifiedItems: state.unclassifiedItems.filter(i => i.id !== itemId),
                 actionMessage: "Note resolved and archived in quote details.",
                 selectedActionType: null,
-                unknownWizard: { step: 1, classification: null }
+                unknownWizard: { ...state.unknownWizard, step: 1 }
             };
         }
 
@@ -387,7 +387,7 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
                 reviewQueue: updatedReviewQueue,
                 actionMessage: `Unknown block added as draft charge line: "${chargeName}".`,
                 selectedActionType: null,
-                unknownWizard: { step: 1, classification: null }
+                unknownWizard: { ...state.unknownWizard, step: 1 }
             };
         }
 
@@ -414,7 +414,7 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
                 actionMessage: `Undone decision for ${targetDecision.description}.`,
                 activeIssueId: action.payload.decisionId,
                 selectedActionType: null,
-                unknownWizard: { step: 1, classification: null }
+                unknownWizard: { ...state.unknownWizard, step: 1 }
             };
         }
 

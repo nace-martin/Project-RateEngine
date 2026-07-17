@@ -343,8 +343,71 @@ console.log("✓ Initial state created successfully.");
     console.log("✓ FINALIZE_REVIEW transitions and lock checks complete.");
 }
 
-// 16. Regression: review-item actions must NOT reset unknownWizard state
-// Phase 14C had independent state for unknownStep/unknownClassification.
+// 16. Regression: Step-1 transitions must preserve unknownWizard.classification
+{
+    const wizardInProgress = {
+        ...initialState,
+        unknownWizard: { step: 2, classification: "charge" }
+    };
+
+    const assertStepOnePreservesClassification = (action, label) => {
+        const state = spotResolutionReducer(wizardInProgress, action);
+        assert.equal(state.unknownWizard.step, 1, `${label} must set unknownWizard.step to 1`);
+        assert.equal(state.unknownWizard.classification, "charge", `${label} must preserve unknownWizard.classification`);
+    };
+
+    assertStepOnePreservesClassification(
+        { type: "SELECT_ISSUE", payload: { issueId: "u1" } },
+        "SELECT_ISSUE"
+    );
+    assertStepOnePreservesClassification(
+        { type: "IGNORE_UNKNOWN_CHARGE", payload: { itemId: "u1", rawText: "SGD 25 docs fee", evidence: null } },
+        "IGNORE_UNKNOWN_CHARGE"
+    );
+    assertStepOnePreservesClassification(
+        { type: "APPROVE_UNKNOWN_NOTE", payload: { itemId: "u1", rawText: "SGD 25 docs fee" } },
+        "APPROVE_UNKNOWN_NOTE"
+    );
+    assertStepOnePreservesClassification(
+        {
+            type: "ADD_UNKNOWN_AS_CHARGE",
+            payload: {
+                itemId: "u1",
+                newChargeId: "chg-wizard-step-one",
+                chargeName: "Docs Fee",
+                chargeBucket: "destination_charges",
+                chargeCurrency: "SGD",
+                chargeAmount: 25,
+                chargeUnit: "flat",
+                chargeProductCode: "AF-HC",
+                evidence: null
+            }
+        },
+        "ADD_UNKNOWN_AS_CHARGE"
+    );
+
+    const resolvedState = spotResolutionReducer(wizardInProgress, {
+        type: "IGNORE_UNKNOWN_CHARGE",
+        payload: { itemId: "u1", rawText: "SGD 25 docs fee", evidence: null }
+    });
+    const undoState = spotResolutionReducer({ ...resolvedState, unknownWizard: { step: 2, classification: "charge" } }, {
+        type: "UNDO_DECISION",
+        payload: { decisionId: "u1" }
+    });
+    assert.equal(undoState.unknownWizard.step, 1, "UNDO_DECISION must set unknownWizard.step to 1");
+    assert.equal(undoState.unknownWizard.classification, "charge", "UNDO_DECISION must preserve unknownWizard.classification");
+
+    const returnToStepOneState = spotResolutionReducer(wizardInProgress, {
+        type: "CLASSIFY_UNKNOWN",
+        payload: { classification: null, step: 1 }
+    });
+    assert.equal(returnToStepOneState.unknownWizard.step, 1, "return-to-Step-1 action must set unknownWizard.step to 1");
+    assert.equal(returnToStepOneState.unknownWizard.classification, "charge", "return-to-Step-1 action must preserve unknownWizard.classification");
+    assert.equal(resolvedState.decisions.length, 1, "setup sanity check for UNDO_DECISION coverage");
+    console.log("✓ Step-1 transitions preserve unknownWizard.classification.");
+}
+
+// 17. Regression: review-item actions must preserve the full unknownWizard state
 // These actions operate on DraftCharge review items, not on unknownWizard items.
 // A mixed queue (review items + unknown items) means the wizard must retain its
 // classification and step while the operator resolves review-item blockers.
@@ -354,131 +417,61 @@ console.log("✓ Initial state created successfully.");
         unknownWizard: { step: 2, classification: "charge" }
     };
 
-    // MAP_PRODUCT_CODE must not touch unknownWizard
-    {
-        const state = spotResolutionReducer(wizardInProgress, {
-            type: "MAP_PRODUCT_CODE",
-            payload: { chargeId: "c1", productCode: "AF-FREIGHT", displayLabel: "Air Cargo Handling" }
-        });
-        assert.equal(state.unknownWizard.step, 2, "MAP_PRODUCT_CODE must preserve unknownWizard.step");
-        assert.equal(state.unknownWizard.classification, "charge", "MAP_PRODUCT_CODE must preserve unknownWizard.classification");
-        console.log("✓ MAP_PRODUCT_CODE preserves unknownWizard state (parity regression).");
-    }
-
-    // SUBMIT_PRODUCT_CODE_REQUEST must not touch unknownWizard
-    {
-        const state = spotResolutionReducer(wizardInProgress, {
-            type: "SUBMIT_PRODUCT_CODE_REQUEST",
-            payload: { chargeId: "c1", proposedCode: "AF-SPECIAL", sourceText: "Special handler text" }
-        });
-        assert.equal(state.unknownWizard.step, 2, "SUBMIT_PRODUCT_CODE_REQUEST must preserve unknownWizard.step");
-        assert.equal(state.unknownWizard.classification, "charge", "SUBMIT_PRODUCT_CODE_REQUEST must preserve unknownWizard.classification");
-        console.log("✓ SUBMIT_PRODUCT_CODE_REQUEST preserves unknownWizard state (parity regression).");
-    }
-
-    // USE_APPROVED_PRODUCT_CODE must not touch unknownWizard
-    {
-        const state = spotResolutionReducer(wizardInProgress, {
-            type: "USE_APPROVED_PRODUCT_CODE",
-            payload: { chargeId: "c1", code: "AF-HC", displayLabel: "Air Cargo Handling" }
-        });
-        assert.equal(state.unknownWizard.step, 2, "USE_APPROVED_PRODUCT_CODE must preserve unknownWizard.step");
-        assert.equal(state.unknownWizard.classification, "charge", "USE_APPROVED_PRODUCT_CODE must preserve unknownWizard.classification");
-        console.log("✓ USE_APPROVED_PRODUCT_CODE preserves unknownWizard state (parity regression).");
-    }
-
-    // ACCEPT_SUGGESTED_MAPPING must not touch unknownWizard
-    {
-        const state = spotResolutionReducer(wizardInProgress, {
-            type: "ACCEPT_SUGGESTED_MAPPING",
-            payload: { chargeId: "c2", displayLabel: "Fuel Surcharge", suggestedCode: "AF-FUEL" }
-        });
-        assert.equal(state.unknownWizard.step, 2, "ACCEPT_SUGGESTED_MAPPING must preserve unknownWizard.step");
-        assert.equal(state.unknownWizard.classification, "charge", "ACCEPT_SUGGESTED_MAPPING must preserve unknownWizard.classification");
-        console.log("✓ ACCEPT_SUGGESTED_MAPPING preserves unknownWizard state (parity regression).");
-    }
-
-    // IGNORE_CHARGE must not touch unknownWizard
-    {
-        const state = spotResolutionReducer(wizardInProgress, {
-            type: "IGNORE_CHARGE",
-            payload: { chargeId: "c1", displayLabel: "Air Cargo Handling", rawLabel: "Air Cargo Handling", evidence: null }
-        });
-        assert.equal(state.unknownWizard.step, 2, "IGNORE_CHARGE must preserve unknownWizard.step");
-        assert.equal(state.unknownWizard.classification, "charge", "IGNORE_CHARGE must preserve unknownWizard.classification");
-        console.log("✓ IGNORE_CHARGE preserves unknownWizard state (parity regression).");
-    }
-}
-
-// 17. Regression: unknown-item completion actions and UNDO must reset unknownWizard
-// This verifies that the wizard IS reset by the actions that actually complete an
-// unknown-item resolution workflow.
-{
-    const wizardInProgress = {
-        ...initialState,
-        unknownWizard: { step: 2, classification: "note" }
+    const assertPreservesWizard = (action, label) => {
+        const state = spotResolutionReducer(wizardInProgress, action);
+        assert.deepEqual(state.unknownWizard, wizardInProgress.unknownWizard, `${label} must preserve the full unknownWizard state`);
     };
 
-    // IGNORE_UNKNOWN_CHARGE completes the unknown item flow — wizard should reset
-    {
-        const state = spotResolutionReducer(wizardInProgress, {
-            type: "IGNORE_UNKNOWN_CHARGE",
-            payload: { itemId: "u1", rawText: "SGD 25 docs fee", evidence: null }
-        });
-        assert.equal(state.unknownWizard.step, 1, "IGNORE_UNKNOWN_CHARGE must reset unknownWizard.step to 1");
-        assert.equal(state.unknownWizard.classification, null, "IGNORE_UNKNOWN_CHARGE must reset unknownWizard.classification to null");
-        console.log("✓ IGNORE_UNKNOWN_CHARGE resets unknownWizard on completion.");
-    }
+    assertPreservesWizard(
+        { type: "MAP_PRODUCT_CODE", payload: { chargeId: "c1", productCode: "AF-FREIGHT", displayLabel: "Air Cargo Handling" } },
+        "MAP_PRODUCT_CODE"
+    );
+    assertPreservesWizard(
+        { type: "SUBMIT_PRODUCT_CODE_REQUEST", payload: { chargeId: "c1", proposedCode: "AF-SPECIAL", sourceText: "Special handler text" } },
+        "SUBMIT_PRODUCT_CODE_REQUEST"
+    );
+    assertPreservesWizard(
+        { type: "USE_APPROVED_PRODUCT_CODE", payload: { chargeId: "c1", code: "AF-HC", displayLabel: "Air Cargo Handling" } },
+        "USE_APPROVED_PRODUCT_CODE"
+    );
+    assertPreservesWizard(
+        { type: "ACCEPT_SUGGESTED_MAPPING", payload: { chargeId: "c2", displayLabel: "Fuel Surcharge", suggestedCode: "AF-FUEL" } },
+        "ACCEPT_SUGGESTED_MAPPING"
+    );
+    assertPreservesWizard(
+        { type: "IGNORE_CHARGE", payload: { chargeId: "c1", displayLabel: "Air Cargo Handling", rawLabel: "Air Cargo Handling", evidence: null } },
+        "IGNORE_CHARGE"
+    );
+    console.log("✓ Review-item actions preserve the full unknownWizard state.");
+}
 
-    // APPROVE_UNKNOWN_NOTE completes the note flow — wizard should reset
-    {
-        const state = spotResolutionReducer(wizardInProgress, {
-            type: "APPROVE_UNKNOWN_NOTE",
-            payload: { itemId: "u1", rawText: "SGD 25 docs fee" }
-        });
-        assert.equal(state.unknownWizard.step, 1, "APPROVE_UNKNOWN_NOTE must reset unknownWizard.step to 1");
-        assert.equal(state.unknownWizard.classification, null, "APPROVE_UNKNOWN_NOTE must reset unknownWizard.classification to null");
-        console.log("✓ APPROVE_UNKNOWN_NOTE resets unknownWizard on completion.");
-    }
+// 18. Regression: reopening Add Charge updates only name and amount
+{
+    const customizedFormState = {
+        ...initialState,
+        addChargeForm: {
+            name: "Previous Name",
+            bucket: "destination_charges",
+            currency: "USD",
+            amount: "10",
+            unit: "kg",
+            productCode: "AF-HC"
+        }
+    };
+    const state = spotResolutionReducer(customizedFormState, {
+        type: "OPEN_ADD_UNKNOWN_CHARGE",
+        payload: { name: "Docs Fee", amount: "25" }
+    });
 
-    // ADD_UNKNOWN_AS_CHARGE completes the add-charge flow — wizard should reset
-    {
-        const state = spotResolutionReducer(wizardInProgress, {
-            type: "ADD_UNKNOWN_AS_CHARGE",
-            payload: {
-                itemId: "u1",
-                newChargeId: "chg-wizard-test",
-                chargeName: "Docs Fee",
-                chargeBucket: "destination_charges",
-                chargeCurrency: "SGD",
-                chargeAmount: 25,
-                chargeUnit: "flat",
-                chargeProductCode: "AF-HC",
-                evidence: null
-            }
-        });
-        assert.equal(state.unknownWizard.step, 1, "ADD_UNKNOWN_AS_CHARGE must reset unknownWizard.step to 1");
-        assert.equal(state.unknownWizard.classification, null, "ADD_UNKNOWN_AS_CHARGE must reset unknownWizard.classification to null");
-        console.log("✓ ADD_UNKNOWN_AS_CHARGE resets unknownWizard on completion.");
-    }
-
-    // UNDO_DECISION on an unknown-item resolution — wizard should reset
-    {
-        // First resolve the unknown item
-        const resolvedState = spotResolutionReducer(initialState, {
-            type: "IGNORE_UNKNOWN_CHARGE",
-            payload: { itemId: "u1", rawText: "SGD 25 docs fee", evidence: null }
-        });
-        // Set wizard mid-step on a subsequent issue
-        const wizardMidStep = { ...resolvedState, unknownWizard: { step: 2, classification: "charge" } };
-        const undoneState = spotResolutionReducer(wizardMidStep, {
-            type: "UNDO_DECISION",
-            payload: { decisionId: "u1" }
-        });
-        assert.equal(undoneState.unknownWizard.step, 1, "UNDO_DECISION must reset unknownWizard.step to 1");
-        assert.equal(undoneState.unknownWizard.classification, null, "UNDO_DECISION must reset unknownWizard.classification to null");
-        console.log("✓ UNDO_DECISION resets unknownWizard correctly.");
-    }
+    assert.deepEqual(state.addChargeForm, {
+        name: "Docs Fee",
+        bucket: "destination_charges",
+        currency: "USD",
+        amount: "25",
+        unit: "kg",
+        productCode: "AF-HC"
+    });
+    console.log("✓ OPEN_ADD_UNKNOWN_CHARGE updates only name and amount.");
 }
 
 console.log("All Spot Resolution State unit tests passed successfully!");
