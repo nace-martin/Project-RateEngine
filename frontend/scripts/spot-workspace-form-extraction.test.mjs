@@ -37,24 +37,17 @@ assert.ok(workspaceSrc.includes('import { AddChargeForm } from "./workspace/AddC
 
 console.log("✓ Verified ExceptionWorkspace correctly imports the extracted components.");
 
-// 4. MapExistingForm option values and order checks
-const options = [];
-const selectRegex = /<option value="([^"]*)">/g;
-let match;
-while ((match = selectRegex.exec(mapFormSrc)) !== null) {
-  options.push(match[1]);
-}
-assert.deepEqual(
-  options,
-  ["", "AF-FREIGHT", "AF-FUEL", "AF-SEC", "AF-HC"],
-  "MapExistingForm select options and order must match exactly"
-);
+// 4. MapExistingForm must use API-provided ProductCode options via Combobox, not hardcoded select options
+assert.ok(mapFormSrc.includes('import { Combobox } from "@/components/ui/combobox";'), "MapExistingForm must use the shared Combobox");
+assert.ok(mapFormSrc.includes("productCodes.map"), "MapExistingForm must render ProductCode options supplied by its parent");
+assert.ok(!mapFormSrc.includes("AF-FREIGHT"), "MapExistingForm must not hardcode ProductCode options");
+assert.ok(!mapFormSrc.includes("<select"), "MapExistingForm must not use the legacy hardcoded select");
 
-console.log("✓ Verified MapExistingForm contains exact option values and sequence.");
+console.log("✓ Verified MapExistingForm renders parent-supplied Combobox options without hardcoded ProductCodes.");
 
 // 5. MapExistingForm checks for non-empty selected values before calling onMap
 assert.ok(
-  mapFormSrc.includes("if (e.target.value) {") || mapFormSrc.includes("if(e.target.value)"),
+  mapFormSrc.includes("if (value) {") || mapFormSrc.includes("if(value)"),
   "MapExistingForm must check for non-empty selection before invoking callback"
 );
 
@@ -87,6 +80,7 @@ assert.ok(!workspaceSrc.includes("const [suggestedCharges"), "ExceptionWorkspace
 const hookPath = path.join(frontendRoot, "src", "components", "spot", "workspace", "useSpotResolutionWorkflow.ts");
 const hookSrc = await readFile(hookPath, "utf8");
 assert.ok(hookSrc.includes('import("../../../lib/api")'), "useSpotResolutionWorkflow hook must import API functions");
+assert.ok(hookSrc.includes("getProductCodes({ domain: productCodeDomain })"), "useSpotResolutionWorkflow must load ProductCodes by shipment direction domain");
 assert.ok(hookSrc.includes("resolveDraftQuoteDecisions"), "useSpotResolutionWorkflow must call resolveDraftQuoteDecisions");
 assert.ok(hookSrc.includes("finalizeDraftQuoteReview"), "useSpotResolutionWorkflow must call finalizeDraftQuoteReview");
 

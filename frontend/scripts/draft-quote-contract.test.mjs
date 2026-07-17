@@ -29,6 +29,7 @@ async function runTests() {
 
   // 1. Structure validation
   assert.equal(hardCaseAirImportData.contract_version, "1.0.0");
+  assert.equal(hardCaseAirImportData.shipment_context.direction, "IMPORT");
   assert.ok(Array.isArray(hardCaseAirImportData.suggested_charges));
 
   // 2. Undo & Reopen Transition Simulation

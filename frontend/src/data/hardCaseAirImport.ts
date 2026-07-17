@@ -12,7 +12,8 @@ export const hardCaseAirImportData: DraftQuote = {
     "actual_weight_kg": 150.0,
     "volumetric_weight_kg": 200.0,
     "chargeable_weight_kg": 200.0,
-    "commodity": "GCR"
+    "commodity": "GCR",
+    "direction": "IMPORT"
   },
   "supplier_context": {
     "supplier_name": "Qantas Air Cargo",

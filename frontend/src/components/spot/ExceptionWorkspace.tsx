@@ -37,7 +37,10 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
         reviewSession,
         selectedActionType,
         actionMessage,
-        prototypeOverride
+        prototypeOverride,
+        productCodes,
+        isLoadingProductCodes,
+        productCodeLoadError
     } = state;
 
     const {
@@ -333,6 +336,9 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                             </div>
                         ) : selectedActionType === "map_existing" ? (
                             <MapExistingForm
+                                productCodes={productCodes}
+                                isLoadingProductCodes={isLoadingProductCodes}
+                                productCodeLoadError={productCodeLoadError}
                                 onMap={(productCode) =>
                                     actions.mapProductCode(
                                         currentIssue.id,

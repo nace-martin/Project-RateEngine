@@ -5,6 +5,14 @@ from typing import Any, Dict, List, Optional
 from quotes.spot_models import SpotPricingEnvelopeDB, SPEChargeLineDB
 from quotes.contracts.draft_quote_contract import DraftQuoteSchema
 
+VALID_PRODUCT_CODE_DOMAINS = {"IMPORT", "EXPORT", "DOMESTIC"}
+
+
+def _normalize_shipment_direction(value: Any) -> Optional[str]:
+    direction = str(value or "").strip().upper()
+    return direction if direction in VALID_PRODUCT_CODE_DOMAINS else None
+
+
 def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
     shipment_ctx = spe_db.shipment_context_json or {}
     
@@ -24,22 +32,23 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
     supplier_name = supplier_name or "Unknown Carrier"
 
     # Classify shipment direction (IMPORT vs EXPORT vs DOMESTIC)
-    direction = "Import"
+    direction = _normalize_shipment_direction(shipment_ctx.get('direction'))
     origin_country = shipment_ctx.get('origin_country', '')
     destination_country = shipment_ctx.get('destination_country', '')
     try:
         from quotes.spot_services import classify_png_shipment
-        direction = classify_png_shipment(origin_country, destination_country)
+        if not direction:
+            direction = _normalize_shipment_direction(classify_png_shipment(origin_country, destination_country))
     except Exception:
-        # Fallback
-        if str(origin_country).upper() == "PG" and str(destination_country).upper() != "PG":
+        # Fallback only when source countries conclusively identify a supported PNG direction.
+        if str(origin_country).upper() == "PG" and str(destination_country).upper() != "PG" and destination_country:
             direction = "EXPORT"
-        elif str(origin_country).upper() != "PG" and str(destination_country).upper() == "PG":
+        elif str(origin_country).upper() != "PG" and origin_country and str(destination_country).upper() == "PG":
             direction = "IMPORT"
         elif str(origin_country).upper() == "PG" and str(destination_country).upper() == "PG":
             direction = "DOMESTIC"
 
-    quote_summary = f"Draft Quote Suggestion for {mode} Freight {direction} - {origin} to {destination} via {supplier_name}"
+    quote_summary = f"Draft Quote Suggestion for {mode} Freight {direction or 'UNKNOWN'} - {origin} to {destination} via {supplier_name}"
 
     # 2. Shipment Context
     shipment_context = {
@@ -52,6 +61,8 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
         "chargeable_weight_kg": float(shipment_ctx.get('chargeable_weight_kg') or shipment_ctx.get('chargeable_weight') or 0.0),
         "commodity": shipment_ctx.get('commodity') or 'GCR'
     }
+    if direction:
+        shipment_context["direction"] = direction
 
     # 3. Supplier Context
     supplier_context = {

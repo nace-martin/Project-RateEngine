@@ -37,6 +37,7 @@ class DraftQuoteContractTests(SimpleTestCase):
         self.assertEqual(len(schema.commercial_terms), 4)
         self.assertEqual(len(schema.unclassified_items), 1)
         self.assertEqual(len(schema.ignored_items), 1)
+        self.assertEqual(schema.shipment_context["direction"], "IMPORT")
 
     def test_every_suggested_charge_has_evidence_with_source_text(self):
         """Verify that every charge in suggested status has evidence and source_text."""
