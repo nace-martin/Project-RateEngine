@@ -290,7 +290,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                                         <div className="text-xs font-semibold text-slate-300">Step 2: How should it be mapped?</div>
                                                         <div className="flex flex-col sm:flex-row gap-2">
                                                             <button
-                                                                onClick={actions.openMapExisting}
+                                                                onClick={() => actions.openUnknownMapExisting(currentIssue.itemDetails!.raw_text)}
                                                                 className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-xs text-left grow text-slate-200"
                                                             >
                                                                 Map to an existing billing code
@@ -354,6 +354,19 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                           )
                                 }
                                 onCancel={actions.cancelAction}
+                                collectChargeDetails={currentIssue.type === "unknown_charge"}
+                                selectedProductCode={state.addChargeForm.productCode}
+                                onProductCodeChange={(val) => actions.updateAddChargeForm({ productCode: val })}
+                                chargeName={state.addChargeForm.name}
+                                onChargeNameChange={(val) => actions.updateAddChargeForm({ name: val })}
+                                chargeBucket={state.addChargeForm.bucket}
+                                onChargeBucketChange={(val) => actions.updateAddChargeForm({ bucket: val })}
+                                chargeCurrency={state.addChargeForm.currency}
+                                onChargeCurrencyChange={(val) => actions.updateAddChargeForm({ currency: val })}
+                                chargeAmount={state.addChargeForm.amount}
+                                onChargeAmountChange={(val) => actions.updateAddChargeForm({ amount: val })}
+                                chargeUnit={state.addChargeForm.unit}
+                                onChargeUnitChange={(val) => actions.updateAddChargeForm({ unit: val })}
                             />
                         ) : selectedActionType === "request_product_code" ? (
                             <RequestProductCodeForm

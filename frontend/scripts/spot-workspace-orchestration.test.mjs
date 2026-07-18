@@ -25,6 +25,7 @@ const panelSources = new Map(
         ])
     )
 );
+const mapExistingFormSrc = await readFile(path.join(frontendRoot, "src", "components", "spot", "workspace", "MapExistingForm.tsx"), "utf8");
 
 // 1. Verify ExceptionWorkspace imports and consumes the hook
 assert.ok(
@@ -118,6 +119,16 @@ assert.ok(!hookSrc.includes('type: "map_to_product_code",\n            target_id
 assert.ok(!hookSrc.includes('newChargeId = `chg-new-${Date.now()}`;\n            try'), "Live unknown charge creation must not create synthetic IDs");
 assert.ok(!hookSrc.includes('domain: "IMPORT"'), "ProductCode requests must not hardcode IMPORT domain");
 assert.ok(!hookSrc.includes('currency: "SGD"'), "Unknown ProductCode requests must not hardcode SGD currency");
+assert.ok(workspaceSrc.includes("actions.openUnknownMapExisting"), "Unknown Map Existing must open a detail-collection workflow instead of submitting from ProductCode-only selection");
+assert.ok(workspaceSrc.includes('collectChargeDetails={currentIssue.type === "unknown_charge"}'), "Unknown Map Existing must collect full charge details");
+assert.ok(mapExistingFormSrc.includes("Confirm Mapping"), "MapExistingForm must require confirmation when collecting unknown charge details");
+assert.ok(mapExistingFormSrc.includes("collectChargeDetails"), "MapExistingForm must support the unknown charge detail collection mode");
+assert.ok(hookSrc.includes("return response;"), "submitLiveDecision must return the resolve response");
+assert.ok(hookSrc.includes("rejected_decisions.find"), "submitLiveDecision must inspect rejected_decisions for the submitted decision");
+assert.ok(hookSrc.includes("throw new Error(rejectedMessage)"), "submitLiveDecision must throw rejected decision messages without refreshing state");
+assert.ok(hookSrc.includes("chargeLabel === GENERIC_UNKNOWN_LABEL"), "Unknown Map Existing must never submit the generic Unknown Charge Block label");
+assert.ok(hookSrc.includes("Complete charge label, bucket, currency, amount, unit and ProductCode"), "Unknown Map Existing must require a complete charge payload");
+assert.ok(hookSrc.includes("category: state.requestForm.bucket"), "ProductCode requests must carry bucket metadata for compatibility");
 
 console.log("✓ Verified useSpotResolutionWorkflow owns resolve and finalization API calls.");
 

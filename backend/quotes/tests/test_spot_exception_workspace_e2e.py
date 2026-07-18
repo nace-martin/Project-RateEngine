@@ -485,6 +485,22 @@ class SpotExceptionWorkspaceE2ETests(TestCase):
         self.assertEqual(resubmit.status_code, status.HTTP_200_OK)
         self.assertEqual(resubmit.data["applied_decisions"][0]["status"], "skipped")
         self.assertEqual(ProductCodeCreationRequest.objects.filter(source_envelope=self.envelope, suggested_name="IMP-XRAY-CORRECTED").count(), 1)
+        corrected_req = ProductCodeCreationRequest.objects.get(source_envelope=self.envelope, suggested_name="IMP-XRAY-CORRECTED")
+        corrected_req.status = ProductCodeCreationRequest.STATUS_APPROVED
+        corrected_req.approved_product_code = self.handling_pc
+        corrected_req.approved_at = timezone.now()
+        corrected_req.approved_by = self.admin
+        corrected_req.save(update_fields=["status", "approved_product_code", "approved_at", "approved_by"])
+        apply_corrected = self._resolve([
+            self._decision(
+                "use_approved_product_code",
+                third_rejected.id,
+                {"product_code_request_id": corrected_req.id, "product_code_id": self.handling_pc.id},
+                "apply-xray-corrected",
+            )
+        ])
+        self.assertEqual(apply_corrected.status_code, status.HTTP_200_OK)
+        self.assertEqual(apply_corrected.data["applied_decisions"][0]["status"], "applied")
 
         final_read = self._read()
         self.assertEqual(final_read.status_code, status.HTTP_200_OK)

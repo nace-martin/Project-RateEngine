@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useState } from "react";
-import { DraftCharge, DraftQuote } from "../../../lib/draft-quote-types";
+import { DecisionResult, DraftCharge, DraftQuote, DraftQuoteResolveResponse } from "../../../lib/draft-quote-types";
 import {
     createSpotResolutionState,
     spotResolutionReducer,
@@ -25,11 +25,34 @@ interface ProductCodeSelectorOption {
 }
 
 const PRODUCT_CODE_DOMAINS = new Set(["IMPORT", "EXPORT", "DOMESTIC"]);
+const GENERIC_UNKNOWN_LABEL = "Unknown Charge Block";
 
 interface UseSpotResolutionWorkflowProps {
     initialData: DraftQuote;
     isLive: boolean;
     envelopeId?: string;
+}
+
+function unknownChargeDefaults(rawText: string, fallbackCurrency: string) {
+    const currencyMatch = rawText.match(/\b([A-Z]{3})\b/);
+    const amountMatch = rawText.match(/(?:[A-Z]{3}\s*)?(\d+(?:\.\d{1,2})?)/);
+    const name = rawText
+        .replace(/\b[A-Z]{3}\b/g, "")
+        .replace(/\d+(?:\.\d{1,2})?/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    return {
+        name: name || rawText.trim() || "Unknown charge item",
+        currency: currencyMatch?.[1] || fallbackCurrency,
+        amount: amountMatch?.[1] || "",
+        unit: "flat"
+    };
+}
+
+function rejectedDecisionMessage(decisionItem: { decision_id: string }, response: DraftQuoteResolveResponse): string | null {
+    const rejected = response.rejected_decisions.find((decision: DecisionResult) => decision.decision_id === decisionItem.decision_id);
+    if (!rejected) return null;
+    return `${rejected.error_code ? `${rejected.error_code}: ` : ""}${rejected.message}`;
 }
 
 export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: UseSpotResolutionWorkflowProps) {
@@ -98,12 +121,12 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         target_id: string;
         details: Record<string, unknown>;
         audit_metadata: { user_id: number; timestamp: string };
-    }) => {
+    }): Promise<DraftQuoteResolveResponse | undefined> => {
         if (state.reviewSession.status === "finalized") {
             throw new Error("Draft Quote review is finalized and locked.");
         }
         if (!isLive || !envelopeId) {
-            return;
+            return undefined;
         }
         const { resolveDraftQuoteDecisions } = await import("../../../lib/api");
         const cryptoObj = typeof window !== "undefined" ? window.crypto : null;
@@ -111,10 +134,15 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
             ? cryptoObj.randomUUID() 
             : "3b128522-a89e-4055-bf51-199eecc5628b";
 
-        await resolveDraftQuoteDecisions(envelopeId, {
+        const response = await resolveDraftQuoteDecisions(envelopeId, {
             idempotency_key: idempotencyKey,
             decisions: [decisionItem]
         });
+        const rejectedMessage = rejectedDecisionMessage(decisionItem, response);
+        if (rejectedMessage) {
+            throw new Error(rejectedMessage);
+        }
+        return response;
     };
 
     // Actions
@@ -123,6 +151,21 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
     };
 
     const openMapExisting = () => {
+        dispatch({ type: "OPEN_MAP_EXISTING" });
+    };
+
+    const openUnknownMapExisting = (rawText: string) => {
+        const defaults = unknownChargeDefaults(rawText, state.addChargeForm.currency);
+        dispatch({
+            type: "UPDATE_ADD_CHARGE_FORM",
+            payload: {
+                name: defaults.name,
+                currency: defaults.currency,
+                amount: defaults.amount,
+                unit: defaults.unit,
+                productCode: ""
+            }
+        });
         dispatch({ type: "OPEN_MAP_EXISTING" });
     };
 
@@ -137,7 +180,9 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
                 label: charge.display_label,
                 source: charge.evidence?.source_text || charge.raw_label,
                 currency: charge.currency,
-                amount: String(charge.amount)
+                amount: String(charge.amount),
+                bucket: charge.bucket,
+                unit: charge.unit || "flat"
             }
         });
     };
@@ -204,6 +249,10 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
         try {
             await submitLiveDecision(newDecisionItem);
+            if (isLive) {
+                await refreshLiveDraftQuote();
+                return;
+            }
         } catch (err) {
             console.error("Failed to submit resolve decision:", err);
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -219,6 +268,11 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
     const classifyUnknownAsExistingCharge = async (itemId: string, productCode: string, displayLabel: string) => {
         if (selectIsReviewLocked(state)) return;
+        const chargeLabel = (state.addChargeForm.name || displayLabel || "").trim();
+        if (!productCode || !chargeLabel || chargeLabel === GENERIC_UNKNOWN_LABEL || !state.addChargeForm.bucket || !state.addChargeForm.currency || !state.addChargeForm.amount || !state.addChargeForm.unit) {
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: "Complete charge label, bucket, currency, amount, unit and ProductCode before mapping this unknown item." });
+            return;
+        }
         const decisionId = `dec-${Date.now()}`;
         const newDecisionItem = {
             decision_id: decisionId,
@@ -227,7 +281,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
             details: {
                 classification: "charge",
                 product_code: productCode,
-                display_label: displayLabel,
+                display_label: chargeLabel,
                 bucket: state.addChargeForm.bucket,
                 currency: state.addChargeForm.currency,
                 amount: state.addChargeForm.amount,
@@ -250,7 +304,6 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
     };
 
     const submitProductCodeRequest = async (chargeId: string) => {
-        const isUnknownItem = state.unclassifiedItems.some(item => item.id === chargeId);
         const decisionId = `dec-${Date.now()}`;
         const newDecisionItem = {
             decision_id: decisionId,
@@ -260,10 +313,11 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
                 proposed_code: state.requestForm.label,
                 description: state.requestForm.source || state.requestForm.label,
                 display_label: state.requestForm.label,
-                bucket: isUnknownItem ? state.requestForm.bucket : undefined,
-                currency: isUnknownItem ? state.requestForm.currency : undefined,
-                amount: isUnknownItem ? state.requestForm.amount : undefined,
-                unit: isUnknownItem ? state.requestForm.unit : undefined,
+                bucket: state.requestForm.bucket,
+                category: state.requestForm.bucket,
+                currency: state.requestForm.currency,
+                amount: state.requestForm.amount,
+                unit: state.requestForm.unit,
                 reason: "Operator requested ProductCode review"
             },
             audit_metadata: {
@@ -318,6 +372,10 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
         try {
             await submitLiveDecision(newDecisionItem);
+            if (isLive) {
+                await refreshLiveDraftQuote();
+                return;
+            }
         } catch (err) {
             console.error("Failed to submit resolve decision:", err);
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -347,6 +405,10 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
         try {
             await submitLiveDecision(newDecisionItem);
+            if (isLive) {
+                await refreshLiveDraftQuote();
+                return;
+            }
         } catch (err) {
             console.error("Failed to submit accept suggestion decision:", err);
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -375,6 +437,10 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
         try {
             await submitLiveDecision(newDecisionItem);
+            if (isLive) {
+                await refreshLiveDraftQuote();
+                return;
+            }
         } catch (err) {
             console.error("Failed to submit ignore decision:", err);
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -604,6 +670,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         actions: {
             selectIssue,
             openMapExisting,
+            openUnknownMapExisting,
             retryProductCodeLoad,
             openRequestProductCode,
             openUnknownProductCodeRequest,

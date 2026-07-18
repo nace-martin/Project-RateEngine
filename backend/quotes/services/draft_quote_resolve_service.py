@@ -467,16 +467,28 @@ def apply_draft_quote_decisions(
                         message_val = "Shipment direction could not be determined from trusted route evidence. ProductCode request was not created."
                         error_code_val = "PRODUCT_CODE_DIRECTION_UNAVAILABLE"
                     else:
+                        source_label = charge_line.source_label or charge_line.description or dec_item.details.get("description", "")
+                        suggested_bucket = charge_line.bucket or dec_item.details.get("bucket") or dec_item.details.get("category")
+                        suggested_basis = charge_line.unit or dec_item.details.get("unit") or "FLAT"
                         pc_request = ProductCodeCreationRequest.objects.create(
-                            source_label=(charge_line.source_label or charge_line.description) if charge_line else dec_item.details.get("description", ""),
+                            source_label=source_label,
                             suggested_name=dec_item.details.get("proposed_code", ""),
-                            suggested_bucket=dec_item.details.get("category", ""),
-                            suggested_basis=dec_item.details.get("unit") or "FLAT",
+                            suggested_bucket=suggested_bucket,
+                            suggested_basis=suggested_basis,
                             suggested_reason=dec_item.details.get("reason", ""),
                             source_envelope=envelope,
                             source_charge_line=charge_line,
                             source_quote=envelope.quote if hasattr(envelope, "quote") else None,
-                            source_context_json={**dec_item.details, "domain": expected_domain},
+                            source_context_json={
+                                **dec_item.details,
+                                "domain": expected_domain,
+                                "source_label": source_label,
+                                "source_charge_line_id": str(charge_line.id),
+                                "charge_bucket": charge_line.bucket,
+                                "charge_unit": charge_line.unit,
+                                "charge_currency": charge_line.currency,
+                                "charge_amount": str(charge_line.amount) if charge_line.amount is not None else None,
+                            },
                             created_by=user,
                             status=ProductCodeCreationRequest.STATUS_PENDING,
                         )

@@ -380,6 +380,60 @@ class DraftQuoteResolveHighValueTests(TestCase):
         charge.refresh_from_db()
         self.assertEqual(charge.manual_resolved_product_code_id, self.product_code.id)
 
+    def test_unknown_charge_creation_replay_creates_one_charge(self):
+        key = uuid.uuid4()
+        decision = self._decision(
+            "classify_unclassified",
+            target_id="unclass-1",
+            details={
+                "classification": "charge",
+                "display_label": "Documentation fee",
+                "bucket": SPEChargeLineDB.Bucket.DESTINATION_CHARGES,
+                "currency": "USD",
+                "amount": "25.00",
+                "unit": SPEChargeLineDB.Unit.FLAT,
+                "product_code": self.product_code.code,
+            },
+            decision_id="classify-replay",
+        )
+
+        first = self._post([decision], key=key)
+        second = self._post([decision], key=key)
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(SPEChargeLineDB.objects.filter(description="Documentation fee").count(), 1)
+        self.assertEqual(DraftQuoteDecisionDB.objects.filter(idempotency_key=key, decision_id="classify-replay").count(), 1)
+
+    def test_unknown_charge_reload_then_finalize(self):
+        res = self._post([
+            self._decision(
+                "classify_unclassified",
+                target_id="unclass-1",
+                details={
+                    "classification": "charge",
+                    "display_label": "Documentation fee",
+                    "bucket": SPEChargeLineDB.Bucket.DESTINATION_CHARGES,
+                    "currency": "USD",
+                    "amount": "25.00",
+                    "unit": SPEChargeLineDB.Unit.FLAT,
+                    "product_code": self.product_code.code,
+                },
+                decision_id="classify-reload-finalize",
+            ),
+            self._decision("classify_unclassified", target_id="unclass-2", details={"classification": "ignored", "reason": "Greeting"}, decision_id="ignore-note-finalize"),
+            self._decision("map_to_product_code", details={"product_code": self.product_code.code}, decision_id="map-existing-finalize"),
+        ])
+        self.assertEqual(res.data["rejected_decisions"], [])
+
+        self.client.force_authenticate(user=self.sales)
+        read_res = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        self.assertEqual(read_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(read_res.data["review_session"]["remaining_blockers"], 0)
+        finalize = self._finalize()
+        self.assertEqual(finalize.status_code, status.HTTP_200_OK)
+        self.assertEqual(finalize.data["review_status"], "finalized")
+
     def test_edit_charge_updates_allowed_fields_and_preserves_evidence(self):
         res = self._post([
             self._decision(
@@ -535,6 +589,34 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self.assertEqual(charge["correction_actions"], [])
         self.assertIsNone(charge["product_code_request_id"])
 
+    def test_ordinary_charge_request_retains_server_charge_bucket_unit_metadata(self):
+        res = self._post([
+            self._decision(
+                "request_product_code",
+                details={
+                    "proposed_code": "IMP-DOC-ORDINARY",
+                    "description": "Client-side edited description",
+                    "bucket": "",
+                    "category": "",
+                    "unit": "",
+                    "reason": "Supplier added new fee",
+                },
+                decision_id="request-ordinary-metadata",
+            )
+        ])
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "skipped")
+        request = ProductCodeCreationRequest.objects.get(suggested_name="IMP-DOC-ORDINARY")
+        self.assertEqual(request.source_label, "DOC FEE")
+        self.assertEqual(request.suggested_bucket, SPEChargeLineDB.Bucket.DESTINATION_CHARGES)
+        self.assertEqual(request.suggested_basis, SPEChargeLineDB.Unit.FLAT)
+        self.assertEqual(request.source_context_json["domain"], "IMPORT")
+        self.assertEqual(request.source_context_json["source_label"], "DOC FEE")
+        self.assertEqual(request.source_context_json["source_charge_line_id"], str(self.charge.id))
+        self.assertEqual(request.source_context_json["charge_bucket"], SPEChargeLineDB.Bucket.DESTINATION_CHARGES)
+        self.assertEqual(request.source_context_json["charge_unit"], SPEChargeLineDB.Unit.FLAT)
+
     def test_resubmitting_rejected_product_code_creates_new_pending_request(self):
         rejected_request = self._rejected_product_code_request()
         self._persist_request_decision(rejected_request)
@@ -645,6 +727,65 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
         self.charge.refresh_from_db()
         self.assertEqual(self.charge.manual_resolved_product_code_id, self.product_code.id)
+
+    def test_pending_product_code_request_blocks_finalization(self):
+        res = self._post([
+            self._decision(
+                "request_product_code",
+                details={
+                    "proposed_code": "IMP-PENDING",
+                    "description": "Pending request",
+                    "category": "destination_charges",
+                    "reason": "Needs admin review",
+                },
+                decision_id="request-pending-finalize",
+            ),
+            self._decision("classify_unclassified", target_id="unclass-1", details={"classification": "ignored", "reason": "Not billable"}, decision_id="ignore-pending-u1"),
+            self._decision("classify_unclassified", target_id="unclass-2", details={"classification": "ignored", "reason": "Greeting"}, decision_id="ignore-pending-u2"),
+        ])
+        self.assertEqual(res.data["rejected_decisions"], [])
+
+        finalize = self._finalize()
+
+        self.assertEqual(finalize.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(finalize.data["status"], "rejected")
+        self.assertGreaterEqual(finalize.data["remaining_blockers"], 1)
+
+    def test_request_approve_apply_then_finalize(self):
+        res = self._post([
+            self._decision(
+                "request_product_code",
+                details={
+                    "proposed_code": "IMP-APPROVED-FLOW",
+                    "description": "Approved flow",
+                    "category": "destination_charges",
+                    "reason": "Needs admin review",
+                },
+                decision_id="request-approved-flow",
+            ),
+            self._decision("classify_unclassified", target_id="unclass-1", details={"classification": "ignored", "reason": "Not billable"}, decision_id="ignore-approved-u1"),
+            self._decision("classify_unclassified", target_id="unclass-2", details={"classification": "ignored", "reason": "Greeting"}, decision_id="ignore-approved-u2"),
+        ])
+        self.assertEqual(res.data["rejected_decisions"], [])
+        request = ProductCodeCreationRequest.objects.get(suggested_name="IMP-APPROVED-FLOW")
+        request.status = ProductCodeCreationRequest.STATUS_APPROVED
+        request.approved_product_code = self.product_code
+        request.approved_at = timezone.now()
+        request.approved_by = self.manager
+        request.save(update_fields=["status", "approved_product_code", "approved_at", "approved_by"])
+
+        apply_res = self._post([
+            self._decision(
+                "use_approved_product_code",
+                details={"product_code_request_id": request.id, "product_code_id": self.product_code.id},
+                decision_id="apply-approved-flow",
+            )
+        ])
+        self.assertEqual(apply_res.data["rejected_decisions"], [])
+
+        finalize = self._finalize()
+        self.assertEqual(finalize.status_code, status.HTTP_200_OK)
+        self.assertEqual(finalize.data["review_status"], "finalized")
 
     def test_finalize_succeeds_when_blockers_resolved_and_read_reflects_state(self):
         self._resolve_all_blockers()
