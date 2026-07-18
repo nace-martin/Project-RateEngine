@@ -7,9 +7,12 @@ interface FinalReviewPanelProps {
   canUsePrototypeOverride: boolean;
   isLive: boolean;
   isReviewLocked: boolean;
+  canReopenReview: boolean;
+  isReopeningReview: boolean;
   prototypeOverride: boolean;
   onTogglePrototypeOverride: () => void;
   onFinalizeReview: () => void;
+  onReopenReview: () => void;
 }
 
 export function FinalReviewPanel({
@@ -21,9 +24,12 @@ export function FinalReviewPanel({
   canUsePrototypeOverride,
   isLive,
   isReviewLocked,
+  canReopenReview,
+  isReopeningReview,
   prototypeOverride,
   onTogglePrototypeOverride,
   onFinalizeReview,
+  onReopenReview,
 }: FinalReviewPanelProps) {
   return (
     <div className="mt-4 flex flex-col items-center gap-4 border-t border-slate-800 pt-6">
@@ -130,15 +136,27 @@ export function FinalReviewPanel({
           </div>
         )}
         {isLive && <div />} {/* spacer to maintain justify-between layout alignment when checkbox is hidden */}
-        <button
-          disabled={
-            isReviewLocked || (!canFinishReview && !canUsePrototypeOverride)
-          }
-          onClick={onFinalizeReview}
-          className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 text-white rounded-xl font-bold text-sm shadow-xl shadow-indigo-900/40 w-full sm:w-auto text-center transition"
-        >
-          {isReviewLocked ? "Review Finalized" : "Finalize Review"}
-        </button>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          {canReopenReview && (
+            <button
+              type="button"
+              disabled={isReopeningReview}
+              onClick={onReopenReview}
+              className="px-8 py-3 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:hover:bg-amber-600 text-white rounded-xl font-bold text-sm shadow-xl shadow-amber-900/30 w-full sm:w-auto text-center transition"
+            >
+              {isReopeningReview ? "Reopening..." : "Reopen Review"}
+            </button>
+          )}
+          <button
+            disabled={
+              isReviewLocked || (!canFinishReview && !canUsePrototypeOverride)
+            }
+            onClick={onFinalizeReview}
+            className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 text-white rounded-xl font-bold text-sm shadow-xl shadow-indigo-900/40 w-full sm:w-auto text-center transition"
+          >
+            {isReviewLocked ? "Review Finalized" : "Finalize Review"}
+          </button>
+        </div>
       </div>
 
       {!isLive && (

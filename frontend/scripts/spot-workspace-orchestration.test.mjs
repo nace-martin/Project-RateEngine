@@ -5,6 +5,7 @@ import path from "node:path";
 const frontendRoot = path.resolve(process.cwd());
 const workspacePath = path.join(frontendRoot, "src", "components", "spot", "ExceptionWorkspace.tsx");
 const hookPath = path.join(frontendRoot, "src", "components", "spot", "workspace", "useSpotResolutionWorkflow.ts");
+const apiPath = path.join(frontendRoot, "src", "lib", "api.ts");
 const panelNames = [
     "NeedsAttentionPanel",
     "ReviewDecisionsPanel",
@@ -17,6 +18,7 @@ console.log("Starting Spot Workspace Orchestration Contract Assertions...");
 
 const workspaceSrc = await readFile(workspacePath, "utf8");
 const hookSrc = await readFile(hookPath, "utf8");
+const apiSrc = await readFile(apiPath, "utf8");
 const panelSources = new Map(
     await Promise.all(
         panelNames.map(async panelName => [
@@ -114,6 +116,20 @@ assert.ok(hookSrc.includes('import("../../../lib/api")'), "useSpotResolutionWork
 assert.ok(hookSrc.includes("resolveDraftQuoteDecisions"), "useSpotResolutionWorkflow must call resolveDraftQuoteDecisions");
 assert.ok(hookSrc.includes("getDraftQuote"), "useSpotResolutionWorkflow must reload the Draft Quote after live unknown-item decisions");
 assert.ok(hookSrc.includes("finalizeDraftQuoteReview"), "useSpotResolutionWorkflow must call finalizeDraftQuoteReview");
+assert.ok(hookSrc.includes("reopenDraftQuoteReview"), "useSpotResolutionWorkflow must call reopenDraftQuoteReview for authorized live reopen");
+assert.ok(apiSrc.includes("export async function reopenDraftQuoteReview"), "API client must expose reopenDraftQuoteReview");
+assert.ok(apiSrc.includes("/draft-quote/reopen/"), "Reopen API client must target the existing reopen endpoint");
+assert.ok(hookSrc.includes("useConfirmDialog"), "Reopen must require a confirmation dialog");
+assert.ok(hookSrc.includes("REOPEN_ROLES") && hookSrc.includes("manager") && hookSrc.includes("admin"), "Reopen UI must be role-gated to manager/admin");
+assert.ok(hookSrc.includes("state.reviewSession.status === \"finalized\""), "Reopen must only be available for finalized reviews");
+assert.ok(hookSrc.includes("state.reviewSession.available_actions.includes(\"reopen\") || isReopenAuthorized"), "Reopen visibility must honor backend available_actions or authorized manager/admin role");
+assert.ok(hookSrc.includes("Boolean(isLive && envelopeId)"), "Reopen must only be available in live workspaces");
+assert.ok(hookSrc.includes("isReopeningReview || !canReopenReviewNow()"), "Duplicate reopen submissions must be blocked");
+assert.ok(hookSrc.includes("await refreshLiveDraftQuote()"), "Successful reopen must reload the Draft Quote from the backend");
+assert.ok(hookSrc.includes("API error reopening review"), "Failed reopen must display backend errors");
+assert.ok(hookSrc.includes("setIsReopeningReview(true)") && hookSrc.includes("setIsReopeningReview(false)"), "Reopen must track in-flight submission state");
+assert.ok(hookSrc.includes('dispatch({ type: "SET_ACTION_MESSAGE", payload: "Draft Quote review reopened. Workspace is editable again." })'), "Successful reopen must show a clear success message");
+assert.ok(hookSrc.indexOf("const { reopenDraftQuoteReview }") > hookSrc.indexOf("if (isReopeningReview || !canReopenReviewNow())"), "Demo/unauthorized reopen must return before importing the live API client");
 assert.ok(hookSrc.includes('type: "classify_unclassified"'), "Unknown-item live actions must submit classify_unclassified decisions");
 assert.ok(!hookSrc.includes('type: "map_to_product_code",\n            target_id: itemId'), "Unknown-item mapping must not submit map_to_product_code with an unclassified item ID");
 assert.ok(!hookSrc.includes('newChargeId = `chg-new-${Date.now()}`;\n            try'), "Live unknown charge creation must not create synthetic IDs");
@@ -149,7 +165,8 @@ const parentBoundCallbacks = [
     "onSelectIssue={actions.selectIssue}",
     "onUndoDecision={actions.undoDecision}",
     "onTogglePrototypeOverride={actions.togglePrototypeOverride}",
-    "onFinalizeReview={actions.finalizeReview}"
+    "onFinalizeReview={actions.finalizeReview}",
+    "onReopenReview={actions.reopenReview}"
 ];
 for (const callbackBinding of parentBoundCallbacks) {
     assert.ok(workspaceSrc.includes(callbackBinding), `ExceptionWorkspace must keep callback binding ${callbackBinding}`);

@@ -1,4 +1,6 @@
 import { useEffect, useReducer, useState } from "react";
+import { useAuth } from "../../../context/auth-context";
+import { useConfirmDialog } from "../../../context/confirm-dialog-context";
 import { DecisionResult, DraftCharge, DraftQuote, DraftQuoteResolveResponse } from "../../../lib/draft-quote-types";
 import {
     createSpotResolutionState,
@@ -25,6 +27,7 @@ interface ProductCodeSelectorOption {
 }
 
 const PRODUCT_CODE_DOMAINS = new Set(["IMPORT", "EXPORT", "DOMESTIC"]);
+const REOPEN_ROLES = new Set(["manager", "admin"]);
 const GENERIC_UNKNOWN_LABEL = "Unknown Charge Block";
 
 interface UseSpotResolutionWorkflowProps {
@@ -61,9 +64,14 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
     const [isLoadingProductCodes, setIsLoadingProductCodes] = useState(false);
     const [productCodeLoadError, setProductCodeLoadError] = useState<string | null>(null);
     const [productCodeRetryNonce, setProductCodeRetryNonce] = useState(0);
+    const [isReopeningReview, setIsReopeningReview] = useState(false);
+    const { user } = useAuth();
+    const { confirm } = useConfirmDialog();
 
     const shipmentDirection = String(initialData.shipment_context.direction || "").toUpperCase();
     const productCodeDomain = PRODUCT_CODE_DOMAINS.has(shipmentDirection) ? shipmentDirection : null;
+    const role = String(user?.role || "").toLowerCase();
+    const isReopenAuthorized = REOPEN_ROLES.has(role);
 
     useEffect(() => {
         let cancelled = false;
@@ -607,6 +615,43 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         }
     };
 
+    const canReopenReviewNow = () => (
+        Boolean(isLive && envelopeId) &&
+        state.reviewSession.status === "finalized" &&
+        isReopenAuthorized &&
+        (state.reviewSession.available_actions.includes("reopen") || isReopenAuthorized)
+    );
+
+    const reopenReview = async () => {
+        if (isReopeningReview || !canReopenReviewNow()) {
+            return;
+        }
+
+        const confirmed = await confirm({
+            title: "Reopen Draft Quote review?",
+            description: "This will unlock the live SPOT Draft Quote review for further operator edits. Existing source evidence and audit history will be preserved.",
+            confirmLabel: "Reopen Review",
+            cancelLabel: "Keep Finalized",
+            variant: "destructive"
+        });
+        if (!confirmed || isReopeningReview || !canReopenReviewNow()) {
+            return;
+        }
+
+        setIsReopeningReview(true);
+        try {
+            const { reopenDraftQuoteReview } = await import("../../../lib/api");
+            await reopenDraftQuoteReview(envelopeId!);
+            await refreshLiveDraftQuote();
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: "Draft Quote review reopened. Workspace is editable again." });
+        } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error reopening review: ${errMsg}` });
+        } finally {
+            setIsReopeningReview(false);
+        }
+    };
+
     const dismissActionMessage = () => {
         dispatch({ type: "DISMISS_ACTION_MESSAGE" });
     };
@@ -631,6 +676,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
     const canFinishReview = selectCanFinishReview(state);
     const isReviewLocked = selectIsReviewLocked(state);
     const canUsePrototypeOverride = selectCanUsePrototypeOverride(state, isLive);
+    const canReopenReview = canReopenReviewNow();
     const nextStepGuidance = selectNextStepGuidance(state);
 
     return {
@@ -651,7 +697,8 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
             showHelpText: state.showHelpText,
             productCodes,
             isLoadingProductCodes,
-            productCodeLoadError
+            productCodeLoadError,
+            isReopeningReview
         },
         derived: {
             combinedUnresolved,
@@ -665,6 +712,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
             canFinishReview,
             isReviewLocked,
             canUsePrototypeOverride,
+            canReopenReview,
             nextStepGuidance
         },
         actions: {
@@ -692,6 +740,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
             toggleIncludeInTotals,
             undoDecision,
             finalizeReview,
+            reopenReview,
             dismissActionMessage,
             togglePrototypeOverride,
             toggleHelpText
