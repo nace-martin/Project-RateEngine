@@ -29,13 +29,8 @@ def is_finalized(envelope: SpotPricingEnvelopeDB) -> bool:
 
 
 def unresolved_blockers(draft_quote: DraftQuoteSchema) -> list[dict[str, Any]]:
-    charges_by_id = {charge.id: charge for charge in draft_quote.suggested_charges}
     blockers: list[dict[str, Any]] = []
     for item in draft_quote.review_queue:
-        item_id = str(item.get("id") or "")
-        charge = charges_by_id.get(item_id)
-        if charge and "PENDING_ADMIN_REVIEW" in (charge.correction_actions or []):
-            continue
         blockers.append(item)
     return blockers
 

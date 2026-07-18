@@ -159,11 +159,13 @@ class MapToProductCodeDetails(BaseModel):
 
 
 class RequestProductCodeDetails(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     proposed_code: str = Field(..., description="Proposed code string")
     description: str = Field(..., description="Proposed code description")
-    category: str = Field(..., description="Target category (freight, etc.)")
-    domain: str = Field(..., description="Target domain (IMPORT, EXPORT, DOMESTIC)")
     reason: str = Field(..., description="Operator justification for request")
+    category: Optional[str] = Field(None, description="Target category/bucket when already known")
+    domain: Optional[str] = Field(None, description="Deprecated client hint; server derives domain from route countries")
 
 
 class UseApprovedProductCodeDetails(BaseModel):
@@ -203,7 +205,7 @@ class EditChargeDetails(BaseModel):
 
 
 class ClassifyUnclassifiedDetails(BaseModel):
-    classification: str = Field("charge", description="charge or ignored")
+    classification: str = Field("charge", description="charge or note")
     bucket: str = Field(..., description="Target bucket for classification")
     display_label: str = Field(..., description="Display label for the new charge line")
     product_code: str = Field(..., description="Target product code for classification")
@@ -212,6 +214,11 @@ class ClassifyUnclassifiedDetails(BaseModel):
     rate: Optional[Decimal] = Field(None, description="Parsed rate")
     unit: Optional[str] = Field(None, description="Parsed unit")
     minimum_charge: Optional[Decimal] = Field(None, description="Parsed minimum limit")
+    reason: Optional[str] = Field(None, description="Operator reason")
+
+
+class NoteUnclassifiedDetails(BaseModel):
+    classification: str = Field(..., description="note classification")
     reason: Optional[str] = Field(None, description="Operator reason")
 
 
@@ -257,6 +264,8 @@ class DecisionItemSchema(BaseModel):
             classification = str(self.details.get("classification") or "charge").lower()
             if classification in {"ignored", "ignore", "non_commercial", "non-commercial"}:
                 IgnoreUnclassifiedDetails(**self.details)
+            elif classification == "note":
+                NoteUnclassifiedDetails(**self.details)
             else:
                 ClassifyUnclassifiedDetails(**self.details)
         

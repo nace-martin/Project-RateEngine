@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useState } from "react";
-import { DraftCharge, DraftQuote } from "../../../lib/draft-quote-types";
+import { DecisionResult, DraftCharge, DraftQuote, DraftQuoteResolveResponse } from "../../../lib/draft-quote-types";
 import {
     createSpotResolutionState,
     spotResolutionReducer,
@@ -25,11 +25,34 @@ interface ProductCodeSelectorOption {
 }
 
 const PRODUCT_CODE_DOMAINS = new Set(["IMPORT", "EXPORT", "DOMESTIC"]);
+const GENERIC_UNKNOWN_LABEL = "Unknown Charge Block";
 
 interface UseSpotResolutionWorkflowProps {
     initialData: DraftQuote;
     isLive: boolean;
     envelopeId?: string;
+}
+
+function unknownChargeDefaults(rawText: string, fallbackCurrency: string) {
+    const currencyMatch = rawText.match(/\b([A-Z]{3})\b/);
+    const amountMatch = rawText.match(/(?:[A-Z]{3}\s*)?(\d+(?:\.\d{1,2})?)/);
+    const name = rawText
+        .replace(/\b[A-Z]{3}\b/g, "")
+        .replace(/\d+(?:\.\d{1,2})?/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    return {
+        name: name || rawText.trim() || "Unknown charge item",
+        currency: currencyMatch?.[1] || fallbackCurrency,
+        amount: amountMatch?.[1] || "",
+        unit: "flat"
+    };
+}
+
+function rejectedDecisionMessage(decisionItem: { decision_id: string }, response: DraftQuoteResolveResponse): string | null {
+    const rejected = response.rejected_decisions.find((decision: DecisionResult) => decision.decision_id === decisionItem.decision_id);
+    if (!rejected) return null;
+    return `${rejected.error_code ? `${rejected.error_code}: ` : ""}${rejected.message}`;
 }
 
 export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: UseSpotResolutionWorkflowProps) {
@@ -82,6 +105,15 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         };
     }, [productCodeDomain, productCodeRetryNonce]);
 
+    const refreshLiveDraftQuote = async () => {
+        if (!isLive || !envelopeId) {
+            return;
+        }
+        const { getDraftQuote } = await import("../../../lib/api");
+        const refreshed = await getDraftQuote(envelopeId);
+        dispatch({ type: "RESET_FROM_SERVER", payload: refreshed });
+    };
+
     // API submission helper
     const submitLiveDecision = async (decisionItem: {
         decision_id: string;
@@ -89,12 +121,12 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         target_id: string;
         details: Record<string, unknown>;
         audit_metadata: { user_id: number; timestamp: string };
-    }) => {
+    }): Promise<DraftQuoteResolveResponse | undefined> => {
         if (state.reviewSession.status === "finalized") {
             throw new Error("Draft Quote review is finalized and locked.");
         }
         if (!isLive || !envelopeId) {
-            return;
+            return undefined;
         }
         const { resolveDraftQuoteDecisions } = await import("../../../lib/api");
         const cryptoObj = typeof window !== "undefined" ? window.crypto : null;
@@ -102,10 +134,15 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
             ? cryptoObj.randomUUID() 
             : "3b128522-a89e-4055-bf51-199eecc5628b";
 
-        await resolveDraftQuoteDecisions(envelopeId, {
+        const response = await resolveDraftQuoteDecisions(envelopeId, {
             idempotency_key: idempotencyKey,
             decisions: [decisionItem]
         });
+        const rejectedMessage = rejectedDecisionMessage(decisionItem, response);
+        if (rejectedMessage) {
+            throw new Error(rejectedMessage);
+        }
+        return response;
     };
 
     // Actions
@@ -114,6 +151,21 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
     };
 
     const openMapExisting = () => {
+        dispatch({ type: "OPEN_MAP_EXISTING" });
+    };
+
+    const openUnknownMapExisting = (rawText: string) => {
+        const defaults = unknownChargeDefaults(rawText, state.addChargeForm.currency);
+        dispatch({
+            type: "UPDATE_ADD_CHARGE_FORM",
+            payload: {
+                name: defaults.name,
+                currency: defaults.currency,
+                amount: defaults.amount,
+                unit: defaults.unit,
+                productCode: ""
+            }
+        });
         dispatch({ type: "OPEN_MAP_EXISTING" });
     };
 
@@ -128,7 +180,9 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
                 label: charge.display_label,
                 source: charge.evidence?.source_text || charge.raw_label,
                 currency: charge.currency,
-                amount: String(charge.amount)
+                amount: String(charge.amount),
+                bucket: charge.bucket,
+                unit: charge.unit || "flat"
             }
         });
     };
@@ -139,8 +193,10 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
             payload: {
                 label: "Unknown Charge Item",
                 source: rawText,
-                currency: "SGD",
-                amount: "0"
+                currency: state.addChargeForm.currency,
+                amount: state.addChargeForm.amount,
+                bucket: state.addChargeForm.bucket,
+                unit: state.addChargeForm.unit
             }
         });
     };
@@ -193,6 +249,10 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
         try {
             await submitLiveDecision(newDecisionItem);
+            if (isLive) {
+                await refreshLiveDraftQuote();
+                return;
+            }
         } catch (err) {
             console.error("Failed to submit resolve decision:", err);
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -206,18 +266,26 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         });
     };
 
-    const submitProductCodeRequest = async (chargeId: string) => {
+    const classifyUnknownAsExistingCharge = async (itemId: string, productCode: string, displayLabel: string) => {
+        if (selectIsReviewLocked(state)) return;
+        const chargeLabel = (state.addChargeForm.name || displayLabel || "").trim();
+        if (!productCode || !chargeLabel || chargeLabel === GENERIC_UNKNOWN_LABEL || !state.addChargeForm.bucket || !state.addChargeForm.currency || !state.addChargeForm.amount || !state.addChargeForm.unit) {
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: "Complete charge label, bucket, currency, amount, unit and ProductCode before mapping this unknown item." });
+            return;
+        }
         const decisionId = `dec-${Date.now()}`;
         const newDecisionItem = {
             decision_id: decisionId,
-            type: "request_product_code",
-            target_id: chargeId,
+            type: "classify_unclassified",
+            target_id: itemId,
             details: {
-                proposed_code: state.requestForm.label,
-                description: state.requestForm.source || state.requestForm.label,
-                category: "destination_charges",
-                domain: "IMPORT",
-                reason: "Operator edited and resubmitted ProductCode request"
+                classification: "charge",
+                product_code: productCode,
+                display_label: chargeLabel,
+                bucket: state.addChargeForm.bucket,
+                currency: state.addChargeForm.currency,
+                amount: state.addChargeForm.amount,
+                unit: state.addChargeForm.unit
             },
             audit_metadata: {
                 user_id: 1,
@@ -227,6 +295,43 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
         try {
             await submitLiveDecision(newDecisionItem);
+            await refreshLiveDraftQuote();
+        } catch (err) {
+            console.error("Failed to submit unclassified charge mapping:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error classifying unknown item: ${errMsg}` });
+        }
+    };
+
+    const submitProductCodeRequest = async (chargeId: string) => {
+        const decisionId = `dec-${Date.now()}`;
+        const newDecisionItem = {
+            decision_id: decisionId,
+            type: "request_product_code",
+            target_id: chargeId,
+            details: {
+                proposed_code: state.requestForm.label,
+                description: state.requestForm.source || state.requestForm.label,
+                display_label: state.requestForm.label,
+                bucket: state.requestForm.bucket,
+                category: state.requestForm.bucket,
+                currency: state.requestForm.currency,
+                amount: state.requestForm.amount,
+                unit: state.requestForm.unit,
+                reason: "Operator requested ProductCode review"
+            },
+            audit_metadata: {
+                user_id: 1,
+                timestamp: new Date().toISOString()
+            }
+        };
+
+        try {
+            await submitLiveDecision(newDecisionItem);
+            if (isLive) {
+                await refreshLiveDraftQuote();
+                return;
+            }
         } catch (err) {
             console.error("Failed to submit ProductCode request:", err);
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -267,6 +372,10 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
         try {
             await submitLiveDecision(newDecisionItem);
+            if (isLive) {
+                await refreshLiveDraftQuote();
+                return;
+            }
         } catch (err) {
             console.error("Failed to submit resolve decision:", err);
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -296,6 +405,10 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
         try {
             await submitLiveDecision(newDecisionItem);
+            if (isLive) {
+                await refreshLiveDraftQuote();
+                return;
+            }
         } catch (err) {
             console.error("Failed to submit accept suggestion decision:", err);
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -324,6 +437,10 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
         try {
             await submitLiveDecision(newDecisionItem);
+            if (isLive) {
+                await refreshLiveDraftQuote();
+                return;
+            }
         } catch (err) {
             console.error("Failed to submit ignore decision:", err);
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -337,27 +454,89 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         });
     };
 
-    const ignoreUnknownCharge = (itemId: string, rawText: string) => {
+    const ignoreUnknownCharge = async (itemId: string, rawText: string) => {
         if (selectIsReviewLocked(state)) return;
         const evidence = state.unclassifiedItems.find(i => i.id === itemId)?.evidence || null;
+        if (isLive) {
+            const decisionId = `dec-${Date.now()}`;
+            try {
+                await submitLiveDecision({
+                    decision_id: decisionId,
+                    type: "classify_unclassified",
+                    target_id: itemId,
+                    details: { classification: "ignored", reason: "Operator ignored unknown item as non-commercial" },
+                    audit_metadata: { user_id: 1, timestamp: new Date().toISOString() }
+                });
+                await refreshLiveDraftQuote();
+            } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error ignoring unknown item: ${errMsg}` });
+            }
+            return;
+        }
         dispatch({
             type: "IGNORE_UNKNOWN_CHARGE",
             payload: { itemId, rawText, evidence }
         });
     };
 
-    const approveUnknownNote = (itemId: string, rawText: string) => {
+    const approveUnknownNote = async (itemId: string, rawText: string) => {
+        if (isLive) {
+            const decisionId = `dec-${Date.now()}`;
+            try {
+                await submitLiveDecision({
+                    decision_id: decisionId,
+                    type: "classify_unclassified",
+                    target_id: itemId,
+                    details: { classification: "note", reason: "Operator approved unknown item as commercial note" },
+                    audit_metadata: { user_id: 1, timestamp: new Date().toISOString() }
+                });
+                await refreshLiveDraftQuote();
+            } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error approving unknown note: ${errMsg}` });
+            }
+            return;
+        }
         dispatch({
             type: "APPROVE_UNKNOWN_NOTE",
             payload: { itemId, rawText }
         });
     };
 
-    const addUnknownAsCharge = (itemId: string) => {
+    const addUnknownAsCharge = async (itemId: string) => {
         if (selectIsReviewLocked(state)) return;
-        const newChargeId = `chg-new-${Date.now()}`;
         const evidence = state.unclassifiedItems.find(i => i.id === itemId)?.evidence || null;
-        
+        if (isLive) {
+            if (!state.addChargeForm.productCode) {
+                dispatch({ type: "SET_ACTION_MESSAGE", payload: "Choose an approved ProductCode before adding this unknown charge." });
+                return;
+            }
+            const decisionId = `dec-${Date.now()}`;
+            try {
+                await submitLiveDecision({
+                    decision_id: decisionId,
+                    type: "classify_unclassified",
+                    target_id: itemId,
+                    details: {
+                        classification: "charge",
+                        product_code: state.addChargeForm.productCode,
+                        display_label: state.addChargeForm.name,
+                        bucket: state.addChargeForm.bucket,
+                        currency: state.addChargeForm.currency,
+                        amount: state.addChargeForm.amount,
+                        unit: state.addChargeForm.unit
+                    },
+                    audit_metadata: { user_id: 1, timestamp: new Date().toISOString() }
+                });
+                await refreshLiveDraftQuote();
+            } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error adding unknown charge: ${errMsg}` });
+            }
+            return;
+        }
+        const newChargeId = `chg-new-${Date.now()}`;
         dispatch({
             type: "ADD_UNKNOWN_AS_CHARGE",
             payload: {
@@ -491,6 +670,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         actions: {
             selectIssue,
             openMapExisting,
+            openUnknownMapExisting,
             retryProductCodeLoad,
             openRequestProductCode,
             openUnknownProductCodeRequest,
@@ -501,6 +681,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
             classifyUnknown,
             returnToUnknownClassification,
             mapProductCode,
+            classifyUnknownAsExistingCharge,
             submitProductCodeRequest,
             useApprovedProductCode,
             acceptSuggestedMapping,

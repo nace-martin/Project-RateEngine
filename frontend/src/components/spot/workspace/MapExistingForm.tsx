@@ -15,9 +15,42 @@ interface MapExistingFormProps {
     onRetry: () => void;
     onMap: (productCode: string) => void;
     onCancel: () => void;
+    collectChargeDetails?: boolean;
+    selectedProductCode?: string;
+    onProductCodeChange?: (value: string) => void;
+    chargeName?: string;
+    onChargeNameChange?: (value: string) => void;
+    chargeBucket?: string;
+    onChargeBucketChange?: (value: string) => void;
+    chargeCurrency?: string;
+    onChargeCurrencyChange?: (value: string) => void;
+    chargeAmount?: string;
+    onChargeAmountChange?: (value: string) => void;
+    chargeUnit?: string;
+    onChargeUnitChange?: (value: string) => void;
 }
 
-export function MapExistingForm({ productCodes, isLoadingProductCodes, productCodeLoadError, onRetry, onMap, onCancel }: MapExistingFormProps) {
+export function MapExistingForm({
+    productCodes,
+    isLoadingProductCodes,
+    productCodeLoadError,
+    onRetry,
+    onMap,
+    onCancel,
+    collectChargeDetails = false,
+    selectedProductCode = "",
+    onProductCodeChange,
+    chargeName = "",
+    onChargeNameChange,
+    chargeBucket = "",
+    onChargeBucketChange,
+    chargeCurrency = "",
+    onChargeCurrencyChange,
+    chargeAmount = "",
+    onChargeAmountChange,
+    chargeUnit = "flat",
+    onChargeUnitChange,
+}: MapExistingFormProps) {
     const options = productCodes.map(productCode => ({
         value: productCode.code,
         label: `${productCode.code} (${productCode.description})`
@@ -47,8 +80,11 @@ export function MapExistingForm({ productCodes, isLoadingProductCodes, productCo
                         options={options}
                         placeholder="Search ProductCodes..."
                         emptyMessage={productCodeLoadError || "No ProductCodes found for this shipment direction."}
+                        value={selectedProductCode}
                         onChange={value => {
-                            if (value) {
+                            if (collectChargeDetails) {
+                                onProductCodeChange?.(value);
+                            } else if (value) {
                                 onMap(value);
                             }
                         }}
@@ -56,13 +92,54 @@ export function MapExistingForm({ productCodes, isLoadingProductCodes, productCo
                         buttonClassName="text-xs bg-slate-900 border border-slate-800 rounded p-2 text-slate-200 grow"
                     />
                 </div>
-                <button
-                    onClick={onCancel}
-                    className="px-3 py-2 bg-slate-900 border border-slate-800 rounded text-xs text-slate-400"
-                >
-                    Cancel
-                </button>
+                {!collectChargeDetails ? (
+                    <button
+                        onClick={onCancel}
+                        className="px-3 py-2 bg-slate-900 border border-slate-800 rounded text-xs text-slate-400"
+                    >
+                        Cancel
+                    </button>
+                ) : null}
             </div>
+            {collectChargeDetails ? (
+                <>
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div>
+                            <label className="text-slate-500 block mb-1">Charge description</label>
+                            <input type="text" value={chargeName} onChange={e => onChargeNameChange?.(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
+                        </div>
+                        <div>
+                            <label className="text-slate-500 block mb-1">Section Bucket</label>
+                            <select value={chargeBucket} onChange={e => onChargeBucketChange?.(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5">
+                                <option value="">Choose bucket...</option>
+                                <option value="origin_charges">Origin Charges</option>
+                                <option value="destination_charges">Destination Charges</option>
+                                <option value="airfreight">Air Freight Linehaul</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-slate-500 block mb-1">Currency</label>
+                            <input type="text" value={chargeCurrency} onChange={e => onChargeCurrencyChange?.(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
+                        </div>
+                        <div>
+                            <label className="text-slate-500 block mb-1">Amount</label>
+                            <input type="text" value={chargeAmount} onChange={e => onChargeAmountChange?.(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
+                        </div>
+                        <div>
+                            <label className="text-slate-500 block mb-1">Unit</label>
+                            <input type="text" value={chargeUnit} onChange={e => onChargeUnitChange?.(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
+                        </div>
+                    </div>
+                    <div className="flex gap-2 justify-end mt-2">
+                        <button onClick={() => onMap(selectedProductCode)} className="px-4 py-2 bg-indigo-600 text-white rounded text-xs font-semibold">
+                            Confirm Mapping
+                        </button>
+                        <button onClick={onCancel} className="px-4 py-2 bg-slate-900 border border-slate-800 rounded text-xs text-slate-400">
+                            Cancel
+                        </button>
+                    </div>
+                </>
+            ) : null}
         </div>
     );
 }

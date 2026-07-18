@@ -202,7 +202,7 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     user = _mk_user("test_sales_resolve", "sales")
     envelope = SpotPricingEnvelopeDB.objects.create(
         status=SpotPricingEnvelopeDB.Status.DRAFT,
-        shipment_context_json={},
+        shipment_context_json={"origin_country": "SG", "destination_country": "PG", "mode": "AIR"},
         shipment_context_hash="mock_hash_value",
         expires_at=timezone.now() + timezone.timedelta(days=7),
         created_by=user

@@ -280,17 +280,31 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
     commercial_terms = []
     if isinstance(spe_db.conditions_json, dict):
         for key, val in spe_db.conditions_json.items():
-            if key != 'user_audit_log':
-                text = str(val.get('text') if isinstance(val, dict) else val)
-                normalized_value = val.get('normalized_value') if isinstance(val, dict) else None
-                commercial_terms.append({
-                    "type": str(key),
-                    "text": text,
-                    "normalized_value": normalized_value,
-                    "status": "suggested",
-                    "evidence": None,
-                    "review_reason": None
-                })
+            if key == 'user_audit_log':
+                continue
+            if key == 'commercial_terms' and isinstance(val, list):
+                for term in val:
+                    if isinstance(term, dict):
+                        commercial_terms.append({
+                            "type": str(term.get("type") or "note"),
+                            "text": str(term.get("text") or ""),
+                            "normalized_value": term.get("normalized_value"),
+                            "status": str(term.get("status") or "suggested"),
+                            "evidence": term.get("evidence"),
+                            "review_reason": term.get("review_reason"),
+                        })
+                continue
+            text = str(val.get('text') if isinstance(val, dict) else val)
+            normalized_value = val.get('normalized_value') if isinstance(val, dict) else None
+            evidence = val.get('evidence') if isinstance(val, dict) else None
+            commercial_terms.append({
+                "type": str(key),
+                "text": text,
+                "normalized_value": normalized_value,
+                "status": "suggested",
+                "evidence": evidence,
+                "review_reason": None
+            })
 
     # 7. Unclassified & Ignored Items
     unclassified_items = []

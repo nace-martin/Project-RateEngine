@@ -1,6 +1,12 @@
 "use client";
 
 import React from "react";
+import { Combobox } from "@/components/ui/combobox";
+
+interface ProductCodeSelectorOption {
+    code: string;
+    description: string;
+}
 
 interface AddChargeFormProps {
     addName: string;
@@ -15,6 +21,10 @@ interface AddChargeFormProps {
     onAddUnitChange: (value: string) => void;
     addProductCode: string;
     onAddProductCodeChange: (value: string) => void;
+    productCodes: ProductCodeSelectorOption[];
+    isLoadingProductCodes: boolean;
+    productCodeLoadError: string | null;
+    onRetryProductCodes: () => void;
     onAdd: () => void;
     onCancel: () => void;
 }
@@ -32,9 +42,17 @@ export function AddChargeForm({
     onAddUnitChange,
     addProductCode,
     onAddProductCodeChange,
+    productCodes,
+    isLoadingProductCodes,
+    productCodeLoadError,
+    onRetryProductCodes,
     onAdd,
     onCancel,
 }: AddChargeFormProps) {
+    const productCodeOptions = productCodes.map(productCode => ({
+        value: productCode.code,
+        label: `${productCode.code} (${productCode.description})`
+    }));
     return (
         <div className="bg-slate-950 border border-slate-850 p-4 rounded-xl flex flex-col gap-3">
             <h3 className="text-xs uppercase font-bold text-indigo-400">Add manually as draft charge line</h3>
@@ -56,6 +74,7 @@ export function AddChargeForm({
                         onChange={e => onAddBucketChange(e.target.value)}
                         className="w-full bg-slate-900 border border-slate-800 rounded p-1.5"
                     >
+                        <option value="">Choose bucket...</option>
                         <option value="origin_charges">Origin Charges</option>
                         <option value="destination_charges">Destination Charges</option>
                         <option value="airfreight">Air Freight Linehaul</option>
@@ -89,14 +108,22 @@ export function AddChargeForm({
                     />
                 </div>
                 <div>
-                    <label className="text-slate-500 block mb-1">Mapping Code (Optional)</label>
-                    <input
-                        type="text"
+                    <label className="text-slate-500 block mb-1">Mapping Code (Required)</label>
+                    <Combobox
+                        options={productCodeOptions}
                         value={addProductCode}
-                        onChange={e => onAddProductCodeChange(e.target.value)}
-                        placeholder="Approved ProductCode"
-                        className="w-full bg-slate-900 border border-slate-800 rounded p-1.5"
+                        onChange={onAddProductCodeChange}
+                        placeholder="Search ProductCodes..."
+                        emptyMessage={productCodeLoadError || "No ProductCodes found for this shipment direction."}
+                        disabled={isLoadingProductCodes || Boolean(productCodeLoadError)}
+                        buttonClassName="text-xs bg-slate-900 border border-slate-800 rounded p-1.5 text-slate-200"
                     />
+                    {isLoadingProductCodes ? <p className="mt-1 text-[11px] text-slate-500">Loading ProductCodes...</p> : null}
+                    {productCodeLoadError ? (
+                        <button type="button" onClick={onRetryProductCodes} className="mt-1 text-[11px] font-semibold text-red-300 hover:underline">
+                            Retry ProductCode load
+                        </button>
+                    ) : null}
                 </div>
             </div>
             <div className="flex gap-2 justify-end mt-2">

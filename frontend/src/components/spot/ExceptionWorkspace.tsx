@@ -290,7 +290,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                                         <div className="text-xs font-semibold text-slate-300">Step 2: How should it be mapped?</div>
                                                         <div className="flex flex-col sm:flex-row gap-2">
                                                             <button
-                                                                onClick={actions.openMapExisting}
+                                                                onClick={() => actions.openUnknownMapExisting(currentIssue.itemDetails!.raw_text)}
                                                                 className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-xs text-left grow text-slate-200"
                                                             >
                                                                 Map to an existing billing code
@@ -341,13 +341,32 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                 productCodeLoadError={productCodeLoadError}
                                 onRetry={actions.retryProductCodeLoad}
                                 onMap={(productCode) =>
-                                    actions.mapProductCode(
-                                        currentIssue.id,
-                                        productCode,
-                                        currentIssue.title
-                                    )
+                                    currentIssue.type === "unknown_charge"
+                                        ? actions.classifyUnknownAsExistingCharge(
+                                              currentIssue.id,
+                                              productCode,
+                                              currentIssue.title
+                                          )
+                                        : actions.mapProductCode(
+                                              currentIssue.id,
+                                              productCode,
+                                              currentIssue.title
+                                          )
                                 }
                                 onCancel={actions.cancelAction}
+                                collectChargeDetails={currentIssue.type === "unknown_charge"}
+                                selectedProductCode={state.addChargeForm.productCode}
+                                onProductCodeChange={(val) => actions.updateAddChargeForm({ productCode: val })}
+                                chargeName={state.addChargeForm.name}
+                                onChargeNameChange={(val) => actions.updateAddChargeForm({ name: val })}
+                                chargeBucket={state.addChargeForm.bucket}
+                                onChargeBucketChange={(val) => actions.updateAddChargeForm({ bucket: val })}
+                                chargeCurrency={state.addChargeForm.currency}
+                                onChargeCurrencyChange={(val) => actions.updateAddChargeForm({ currency: val })}
+                                chargeAmount={state.addChargeForm.amount}
+                                onChargeAmountChange={(val) => actions.updateAddChargeForm({ amount: val })}
+                                chargeUnit={state.addChargeForm.unit}
+                                onChargeUnitChange={(val) => actions.updateAddChargeForm({ unit: val })}
                             />
                         ) : selectedActionType === "request_product_code" ? (
                             <RequestProductCodeForm
@@ -359,6 +378,10 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                 onReqCurrencyChange={(val) => actions.updateRequestForm({ currency: val })}
                                 reqAmount={state.requestForm.amount}
                                 onReqAmountChange={(val) => actions.updateRequestForm({ amount: val })}
+                                reqBucket={state.requestForm.bucket}
+                                onReqBucketChange={(val) => actions.updateRequestForm({ bucket: val })}
+                                reqUnit={state.requestForm.unit}
+                                onReqUnitChange={(val) => actions.updateRequestForm({ unit: val })}
                                 onSubmit={() =>
                                     actions.submitProductCodeRequest(currentIssue.id)
                                 }
@@ -378,6 +401,10 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                 onAddUnitChange={(val) => actions.updateAddChargeForm({ unit: val })}
                                 addProductCode={state.addChargeForm.productCode}
                                 onAddProductCodeChange={(val) => actions.updateAddChargeForm({ productCode: val })}
+                                productCodes={productCodes}
+                                isLoadingProductCodes={isLoadingProductCodes}
+                                productCodeLoadError={productCodeLoadError}
+                                onRetryProductCodes={actions.retryProductCodeLoad}
                                 onAdd={() =>
                                     actions.addUnknownAsCharge(currentIssue.id)
                                 }

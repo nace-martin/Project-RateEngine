@@ -11,6 +11,10 @@ interface RequestProductCodeFormProps {
     onReqCurrencyChange: (value: string) => void;
     reqAmount: string;
     onReqAmountChange: (value: string) => void;
+    reqBucket: string;
+    onReqBucketChange: (value: string) => void;
+    reqUnit: string;
+    onReqUnitChange: (value: string) => void;
     onSubmit: () => void;
     onCancel: () => void;
 }
@@ -24,6 +28,10 @@ export function RequestProductCodeForm({
     onReqCurrencyChange,
     reqAmount,
     onReqAmountChange,
+    reqBucket,
+    onReqBucketChange,
+    reqUnit,
+    onReqUnitChange,
     onSubmit,
     onCancel,
 }: RequestProductCodeFormProps) {
@@ -67,6 +75,33 @@ export function RequestProductCodeForm({
                         onChange={e => onReqAmountChange(e.target.value)}
                         className="w-full bg-slate-900 border border-slate-800 rounded p-1.5"
                     />
+                </div>
+                <div>
+                    <label className="text-slate-500 block mb-1">Section Bucket</label>
+                    <select
+                        value={reqBucket}
+                        onChange={e => onReqBucketChange(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 rounded p-1.5"
+                    >
+                        <option value="">Choose bucket...</option>
+                        <option value="origin_charges">Origin Charges</option>
+                        <option value="destination_charges">Destination Charges</option>
+                        <option value="airfreight">Air Freight Linehaul</option>
+                    </select>
+                </div>
+                <div>
+                    <label className="text-slate-500 block mb-1">Unit</label>
+                    <select
+                        value={reqUnit}
+                        onChange={e => onReqUnitChange(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 rounded p-1.5"
+                    >
+                        <option value="flat">Flat</option>
+                        <option value="per_kg">Per KG</option>
+                        <option value="per_awb">Per AWB</option>
+                        <option value="per_shipment">Per Shipment</option>
+                        <option value="per_set">Per Set</option>
+                    </select>
                 </div>
             </div>
             <div className="flex gap-2 justify-end mt-2">
