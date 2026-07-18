@@ -40,7 +40,8 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
         prototypeOverride,
         productCodes,
         isLoadingProductCodes,
-        productCodeLoadError
+        productCodeLoadError,
+        isReopeningReview
     } = state;
 
     const {
@@ -54,6 +55,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
         canFinishReview,
         isReviewLocked,
         canUsePrototypeOverride,
+        canReopenReview,
         nextStepGuidance
     } = derived;
 
@@ -545,9 +547,12 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                     canUsePrototypeOverride={canUsePrototypeOverride}
                     isLive={isLive}
                     isReviewLocked={isReviewLocked}
+                    canReopenReview={canReopenReview}
+                    isReopeningReview={isReopeningReview}
                     prototypeOverride={prototypeOverride}
                     onTogglePrototypeOverride={actions.togglePrototypeOverride}
                     onFinalizeReview={actions.finalizeReview}
+                    onReopenReview={actions.reopenReview}
                 />
 
             </div>

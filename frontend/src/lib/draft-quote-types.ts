@@ -182,3 +182,10 @@ export interface DraftQuoteFinalizeResponse {
     finalized_at?: string | null;
     message: string;
 }
+
+export interface DraftQuoteReopenResponse {
+    envelope_id: string;
+    status: 'accepted' | 'rejected';
+    review_status: 'draft' | 'in_review' | 'finalized';
+    message: string;
+}
