@@ -1,8 +1,8 @@
 # Air Freight Staging Pilot UAT Execution Pack
 
-Status: executable staging plan for Phase 15A.
+Status: executable staging plan with Phase 15B execution status.
 
-Current launch recommendation: **NO-GO** until all scenarios below have real staging evidence. Automated tests and local/demo evidence are not enough to mark the pilot GO.
+Current launch recommendation: **NO-GO**. Phase 15B attempted preflight from the agent environment, but real staging execution is blocked until staging application/database access, staging URL, and role-specific user credentials are available. Automated tests and local/demo evidence are not enough to mark the pilot GO.
 
 ## 1. Objective
 
@@ -108,7 +108,18 @@ Use `docs/pilot/air-freight-pilot-evidence.md` for staging evidence summaries. A
 | Minor UI clarity issue with correct data/audit | Fix before pilot or Future enhancement | Manager decides whether workaround is acceptable. |
 | Exact GL-per-charge ambiguity | Not launch blocker | Record advisory note only. |
 
-## 7. Decision gate
+## 7. Phase 15B execution status
+
+Phase 15B did not produce scenario pass evidence. The agent environment could run local support checks only:
+
+- `python backend/manage.py check` passed locally with `System check identified no issues (0 silenced)`.
+- `python backend/manage.py air_freight_pilot_seed_plan --format json` was blocked locally by `django.db.utils.OperationalError: no such table: product_codes` because the local default SQLite database is not migrated/seeded.
+- `python backend/manage.py air_freight_pilot_seed_audit --format json` was not run after the seed-plan blocker.
+- AF15A-01 through AF15A-12 were not executed because no staging URL, staging database access, SPE/quote IDs, or role-specific staging credentials were available.
+
+This is an evidence-completeness blocker, not a confirmed product defect. No pricing, ProductCode, RBAC, finalization, quote output, GST, FX, margin, migration, seed apply, cleanup, or backfill changes were made.
+
+## 8. Decision gate
 
 After all scenario evidence is captured, assign one recommendation:
 
@@ -120,7 +131,7 @@ After all scenario evidence is captured, assign one recommendation:
 
 Current Phase 15A recommendation: **NO-GO** because this phase prepares the run pack and does not itself provide real staging evidence for every scenario.
 
-## 8. Deliberately out of scope
+## 9. Deliberately out of scope
 
 - Backend RBAC redesign.
 - Pricing, GST, FX, margin, quote output, or V4 adapter changes.
