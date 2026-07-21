@@ -1,7 +1,7 @@
 # RateEngine Phase 16C — International Air Journey and Leg-Aware ProductCode Architecture
 
 **Document ID:** RE-ARCH-16C-AIR-001  
-**Version:** 1.0  
+**Version:** 1.1  
 **Architecture date:** 21 July 2026  
 **Status:** Authoritative design baseline  
 **Source rules:** `docs/business-rules/phase-16a-air-freight-journey-productcode-rules.md` version 1.1  
@@ -44,6 +44,9 @@ It is a design document only. It does not alter pricing, ProductCodes, rates, GS
 10. **Route automation policies fail closed and are independently controlled.**
 11. **Totals reconcile at line, leg, journey and customer-output boundaries.**
 12. **Historical quotes remain readable without guessed leg backfills.**
+13. **A quote or SPOT envelope may have multiple journey revisions.**
+    - parent links are foreign keys, not one-to-one links;
+    - uniqueness is enforced by parent plus revision number.
 
 ## 3. Target flow
 
@@ -386,8 +389,8 @@ Recommended location: `quotes` app.
 
 ```text
 id UUID
-quote nullable one-to-one
-spot_envelope nullable one-to-one
+quote nullable FK
+spot_envelope nullable FK
 revision integer
 direction
 pattern
@@ -405,12 +408,16 @@ created_by
 finalized_at
 ```
 
-Rules:
+Rules and constraints:
 
 - at least one of `quote` or `spot_envelope` is present;
-- a journey may later be linked to both when an SPE becomes a quote;
+- a journey revision may link to both when an SPE becomes a quote;
+- unique `(quote, revision)` when `quote` is not null;
+- unique `(spot_envelope, revision)` when `spot_envelope` is not null;
+- the current revision is selected explicitly by status/latest revision, never by one-to-one relationship;
 - finalized revisions are immutable;
-- a material route change creates a new revision and supersedes the old one.
+- a material route change creates a new revision and supersedes the old one;
+- concurrent revision creation must lock the parent quote/SPE or otherwise serialize revision allocation.
 
 ### 6.2 ShipmentLegDB
 
@@ -436,7 +443,7 @@ Constraints:
 
 - unique `(journey, sequence)`;
 - unique `(journey, leg_key)`;
-- sequence begins at 1 and is contiguous;
+- sequence begins at 1 and is contiguous, validated by the planner/service;
 - international import ends at POM;
 - international export starts at POM;
 - domestic on-forwarding starts at POM;
@@ -662,15 +669,17 @@ No fallback from BUY to SELL, from expired to historical, or from missing contra
 When trusted route or service input changes:
 
 1. generate a new input fingerprint;
-2. regenerate the journey;
-3. compare old and new legs;
-4. retain unchanged compatible legs;
-5. supersede removed or changed legs;
-6. exclude incompatible old lines from totals;
-7. preserve their evidence and prior decisions;
-8. rerun charge context and ProductCode resolution;
-9. recalculate and reconcile totals;
-10. finalize only when all blockers clear.
+2. lock the quote/SPE revision parent;
+3. allocate the next revision number;
+4. regenerate the journey;
+5. compare old and new legs;
+6. retain unchanged compatible legs;
+7. supersede removed or changed legs;
+8. exclude incompatible old lines from totals;
+9. preserve their evidence and prior decisions;
+10. rerun charge context and ProductCode resolution;
+11. recalculate and reconcile totals;
+12. finalize only when all blockers clear.
 
 A destination change from LAE to HGU must never retain LAE domestic charges.
 
@@ -855,6 +864,7 @@ IMP_HGU
 - country direction and gateway planner;
 - pattern and leg generation;
 - deterministic leg keys;
+- parent/revision uniqueness and concurrent revision allocation;
 - route-policy fail-closed behaviour;
 - charge-context completeness;
 - per-leg ProductCode domain;
@@ -883,6 +893,8 @@ ARCH-16C-005  EXP_HGU remains disabled while HGU→POM gate is unmet.
 ARCH-16C-006  SPOT freight override preserves unrelated standard charges.
 ARCH-16C-007  LAE lines cannot survive a route change to HGU.
 ARCH-16C-008  Customer output equals reconciled internal totals.
+ARCH-16C-009  Multiple revisions can coexist for one quote/SPE without collision.
+ARCH-16C-010  Concurrent recalculation cannot allocate duplicate revision numbers.
 ```
 
 All `UAT-16A-001` through `UAT-16A-020` remain mandatory.
@@ -927,6 +939,7 @@ All `UAT-16A-001` through `UAT-16A-020` remain mandatory.
 
 ```text
 JOURNEY_CONTRACT_DEFINED = YES
+JOURNEY_REVISION_MODEL_DEFINED = YES
 LEG_PERSISTENCE_DEFINED = YES
 POM_GATEWAY_ENFORCEMENT_DEFINED = YES
 PER_LEG_PRODUCTCODE_DOMAIN_DEFINED = YES
