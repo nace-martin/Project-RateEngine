@@ -1,11 +1,11 @@
 # RateEngine Phase 16C — International Air Journey and Leg-Aware ProductCode Architecture
 
-**Document ID:** RE-ARCH-16C-AIR-001  
-**Version:** 1.1  
-**Architecture date:** 21 July 2026  
-**Status:** Authoritative design baseline  
-**Source rules:** `docs/business-rules/phase-16a-air-freight-journey-productcode-rules.md` version 1.1  
-**Source requirements:** `docs/business-rules/phase-16b-air-freight-requirements-gap-assessment.md` version 1.0  
+**Document ID:** RE-ARCH-16C-AIR-001
+**Version:** 1.2
+**Architecture date:** 21 July 2026
+**Status:** Authoritative design baseline
+**Source rules:** `docs/business-rules/phase-16a-air-freight-journey-productcode-rules.md` version 1.1
+**Source requirements:** `docs/business-rules/phase-16b-air-freight-requirements-gap-assessment.md` version 1.0
 **Applies to:** Phase 16D–16I implementation, automated tests, UAT and route enablement
 
 ## 1. Purpose
@@ -729,6 +729,16 @@ These blockers are non-overridable at launch.
 
 ## 12. SPOT and Exception Workspace integration
 
+The live Exception Workspace is the normal SPOT review workflow. The base SPOT route remains intake-only; review-ready SPEs must use the Exception Workspace for operator decisions before quote creation.
+
+Phase 16 journey and leg architecture extends the merged SPOT cutover without weakening it:
+
+- quote creation requires a finalized Exception Workspace review;
+- material journey, leg, source or charge changes invalidate finalization and return the review session to `in_review`;
+- journey or leg changes must return the quote/SPE to review before quote creation can continue;
+- atomic and idempotent SPOT quote creation remains mandatory, including parent SPE locking and complete-version checks;
+- server-side enforcement remains authoritative even if the frontend is bypassed.
+
 ### 12.1 Draft Quote read payload
 
 Add:
@@ -774,6 +784,8 @@ What does this FSC apply to?
 ### 12.4 Finalisation
 
 The existing finalisation workflow consumes Phase 16 blockers. No manager/admin override is introduced for gateway, required leg, missing BUY, ProductCode-domain or reconciliation failures.
+
+A finalized review is valid only for the exact persisted journey revision, leg set, source evidence and charge set that was reviewed. Any material source, charge, journey or leg change invalidates the review and requires the operator to resolve blockers and finalize again before quote creation. Quote creation must remain transactionally atomic and idempotent: repeated create requests may return an existing SPOT-created quote only when the persisted quote version has complete lines and totals.
 
 ## 13. API boundaries
 
