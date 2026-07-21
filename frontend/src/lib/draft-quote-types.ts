@@ -30,7 +30,7 @@ export interface DraftCharge {
     bucket: string; // airfreight, origin_charges, destination_charges, unclassified
     currency: string;
     amount: number;
-    rate: number | null;
+    rate: number | string | null;
     unit: string | null;
     calculation_basis: string | null;
     minimum_charge: number | null;

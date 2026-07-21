@@ -169,6 +169,8 @@ const {
   assert.equal(humanizeRate(0, "kg", "Fuel"), "Flat fee");
   assert.equal(humanizeRate(null, null, "..."), "Flat fee");
   assert.equal(humanizeRate(1.23, "set", "Handling"), "SGD 1.23 per set");
+  assert.equal(humanizeRate("1.23", "set", "Handling"), "SGD 1.23 per set");
+  assert.equal(humanizeRate("not-a-number", "kg", "Fuel"), "Rate unavailable");
   assert.equal(humanizeRate(1.5, "kg", "Fuel"), "USD 1.50 per kg");
   assert.equal(humanizeRate(0.85, "kg", "Security"), "USD 0.85 per kg");
   assert.equal(humanizeRate(5.00, "unit", "Freight"), "5.00 per unit");

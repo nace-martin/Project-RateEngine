@@ -249,23 +249,27 @@ export const formatListWithAnd = (items: string[]): string => {
 };
 
 // Helper to convert rate specs into human-friendly text
-export function humanizeRate(rate: number | null, unit: string | null, label: string): string {
-    if (label.includes("Min") && rate) {
-        return `Minimum USD 230.00 or USD ${rate.toFixed(2)} per ${unit || "kg"}`;
+export function humanizeRate(rate: number | string | null, unit: string | null, label: string): string {
+    const numericRate = typeof rate === "number" ? rate : Number(String(rate ?? "").trim());
+    if (!Number.isFinite(numericRate)) {
+        return "Rate unavailable";
     }
-    if (label.includes("Fuel") && rate) {
-        return `USD ${rate.toFixed(2)} per ${unit || "kg"}`;
+    if (!numericRate) {
+        return "Flat fee";
     }
-    if (label.includes("Security") && rate) {
-        return `USD ${rate.toFixed(2)} per ${unit || "kg"}`;
+    if (label.includes("Min")) {
+        return `Minimum USD 230.00 or USD ${numericRate.toFixed(2)} per ${unit || "kg"}`;
     }
-    if (label.includes("Handling") && rate) {
-        return `SGD ${rate.toFixed(2)} per set`;
+    if (label.includes("Fuel")) {
+        return `USD ${numericRate.toFixed(2)} per ${unit || "kg"}`;
     }
-    if (rate) {
-        return `${rate.toFixed(2)} per ${unit || "unit"}`;
+    if (label.includes("Security")) {
+        return `USD ${numericRate.toFixed(2)} per ${unit || "kg"}`;
     }
-    return "Flat fee";
+    if (label.includes("Handling")) {
+        return `SGD ${numericRate.toFixed(2)} per set`;
+    }
+    return `${numericRate.toFixed(2)} per ${unit || "unit"}`;
 }
 
 export function friendlyStatus(status: string): string {
