@@ -22,16 +22,27 @@ const [spotPage, livePage, demoPage, workspace, finalReviewPanel, hook, stateFil
   readFile(statePath, "utf8"),
 ]);
 
-assert.match(
-  spotPage,
-  /Review in Exception Workspace/,
-  "real SPOT envelope page must expose a live Exception Workspace action",
+assert.ok(
+  !spotPage.includes("Review in Exception Workspace"),
+  "normal SPOT flow must not expose a manual Exception Workspace choice",
 );
 
 assert.match(
   spotPage,
-  /router\.push\(`\/quotes\/spot\/\$\{speId\}\/exception-workspace`\)/,
-  "real SPOT envelope action must pass the current envelope ID into the live workspace route",
+  /router\.replace\(`\/quotes\/spot\/\$\{speId\}\/exception-workspace`\)/,
+  "successful analysis and review-ready envelopes must replace into the live workspace route",
+);
+
+assert.match(
+  spotPage,
+  /shouldRedirectToExceptionWorkspace[\s\S]*state\.spe\.charges\.length > 0/,
+  "base SPOT route must redirect existing imported-charge envelopes to the Exception Workspace",
+);
+
+assert.match(
+  spotPage,
+  /setCurrentStep\("intake"\)/,
+  "new or explicitly edited SPEs must remain on intake",
 );
 
 assert.match(
@@ -48,8 +59,14 @@ assert.match(
 
 assert.match(
   livePage,
-  /<ExceptionWorkspace initialData=\{data\} isLive=\{true\} envelopeId=\{speId\} \/>/,
-  "live workspace must pass real payload and envelope ID into the workspace component",
+  /getSpotEnvelope\(speId\)/,
+  "live workspace route must load the SPE context needed for safe quote creation",
+);
+
+assert.match(
+  livePage,
+  /<ExceptionWorkspace initialData=\{data\} isLive=\{true\} envelopeId=\{speId\} envelope=\{envelope\} \/>/,
+  "live workspace must pass real payload, envelope ID, and SPE context into the workspace component",
 );
 
 assert.match(
@@ -85,6 +102,24 @@ assert.match(
   workspace,
   /<FinalReviewPanel[\s\S]*isLive=\{isLive\}/,
   "ExceptionWorkspace must pass isLive into the final review panel"
+);
+
+assert.match(
+  workspace,
+  /Back to Intake to edit source input/,
+  "live workspace must keep an explicit Back to Intake action for genuine source edits"
+);
+
+assert.match(
+  workspace,
+  /createSpotQuote\(envelopeId, createQuoteRequest\)/,
+  "finalized live workspace must use the existing SPOT quote creation path"
+);
+
+assert.match(
+  workspace,
+  /disabled=\{!isReviewLocked \|\| isCreatingQuote \|\| Boolean\(createdQuoteId\)\}/,
+  "Create Quote action must require finalized review and block duplicate clicks"
 );
 
 assert.match(

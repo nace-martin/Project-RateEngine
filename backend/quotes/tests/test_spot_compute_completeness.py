@@ -29,7 +29,7 @@ def _create_location(code: str, country: Country) -> Location:
     )
 
 
-def _create_ready_spe(user, origin_code: str, dest_code: str, origin_country: str, dest_country: str, service_scope: str):
+def _create_ready_spe(user, origin_code: str, dest_code: str, origin_country: str, dest_country: str, service_scope: str, finalized_review: bool = True):
     ctx = {
         "origin_country": origin_country,
         "destination_country": dest_country,
@@ -41,10 +41,19 @@ def _create_ready_spe(user, origin_code: str, dest_code: str, origin_country: st
         "service_scope": service_scope.lower(),
     }
 
+    conditions = {
+        "draft_quote_review": {
+            "status": "finalized",
+            "finalized_by": user.id,
+            "finalized_at": timezone.now().isoformat(),
+            "idempotency_key": str(uuid.uuid4()),
+        }
+    } if finalized_review else {}
+
     spe = SpotPricingEnvelopeDB.objects.create(
         status=SpotPricingEnvelopeDB.Status.READY,
         shipment_context_json=ctx,
-        conditions_json={},
+        conditions_json=conditions,
         spot_trigger_reason_code=SpotTriggerReason.MISSING_SCOPE_RATES,
         spot_trigger_reason_text="Missing required rate components",
         created_by=user,
@@ -207,6 +216,68 @@ def test_spot_create_quote_blocks_on_missing_components(monkeypatch):
     assert data["has_missing_rates"] is True
     assert "DESTINATION_LOCAL" in data["missing_components"]
     assert Quote.objects.count() == initial_count
+
+
+def test_spot_create_quote_requires_finalized_exception_workspace_review(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_ready_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="A2D",
+        finalized_review=False,
+    )
+    _patch_calculate_charges(monkeypatch, bucket="airfreight")
+    customer = Company.objects.create(
+        name="Unfinished Review Customer",
+        is_customer=True,
+        company_type="CUSTOMER",
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
+        {"quote_request": {"service_scope": "A2D", "payment_term": "PREPAID", "output_currency": "PGK", "customer_id": str(customer.id)}},
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert "review must be finalized" in response.json()["error"]
+
+
+def test_spot_create_quote_is_idempotent_after_quote_version_created(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_ready_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="P2P",
+    )
+    _patch_calculate_charges(monkeypatch, bucket="airfreight")
+    customer = Company.objects.create(
+        name="Idempotent Spot Customer",
+        is_customer=True,
+        company_type="CUSTOMER",
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    payload = {"quote_request": {"service_scope": "P2P", "payment_term": "PREPAID", "output_currency": "PGK", "customer_id": str(customer.id)}}
+
+    first = client.post(f"/api/v3/spot/envelopes/{spe.id}/create-quote/", payload, format="json")
+    second = client.post(f"/api/v3/spot/envelopes/{spe.id}/create-quote/", payload, format="json")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["quote_id"] == first.json()["quote_id"]
+    spe.refresh_from_db()
+    assert spe.quote.versions.filter(reason="Created from SPOT Envelope").count() == 1
 
 
 def test_spot_compute_uses_import_prepaid_fcy_output_currency(monkeypatch):

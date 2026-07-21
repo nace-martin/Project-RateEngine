@@ -2,8 +2,9 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getDraftQuote } from "../../../../../lib/api";
+import { getDraftQuote, getSpotEnvelope } from "../../../../../lib/api";
 import { DraftQuote } from "../../../../../lib/draft-quote-types";
+import type { SpotPricingEnvelope } from "../../../../../lib/spot-types";
 import { ExceptionWorkspace } from "../../../../../components/spot/ExceptionWorkspace";
 import { Loader2, AlertCircle, ArrowLeft, RefreshCw } from "lucide-react";
 
@@ -15,14 +16,19 @@ export default function ExceptionWorkspaceLivePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<DraftQuote | null>(null);
+  const [envelope, setEnvelope] = useState<SpotPricingEnvelope | null>(null);
 
   const fetchQuote = useCallback(async () => {
     if (!speId) return;
     setLoading(true);
     setError(null);
     try {
-      const payload = await getDraftQuote(speId);
+      const [payload, envelopePayload] = await Promise.all([
+        getDraftQuote(speId),
+        getSpotEnvelope(speId),
+      ]);
       setData(payload);
+      setEnvelope(envelopePayload);
     } catch (err) {
       console.error("Error fetching live draft quote:", err);
       const errObject = err as Error;
@@ -124,7 +130,7 @@ export default function ExceptionWorkspaceLivePage() {
 
   return (
     <div className="w-full min-h-screen bg-slate-950">
-      <ExceptionWorkspace initialData={data} isLive={true} envelopeId={speId} />
+      <ExceptionWorkspace initialData={data} isLive={true} envelopeId={speId} envelope={envelope} />
     </div>
   );
 }

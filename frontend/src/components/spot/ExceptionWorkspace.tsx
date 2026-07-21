@@ -1,8 +1,11 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { CheckCircle, ChevronDown, ChevronUp, Info, ShieldAlert, FileText, ArrowLeft } from "lucide-react";
+import { createSpotQuote } from "../../lib/api";
 import { DraftQuote } from "../../lib/draft-quote-types";
+import type { SpotPricingEnvelope } from "../../lib/spot-types";
 import { humanizeRate, friendlyStatus } from "@/lib/spot-workspace-helpers";
 import { MapExistingForm } from "./workspace/MapExistingForm";
 import { RequestProductCodeForm } from "./workspace/RequestProductCodeForm";
@@ -14,9 +17,13 @@ import { VerificationWarningsPanel } from "./workspace/VerificationWarningsPanel
 import { IgnoredItemsPanel } from "./workspace/IgnoredItemsPanel";
 import { FinalReviewPanel } from "./workspace/FinalReviewPanel";
 
-export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: { initialData: DraftQuote; isLive?: boolean; envelopeId?: string }) {
+export function ExceptionWorkspace({ initialData, isLive = false, envelopeId, envelope }: { initialData: DraftQuote; isLive?: boolean; envelopeId?: string; envelope?: SpotPricingEnvelope | null }) {
+    const router = useRouter();
     const [draftQuote] = useState(initialData);
     const [explainTotals, setExplainTotals] = useState(false);
+    const [isCreatingQuote, setIsCreatingQuote] = useState(false);
+    const [createdQuoteId, setCreatedQuoteId] = useState<string | null>(null);
+    const [createQuoteError, setCreateQuoteError] = useState<string | null>(null);
 
     // Accordions local UI state
     const [showSuggested, setShowSuggested] = useState(false);
@@ -24,11 +31,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
     const [showTotalsPanel, setShowTotalsPanel] = useState(false);
 
     // Consume the custom workflow hook
-    const { state, derived, actions } = useSpotResolutionWorkflow({
-        initialData,
-        isLive,
-        envelopeId
-    });
+    const { state, derived, actions } = useSpotResolutionWorkflow({ initialData, isLive, envelopeId });
 
     const {
         suggestedCharges,
@@ -59,6 +62,42 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
         nextStepGuidance
     } = derived;
 
+    const createQuoteRequest = useMemo(() => {
+        const shipment = envelope?.shipment;
+        const shipmentContext = (shipment || {}) as Record<string, unknown>;
+        const paymentTerm = (shipment?.payment_term || "PREPAID").toUpperCase();
+        const outputCurrency = typeof shipmentContext.output_currency === "string" ? shipmentContext.output_currency : "PGK";
+        return {
+            payment_term: paymentTerm === "COLLECT" ? "COLLECT" : "PREPAID",
+            service_scope: shipment?.service_scope || "D2D",
+            output_currency: outputCurrency,
+            customer_id: typeof shipmentContext.customer_id === "string" ? shipmentContext.customer_id : undefined,
+            contact_id: typeof shipmentContext.contact_id === "string" ? shipmentContext.contact_id : undefined,
+            incoterm: typeof shipmentContext.incoterm === "string" ? shipmentContext.incoterm : undefined,
+        };
+    }, [envelope?.shipment]);
+
+    const handleCreateQuote = async () => {
+        if (!isLive || !envelopeId || !isReviewLocked || isCreatingQuote || createdQuoteId) {
+            return;
+        }
+
+        setIsCreatingQuote(true);
+        setCreateQuoteError(null);
+        try {
+            const result = await createSpotQuote(envelopeId, createQuoteRequest);
+            if (!result.success || !result.quote_id) {
+                throw new Error("Quote creation did not return a quote ID.");
+            }
+            setCreatedQuoteId(result.quote_id);
+            router.push(`/quotes/${result.quote_id}`);
+        } catch (err) {
+            setCreateQuoteError(err instanceof Error ? err.message : "Failed to create quote.");
+        } finally {
+            setIsCreatingQuote(false);
+        }
+    };
+
     return (
         <div className="min-h-screen bg-slate-950 text-slate-100 p-6 font-sans">
             <div className="max-w-4xl mx-auto flex flex-col gap-6">
@@ -83,6 +122,16 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                         <div className="text-xs uppercase tracking-wider font-bold text-indigo-400 mb-1">Express Freight Management</div>
                         <h1 className="text-xl font-bold text-slate-50">SPOT Draft Quote Review</h1>
                         <p className="text-sm text-slate-400 mt-0.5">{draftQuote.quote_summary}</p>
+                        {isLive && envelopeId ? (
+                            <button
+                                type="button"
+                                onClick={() => router.push(`/quotes/spot/${envelopeId}?edit_intake=1`)}
+                                className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-indigo-300 hover:text-indigo-200"
+                            >
+                                <ArrowLeft className="h-3.5 w-3.5" />
+                                Back to Intake to edit source input
+                            </button>
+                        ) : null}
                     </div>
                     <div className="bg-slate-950 border border-slate-800 px-4 py-2.5 rounded-xl shrink-0 text-center sm:text-right">
                         <span className="text-xs text-slate-500 block">Remaining Blockers</span>
@@ -554,6 +603,28 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                     onFinalizeReview={actions.finalizeReview}
                     onReopenReview={actions.reopenReview}
                 />
+
+                {isLive && (
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <div className="font-bold text-slate-100">Create formal quote</div>
+                                <div className="mt-1 text-xs text-slate-400">
+                                    Available only after the Exception Workspace review is finalized. Repeated clicks are blocked and the backend returns the existing quote if already created.
+                                </div>
+                                {createQuoteError ? <div className="mt-2 text-xs text-red-300">{createQuoteError}</div> : null}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleCreateQuote}
+                                disabled={!isReviewLocked || isCreatingQuote || Boolean(createdQuoteId)}
+                                className="rounded-xl bg-emerald-600 px-6 py-3 text-sm font-bold text-white shadow-xl shadow-emerald-900/30 transition hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600"
+                            >
+                                {createdQuoteId ? "Quote Created" : isCreatingQuote ? "Creating..." : "Create Quote"}
+                            </button>
+                        </div>
+                    </div>
+                )}
 
             </div>
         </div>

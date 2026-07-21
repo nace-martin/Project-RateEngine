@@ -2671,6 +2671,23 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         if exception_review_error is not None:
             return exception_review_error
 
+        from quotes.services.draft_quote_review_service import is_finalized as is_draft_quote_review_finalized
+        if not is_draft_quote_review_finalized(spe_db):
+            return Response(
+                {'error': 'Exception Workspace review must be finalized before creating a quote.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if spe_db.quote_id:
+            existing_spot_version = spe_db.quote.versions.filter(reason="Created from SPOT Envelope").order_by("-version_number").first()
+            if existing_spot_version:
+                return Response({
+                    'success': True,
+                    'quote_id': str(spe_db.quote.id),
+                    'quote_number': spe_db.quote.quote_number,
+                    'already_created': True,
+                })
+
         try:
             spe = _build_spe_from_db(spe_db)
         except ValueError as e:
