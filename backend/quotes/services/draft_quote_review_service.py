@@ -28,6 +28,25 @@ def is_finalized(envelope: SpotPricingEnvelopeDB) -> bool:
     return get_review_state(envelope).get("status") == "finalized"
 
 
+def invalidate_finalized_review(envelope: SpotPricingEnvelopeDB, user=None, reason: str = "material_change") -> bool:
+    state = get_review_state(envelope)
+    if state.get("status") != "finalized":
+        return False
+
+    conditions = dict(envelope.conditions_json or {})
+    invalidated_state = {
+        **state,
+        "status": "in_review",
+        "invalidated_by": getattr(user, "id", None),
+        "invalidated_at": timezone.now().isoformat(),
+        "invalidated_reason": reason,
+    }
+    conditions[REVIEW_KEY] = invalidated_state
+    envelope.conditions_json = conditions
+    envelope.save(update_fields=["conditions_json"])
+    return True
+
+
 def unresolved_blockers(draft_quote: DraftQuoteSchema) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
     for item in draft_quote.review_queue:

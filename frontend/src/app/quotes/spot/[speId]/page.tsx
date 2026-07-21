@@ -277,6 +277,18 @@ export default function SpotRateEntryPage() {
         }
     }, [isNew, speId, loadSPE]);
 
+    const isExplicitIntakeEdit = searchParams.get("edit_intake") === "1";
+    const shouldRedirectToExceptionWorkspace = Boolean(
+        !isNew && !isExplicitIntakeEdit && state.spe && state.spe.charges.length > 0
+    );
+
+    // Base SPOT route is intake-only. Existing review-ready envelopes cut over to the live Exception Workspace.
+    useEffect(() => {
+        if (shouldRedirectToExceptionWorkspace) {
+            router.replace(`/quotes/spot/${speId}/exception-workspace`);
+        }
+    }, [router, shouldRedirectToExceptionWorkspace, speId]);
+
     // Determine current step from SPE state (only for initial load, not after explicit transitions)
     useEffect(() => {
         // If the user has explicitly advanced to review (e.g. via Analyze Reply),
@@ -284,13 +296,7 @@ export default function SpotRateEntryPage() {
         if (userAdvancedToReviewRef.current) return;
 
         if (state.spe) {
-            if (state.spe.charges.length > 0) {
-                // If we have charges, go to review step
-                setCurrentStep(prev => prev === "review" ? prev : "review");
-            } else {
-                // Initial state - intake
-                setCurrentStep("intake");
-            }
+            setCurrentStep("intake");
         }
     }, [state.spe, state.flowState]);
 
@@ -812,7 +818,7 @@ export default function SpotRateEntryPage() {
         }
     };
 
-    // Handle analysis complete from intake step - move directly to review
+    // Handle analysis complete from intake step - cut over directly to the live Exception Workspace.
     const handleAnalysisComplete = async (
         result: ReplyAnalysisResult,
         targetBucket: SPEChargeLine["bucket"] | "mixed" = "mixed"
@@ -821,14 +827,11 @@ export default function SpotRateEntryPage() {
         if (result.source_batch_id && targetBucket === "mixed") {
             setPrimarySourceBatchId(result.source_batch_id);
         }
-        // Set the guard BEFORE the async reload so the useEffect doesn't fight us.
         userAdvancedToReviewRef.current = true;
         if (speId && !isNew) {
-            // Backend persists auto-populated charges (AI + standard DB suggestions) into the SPE.
-            // Reload before entering review so the form displays the latest draft charges.
             await loadSPE(speId);
+            router.replace(`/quotes/spot/${speId}/exception-workspace`);
         }
-        setCurrentStep("review");
     };
 
     const setIntakeDirty = useCallback((key: string, isDirty: boolean) => {
@@ -955,6 +958,16 @@ export default function SpotRateEntryPage() {
         );
     }
 
+    if (shouldRedirectToExceptionWorkspace) {
+        return (
+            <div className="container mx-auto max-w-4xl p-6">
+                <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                    Opening Exception Workspace...
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="container mx-auto max-w-5xl space-y-6 p-6">
             {/* Context Header - Clean notification */}
@@ -1002,18 +1015,6 @@ export default function SpotRateEntryPage() {
                         )}
                     </div>
                     <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
-                        {!isNew && speId ? (
-                            <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() => {
-                                    if (!confirmLeave()) return;
-                                    router.push(`/quotes/spot/${speId}/exception-workspace`);
-                                }}
-                            >
-                                Review in Exception Workspace
-                            </Button>
-                        ) : null}
                         <PageCancelButton
                             href="/quotes"
                             isDirty={hasPendingUnsavedWork}

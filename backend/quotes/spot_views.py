@@ -1551,6 +1551,14 @@ class SpotEnvelopeListCreateAPIView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            if quote is not None:
+                ctx.setdefault("customer_id", str(quote.customer_id) if quote.customer_id else None)
+                ctx.setdefault("contact_id", str(quote.contact_id) if quote.contact_id else None)
+                ctx.setdefault("incoterm", quote.incoterm)
+                ctx.setdefault("service_scope", quote.service_scope)
+                ctx.setdefault("payment_term", str(quote.payment_term).upper() if quote.payment_term else None)
+                ctx.setdefault("output_currency", quote.output_currency)
+
             if (
                 not ctx.get("payment_term")
                 and quote is not None
@@ -1823,6 +1831,9 @@ class SpotEnvelopeDetailAPIView(APIView):
                 for batch in spe_db.source_batches.all():
                     _sync_batch_analysis_summary(batch)
 
+                from quotes.services.draft_quote_review_service import invalidate_finalized_review
+                invalidate_finalized_review(spe_db, user=request.user, reason="charge_patch")
+
             spe_db.save()
             SpotEnvelopeListCreateAPIView()._validate_spe(spe_db)
         except Exception as exc:
@@ -1928,6 +1939,9 @@ class SpotChargeLineManualResolutionAPIView(APIView):
         if charge_line.source_batch:
             _sync_batch_analysis_summary(charge_line.source_batch)
 
+        from quotes.services.draft_quote_review_service import invalidate_finalized_review
+        invalidate_finalized_review(spe_db, user=request.user, reason="manual_charge_resolution")
+
         charge_line.refresh_from_db()
         serializer = SPEChargeLineSerializer(charge_line)
         return Response(serializer.data)
@@ -2002,6 +2016,9 @@ class SpotChargeLineConditionalResolutionAPIView(APIView):
             charge_line.delete()
             if batch:
                 _sync_batch_analysis_summary(batch)
+
+        from quotes.services.draft_quote_review_service import invalidate_finalized_review
+        invalidate_finalized_review(spe_db, user=request.user, reason="conditional_charge_resolution")
 
         spe_db.refresh_from_db()
         serializer = SpotPricingEnvelopeSerializer(spe_db)
@@ -2582,6 +2599,9 @@ class SpotReplyAnalysisAPIView(APIView):
                         spe_db.conditions_json = conditions
                         spe_db.save(update_fields=["conditions_json"])
 
+                    from quotes.services.draft_quote_review_service import invalidate_finalized_review
+                    invalidate_finalized_review(spe_db, user=request.user, reason="source_analysis")
+
                     result_payload = result.model_dump()
                     result_payload["source_batch_id"] = str(batch.id)
                     result_payload["source_batch_label"] = batch.label
@@ -2605,6 +2625,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
+    @transaction.atomic
     def post(self, request, envelope_id):
         from pricing_v4.adapter import PricingServiceV4Adapter
         from core.dataclasses import QuoteInput, ShipmentDetails, Piece, LocationRef
@@ -2616,9 +2637,9 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         from datetime import date
         
         spe_db = _get_spe_or_404(
-            request.user, 
+            request.user,
             envelope_id,
-            _spe_queryset(),
+            _spe_queryset().select_for_update(),
         )
         quote_data = request.data.get('quote_request', {})
         req_cust = (
@@ -2667,9 +2688,33 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         if intake_safety_error is not None:
             return intake_safety_error
 
+        from quotes.services.draft_quote_review_service import is_finalized as is_draft_quote_review_finalized
+        if not is_draft_quote_review_finalized(spe_db):
+            return Response(
+                {'error': 'Exception Workspace review must be finalized before creating a quote.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         exception_review_error = _exception_review_error_response(spe_db)
         if exception_review_error is not None:
             return exception_review_error
+
+        def _is_complete_spot_version(version):
+            return bool(
+                version
+                and version.lines.exists()
+                and hasattr(version, 'totals')
+            )
+
+        if spe_db.quote_id:
+            existing_spot_version = spe_db.quote.versions.filter(reason="Created from SPOT Envelope").order_by("-version_number").first()
+            if _is_complete_spot_version(existing_spot_version):
+                return Response({
+                    'success': True,
+                    'quote_id': str(spe_db.quote.id),
+                    'quote_number': spe_db.quote.quote_number,
+                    'already_created': True,
+                })
 
         try:
             spe = _build_spe_from_db(spe_db)
@@ -2710,8 +2755,8 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         shipment = ShipmentDetails(
             mode='AIR',
             shipment_type=shipment_type,
-            incoterm=quote_data.get('incoterm', 'DAP'),
-            payment_term=quote_data.get('payment_term', 'PREPAID'),
+            incoterm=quote_data.get('incoterm') or ctx.get('incoterm') or 'DAP',
+            payment_term=quote_data.get('payment_term') or ctx.get('payment_term') or 'PREPAID',
             commodity_code=ctx.get('commodity') or 'GCR',
             is_dangerous_goods=ctx.get('commodity') == 'DG',
             pieces=[Piece(
@@ -2719,16 +2764,20 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 length_cm=0, width_cm=0, height_cm=0,
                 gross_weight_kg=ctx.get('total_weight_kg', 0) / max(ctx.get('pieces', 1), 1),
             )],
-            service_scope=quote_data.get('service_scope', 'D2D'),
+            service_scope=quote_data.get('service_scope') or ctx.get('service_scope') or 'D2D',
             origin_location=origin_ref,
             destination_location=dest_ref,
         )
 
-        resolved_output_currency = _resolve_output_currency_for_shipment(
-            shipment_type=shipment.shipment_type,
-            payment_term=shipment.payment_term,
-            origin_location=origin_ref,
-            destination_location=dest_ref,
+        resolved_output_currency = (
+            quote_data.get('output_currency')
+            or ctx.get('output_currency')
+            or _resolve_output_currency_for_shipment(
+                shipment_type=shipment.shipment_type,
+                payment_term=shipment.payment_term,
+                origin_location=origin_ref,
+                destination_location=dest_ref,
+            )
         )
         
         # Ensure customer/contact logic
@@ -2737,6 +2786,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         requested_contact_id = (
             request.data.get('contact_id')
             or quote_data.get('contact_id')
+            or ctx.get('contact_id')
         )
         
         if spe_db.quote:
@@ -2747,6 +2797,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
              req_cust = (
                  request.data.get('customer_id')
                  or quote_data.get('customer_id')
+                 or ctx.get('customer_id')
              )
              if req_cust:
                  try:
@@ -2757,18 +2808,6 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                          status=status.HTTP_400_BAD_REQUEST
                      )
 
-        # Backward compatibility for older envelopes without explicit customer_id:
-        # resolve by customer_name from shipment context if available.
-        if not cust_id:
-            customer_name = str(ctx.get('customer_name') or '').strip()
-            if customer_name:
-                scoped_companies = scoped_queryset_for_user(Company.objects.all(), request.user)
-                cust = scoped_companies.filter(name__iexact=customer_name).first()
-                if not cust:
-                    cust = scoped_companies.filter(name__icontains=customer_name).first()
-                if cust:
-                    cust_id = cust.id
-        
         if not cust_id:
             return Response(
                 {'error': 'Customer is required to create quote. Provide customer_id or link SPE to an existing quote.'},
