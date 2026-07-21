@@ -208,8 +208,21 @@ class ProductCode(models.Model):
         related_name='dependent_surcharges',
         help_text='For PERCENT unit: the ProductCode this is a percentage of'
     )
+
+    # Explicit lifecycle controls for Phase 16 leg-aware resolution.
+    # Defaults preserve all existing ProductCodes as selectable unless deliberately retired.
+    is_active = models.BooleanField(default=True, db_index=True)
+    retired_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    replacement_product_code = models.ForeignKey(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='replaced_product_codes',
+        help_text='Optional active replacement ProductCode when this code is retired.'
+    )
     
-    # Timestamps (no magic flags like is_active)
+    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -231,6 +244,13 @@ class ProductCode(models.Model):
             raise ValidationError(f"Import ProductCode ID must be 2xxx, got {self.id}")
         elif self.domain == self.DOMAIN_DOMESTIC and not (3000 <= self.id < 4000):
             raise ValidationError(f"Domestic ProductCode ID must be 3xxx, got {self.id}")
+
+        if self.retired_at and self.is_active:
+            raise ValidationError({'is_active': 'Retired ProductCodes must not remain active.'})
+        if self.replacement_product_code_id == self.id:
+            raise ValidationError({'replacement_product_code': 'A ProductCode cannot replace itself.'})
+        if self.replacement_product_code and self.replacement_product_code.domain != self.domain:
+            raise ValidationError({'replacement_product_code': 'Replacement ProductCode must have the same domain.'})
 
 
 # =============================================================================
@@ -467,6 +487,143 @@ class CanonicalChargeType(models.Model):
 
     def __str__(self):
         return f"{self.code} - {self.name}"
+
+
+class ProductCodeContextRule(models.Model):
+    """Reviewed leg-aware rule mapping charge context to a ProductCode.
+
+    Dark-mode foundation only: these rules are consumed by the deterministic
+    resolver and do not mutate quotes, rates, aliases, GST, FX or margins.
+    """
+
+    class LegRole(models.TextChoices):
+        INTERNATIONAL_IMPORT = 'INTERNATIONAL_IMPORT', 'International Import'
+        INTERNATIONAL_EXPORT = 'INTERNATIONAL_EXPORT', 'International Export'
+        DOMESTIC_ON_FORWARDING = 'DOMESTIC_ON_FORWARDING', 'Domestic On-forwarding'
+        DOMESTIC_PRE_CARRIAGE = 'DOMESTIC_PRE_CARRIAGE', 'Domestic Pre-carriage'
+        FINAL_PICKUP = 'FINAL_PICKUP', 'Final Pickup'
+        FINAL_DELIVERY = 'FINAL_DELIVERY', 'Final Delivery'
+
+    class TransportMode(models.TextChoices):
+        INTERNATIONAL_AIR = 'INTERNATIONAL_AIR', 'International Air'
+        DOMESTIC_AIR = 'DOMESTIC_AIR', 'Domestic Air'
+        LOCAL_ROAD = 'LOCAL_ROAD', 'Local Road'
+
+    class CommercialPosition(models.TextChoices):
+        ORIGIN = 'ORIGIN', 'Origin'
+        FREIGHT = 'FREIGHT', 'Freight'
+        DESTINATION = 'DESTINATION', 'Destination'
+
+    class ReviewStatus(models.TextChoices):
+        APPROVED = 'APPROVED', 'Approved'
+        CANDIDATE = 'CANDIDATE', 'Candidate'
+        REJECTED = 'REJECTED', 'Rejected'
+
+    class RuleSource(models.TextChoices):
+        ADMIN = 'ADMIN', 'Admin Managed'
+        MIGRATION = 'MIGRATION', 'Reviewed Migration'
+        DIAGNOSTIC = 'DIAGNOSTIC', 'Diagnostic Only'
+
+    canonical_charge_type = models.ForeignKey(
+        CanonicalChargeType,
+        on_delete=models.PROTECT,
+        related_name='product_code_context_rules',
+    )
+    product_code = models.ForeignKey(
+        ProductCode,
+        on_delete=models.PROTECT,
+        related_name='context_rules',
+    )
+    product_code_domain = models.CharField(
+        max_length=10,
+        choices=ProductCode.DOMAIN_CHOICES,
+        db_index=True,
+    )
+    leg_role = models.CharField(max_length=32, choices=LegRole.choices, db_index=True)
+    commercial_position = models.CharField(max_length=20, choices=CommercialPosition.choices, db_index=True)
+    transport_mode = models.CharField(max_length=32, choices=TransportMode.choices, db_index=True)
+    operational_location = models.CharField(max_length=20, blank=True, db_index=True)
+    calculation_basis = models.CharField(max_length=50, blank=True, db_index=True)
+    service_scope = models.CharField(max_length=20, blank=True, db_index=True)
+    priority = models.PositiveIntegerField(default=100, db_index=True)
+    is_active = models.BooleanField(default=False, db_index=True)
+    review_status = models.CharField(
+        max_length=20,
+        choices=ReviewStatus.choices,
+        default=ReviewStatus.CANDIDATE,
+        db_index=True,
+    )
+    source = models.CharField(max_length=20, choices=RuleSource.choices, default=RuleSource.ADMIN, db_index=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'product_code_context_rules'
+        ordering = ['priority', 'canonical_charge_type__code', 'id']
+        indexes = [
+            models.Index(
+                fields=[
+                    'canonical_charge_type',
+                    'product_code_domain',
+                    'leg_role',
+                    'commercial_position',
+                    'transport_mode',
+                    'is_active',
+                    'review_status',
+                ],
+                name='pc_context_rule_lookup_idx',
+            ),
+            models.Index(fields=['product_code', 'is_active', 'review_status'], name='pc_context_rule_prod_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'canonical_charge_type',
+                    'product_code',
+                    'product_code_domain',
+                    'leg_role',
+                    'commercial_position',
+                    'transport_mode',
+                    'operational_location',
+                    'calculation_basis',
+                    'service_scope',
+                ],
+                name='uniq_product_context_rule_dims',
+            ),
+        ]
+        verbose_name = 'ProductCode Context Rule'
+        verbose_name_plural = 'ProductCode Context Rules'
+
+    def clean(self):
+        super().clean()
+        self.operational_location = str(self.operational_location or '').strip().upper()
+        self.calculation_basis = str(self.calculation_basis or '').strip().upper()
+        self.service_scope = str(self.service_scope or '').strip().upper()
+
+        if self.product_code and self.product_code.domain != self.product_code_domain:
+            raise ValidationError({'product_code_domain': 'Rule domain must equal ProductCode domain.'})
+        if self.is_active and self.review_status != self.ReviewStatus.APPROVED:
+            raise ValidationError({'is_active': 'Only APPROVED context rules can be active.'})
+        if self.is_active and self.product_code and (not self.product_code.is_active or self.product_code.retired_at):
+            raise ValidationError({'product_code': 'Active context rules cannot target inactive or retired ProductCodes.'})
+        if self.is_active and self.canonical_charge_type and not self.canonical_charge_type.is_active:
+            raise ValidationError({'canonical_charge_type': 'Active context rules require an active canonical charge type.'})
+
+    def save(self, *args, **kwargs):
+        self.operational_location = str(self.operational_location or '').strip().upper()
+        self.calculation_basis = str(self.calculation_basis or '').strip().upper()
+        self.service_scope = str(self.service_scope or '').strip().upper()
+        super().save(*args, **kwargs)
+
+    @property
+    def specificity(self):
+        return sum(1 for value in [self.operational_location, self.calculation_basis, self.service_scope] if value)
+
+    def __str__(self):
+        return f"{self.canonical_charge_type.code} / {self.leg_role} -> {self.product_code.code}"
 
 
 # =============================================================================

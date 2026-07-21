@@ -548,7 +548,7 @@ Results:
 
 ### 7.3 ProductCode lifecycle
 
-Phase 16D should add explicit lifecycle controls if the current catalogue lacks them:
+Phase 16D adds explicit lifecycle controls because the current catalogue lacks them:
 
 ```text
 is_active
@@ -915,11 +915,14 @@ All `UAT-16A-001` through `UAT-16A-020` remain mandatory.
 
 ### Phase 16D
 
-- typed journey and ChargeContext contracts;
-- ProductCode context-rule persistence;
-- leg-aware ProductCode resolver;
-- resolver tests and diagnostics;
+- typed ChargeContext contracts for resolver input/output;
+- ProductCode context-rule persistence and ProductCode lifecycle controls;
+- deterministic dark-mode leg-aware ProductCode resolver;
+- read-only resolver diagnostics;
+- resolver tests covering import, export, domestic pre-carriage/on-forwarding, ambiguity, missing context, inactive/retired codes and incompatible manual selections;
 - no multi-leg quote roll-up until resolver gates pass.
+
+Phase 16D remains dark-mode only: it introduces no quote-total, GST, FX, margin, pricing-engine, SPOT-finalization or public-output behavior change, and it does not seed speculative mappings.
 
 ### Phase 16E
 
