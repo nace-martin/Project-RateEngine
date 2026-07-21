@@ -131,6 +131,10 @@ export interface SPEShipmentContext {
     origin_code: string;
     destination_code: string;
     customer_name?: string;
+    customer_id?: string;
+    contact_id?: string;
+    incoterm?: string;
+    output_currency?: string;
     commodity: SPECommodity;
     total_weight_kg: number;
     pieces: number;
@@ -515,6 +519,6 @@ export interface SpotModeActions {
     submitAcknowledgement: () => Promise<boolean>;
     reviewSourceBatch: (sourceBatchId: string, request: { reviewed_safe_to_quote: boolean; review_note?: string }) => Promise<SpotPricingEnvelope | null>;
     computeQuote: (request: SPEComputeRequest) => Promise<SPEComputeResponse | null>;
-    createQuote: (request: { payment_term: string; service_scope: string; output_currency: string; customer_id?: string }) => Promise<{ success: boolean; quote_id: string } | null>;
+    createQuote: (request: { payment_term: string; service_scope: string; output_currency: string; customer_id?: string; contact_id?: string; incoterm?: string }) => Promise<{ success: boolean; quote_id: string } | null>;
     reset: () => void;
 }
