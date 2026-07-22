@@ -311,34 +311,16 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId, en
                                         </div>
                                         <div className="flex flex-wrap gap-2">
                                             <button
-                                                onClick={() => actions.resolveSourceFinding(currentIssue.finding, "link_existing_charge", currentIssue.finding.charge_line_id || null)}
-                                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition"
-                                            >
-                                                Link to Existing Charge
-                                            </button>
-                                            <button
-                                                onClick={() => actions.resolveSourceFinding(currentIssue.finding, "add_missing_charge", currentIssue.finding.charge_line_id || null)}
-                                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition"
-                                            >
-                                                Missing Charge Added
-                                            </button>
-                                            <button
-                                                onClick={() => actions.resolveSourceFinding(currentIssue.finding, "confirm_corrected_mapping", currentIssue.finding.charge_line_id || null)}
+                                                onClick={() => actions.resolveSourceFinding(currentIssue.finding, "resolved_in_workspace", currentIssue.finding.charge_line_id || null)}
                                                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition"
                                             >
-                                                Confirm Corrected Mapping
+                                                Mark Finding Addressed
                                             </button>
                                             <button
                                                 onClick={() => actions.resolveSourceFinding(currentIssue.finding, "not_commercially_applicable")}
                                                 className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-red-400 rounded-lg text-xs font-semibold transition"
                                             >
                                                 Not Commercially Applicable
-                                            </button>
-                                            <button
-                                                onClick={() => actions.resolveSourceFinding(currentIssue.finding, "approve_source")}
-                                                className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-200 rounded-lg text-xs font-semibold transition"
-                                            >
-                                                Approve Source With Note
                                             </button>
                                         </div>
                                     </div>

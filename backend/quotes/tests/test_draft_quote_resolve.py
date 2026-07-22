@@ -316,6 +316,7 @@ class DraftQuoteResolveHighValueTests(TestCase):
         source_items = [item for item in read.data["review_queue"] if item["type"] == "source_finding"]
         self.assertEqual(len(source_items), 1)
         self.assertIn("Destination delivery fee", source_items[0]["message"])
+        self.assertEqual(source_items[0]["available_actions"], ["resolved_in_workspace", "not_commercially_applicable"])
         self.assertEqual(self._finalize().status_code, status.HTTP_400_BAD_REQUEST)
 
         missing_note = self._post([
@@ -376,8 +377,8 @@ class DraftQuoteResolveHighValueTests(TestCase):
             details={
                 "source_batch_id": source_items[0]["source_batch_id"],
                 "source_finding_id": source_items[0]["source_finding_id"],
-                "action": "link_existing_charge",
-                "review_note": "Linked to existing destination charge.",
+                "action": "resolved_in_workspace",
+                "review_note": "Addressed against existing destination charge in the workspace.",
                 "charge_line_id": str(self.charge.id),
             },
             decision_id="source-one",
@@ -388,6 +389,56 @@ class DraftQuoteResolveHighValueTests(TestCase):
         remaining = [item for item in reread.data["review_queue"] if item["type"] == "source_finding"]
         self.assertEqual(len(remaining), 1)
         self.assertIn("Terminal handling", remaining[0]["message"])
+
+    def test_source_finding_ids_are_content_stable_not_index_based(self):
+        self.batch.analysis_summary_json = {
+            **self.batch.analysis_summary_json,
+            "ai_used": True,
+            "can_proceed": True,
+            "imported_charge_count": 1,
+            "critic_missed_charges": ["Destination delivery fee", "Terminal handling"],
+        }
+        self.batch.save(update_fields=["analysis_summary_json"])
+        self.client.force_authenticate(user=self.sales)
+        first = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        first_ids_by_message = {
+            item["message"]: item["source_finding_id"]
+            for item in first.data["review_queue"]
+            if item["type"] == "source_finding"
+        }
+
+        self.batch.analysis_summary_json = {
+            **self.batch.analysis_summary_json,
+            "critic_missed_charges": ["Terminal handling", "Destination delivery fee", "Terminal handling"],
+        }
+        self.batch.save(update_fields=["analysis_summary_json"])
+        second = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        second_ids_by_message = {
+            item["message"]: item["source_finding_id"]
+            for item in second.data["review_queue"]
+            if item["type"] == "source_finding"
+        }
+        self.assertEqual(first_ids_by_message, second_ids_by_message)
+        self.assertNotIn("critic-missed-charges-0", " ".join(second_ids_by_message.values()))
+        self.assertEqual(len(second_ids_by_message), 2)
+
+    def test_source_batch_review_rejects_blanket_approval_when_findings_are_open(self):
+        self.batch.analysis_summary_json = {
+            **self.batch.analysis_summary_json,
+            "ai_used": True,
+            "can_proceed": True,
+            "imported_charge_count": 1,
+            "critic_missed_charges": ["Destination delivery fee"],
+        }
+        self.batch.save(update_fields=["analysis_summary_json"])
+        self.client.force_authenticate(user=self.sales)
+        response = self.client.post(
+            f"/api/v3/spot/envelopes/{self.envelope.id}/sources/{self.batch.id}/review/",
+            {"reviewed_safe_to_quote": True, "review_note": "Looks okay."},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("blanket source approval", response.data["error"])
 
     def test_low_confidence_source_finding_does_not_block_finalize(self):
         self.batch.analysis_summary_json = {

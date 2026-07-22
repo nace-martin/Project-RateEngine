@@ -367,11 +367,8 @@ def _create_product_code_request_for_unclassified(envelope, decision, user):
 
 
 SOURCE_FINDING_RESOLUTION_ACTIONS = {
-    "link_existing_charge",
-    "add_missing_charge",
-    "confirm_corrected_mapping",
+    "resolved_in_workspace",
     "not_commercially_applicable",
-    "approve_source",
 }
 
 

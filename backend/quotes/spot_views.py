@@ -68,6 +68,7 @@ from quotes.intake_safety import (
     mark_source_analysis_review,
     normalize_source_analysis_summary,
     sync_source_analysis_summary_counts,
+    unresolved_source_findings,
 )
 from quotes.serializers import SpotPricingEnvelopeSerializer, SPEChargeLineSerializer, SpotTemplateValidationReviewSerializer
 from accounts.scope import scoped_queryset_for_user
@@ -3105,9 +3106,38 @@ class SpotSourceBatchReviewAPIView(APIView):
         reviewed_safe_to_quote = bool(request.data.get("reviewed_safe_to_quote", False))
         review_note = str(request.data.get("review_note") or "").strip() or None
         source_finding_id = str(request.data.get("source_finding_id") or "").strip() or None
-        resolution_action = str(request.data.get("resolution_action") or "source_review_approved").strip()
+        resolution_action = str(request.data.get("resolution_action") or "").strip()
         charge_line_id = str(request.data.get("charge_line_id") or "").strip() or None
         summary = normalize_source_analysis_summary(batch.analysis_summary_json)
+        unresolved_findings = unresolved_source_findings(summary)
+
+        if reviewed_safe_to_quote and unresolved_findings and not source_finding_id:
+            return Response(
+                {
+                    "error": "Source findings must be resolved individually; blanket source approval is not allowed.",
+                    "source_batch_id": str(batch.id),
+                    "blocking_reasons": summary["blocking_reasons"],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if reviewed_safe_to_quote and source_finding_id and not any(item.get("id") == source_finding_id for item in unresolved_findings):
+            return Response(
+                {
+                    "error": "Source finding was not found or is already resolved.",
+                    "source_batch_id": str(batch.id),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if reviewed_safe_to_quote and source_finding_id and resolution_action not in {"resolved_in_workspace", "not_commercially_applicable"}:
+            return Response(
+                {
+                    "error": "Unsupported source finding resolution action.",
+                    "source_batch_id": str(batch.id),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if reviewed_safe_to_quote and summary["requires_review_note"] and not review_note:
             return Response(

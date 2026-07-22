@@ -117,7 +117,10 @@ assert.ok(hookSrc.includes("resolveDraftQuoteDecisions"), "useSpotResolutionWork
 assert.ok(hookSrc.includes('type: "resolve_source_finding"'), "Source findings must submit authoritative resolve decisions");
 assert.ok(hookSrc.includes("Source finding resolution requires a non-empty review note"), "Source finding resolution must require a review note");
 assert.ok(workspaceSrc.includes('currentIssue.type === "source_finding"'), "ExceptionWorkspace must render source finding blockers");
-assert.ok(workspaceSrc.includes("Approve Source With Note"), "ExceptionWorkspace must expose source approval with note workflow");
+assert.ok(workspaceSrc.includes("Mark Finding Addressed"), "ExceptionWorkspace must expose targeted source finding resolution");
+assert.ok(!workspaceSrc.includes("Approve Source With Note"), "ExceptionWorkspace must not expose blanket source approval");
+assert.ok(!workspaceSrc.includes("Link to Existing Charge"), "ExceptionWorkspace must not claim to link charges from source finding resolution");
+assert.ok(!workspaceSrc.includes("Missing Charge Added"), "ExceptionWorkspace must not claim to add charges from source finding resolution");
 assert.ok(hookSrc.includes("getDraftQuote"), "useSpotResolutionWorkflow must reload the Draft Quote after live unknown-item decisions");
 assert.ok(hookSrc.includes("finalizeDraftQuoteReview"), "useSpotResolutionWorkflow must call finalizeDraftQuoteReview");
 assert.ok(hookSrc.includes("reopenDraftQuoteReview"), "useSpotResolutionWorkflow must call reopenDraftQuoteReview for authorized live reopen");

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Iterable
+import hashlib
 import re
 
 
@@ -39,7 +40,13 @@ def _int_value(value: Any) -> int:
 
 def _slug(value: Any) -> str:
     text = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
-    return text[:60] or "finding"
+    return text[:48] or "finding"
+
+
+def _content_finding_id(finding_type: str, text: Any) -> str:
+    normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
+    digest = hashlib.sha256(f"{finding_type}:{normalized}".encode("utf-8")).hexdigest()[:12]
+    return f"{finding_type}-{digest}-{_slug(normalized)}"
 
 
 def _existing_source_findings(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -85,18 +92,27 @@ def _derive_source_findings(raw: dict[str, Any], summary: dict[str, Any]) -> lis
             finding_type="missing_required_fields",
             message="Imported lines are missing required rate or currency fields.",
         ))
-    for idx, text in enumerate(summary["critic_missed_charges"]):
+    seen_content_findings: set[str] = set()
+    for text in summary["critic_missed_charges"]:
+        finding_id = _content_finding_id("critic_missed_charges", text)
+        if finding_id in seen_content_findings:
+            continue
+        seen_content_findings.add(finding_id)
         findings.append(_finding_payload(
             raw,
-            finding_id=f"critic-missed-charges-{idx}-{_slug(text)}",
+            finding_id=finding_id,
             finding_type="critic_missed_charges",
             message=f"Possible missed charge: {text}",
             evidence_text=text,
         ))
-    for idx, text in enumerate(summary["critic_hallucinations"]):
+    for text in summary["critic_hallucinations"]:
+        finding_id = _content_finding_id("critic_hallucinations", text)
+        if finding_id in seen_content_findings:
+            continue
+        seen_content_findings.add(finding_id)
         findings.append(_finding_payload(
             raw,
-            finding_id=f"critic-hallucinations-{idx}-{_slug(text)}",
+            finding_id=finding_id,
             finding_type="critic_hallucinations",
             message=f"Questionable extracted mapping or charge: {text}",
             evidence_text=text,
@@ -349,9 +365,9 @@ def mark_source_analysis_review(
     updated_findings = []
     for finding in summary.get("source_findings", []):
         item = dict(finding)
-        if reviewed_safe_to_quote and (finding_id is None or item.get("id") == finding_id):
+        if reviewed_safe_to_quote and finding_id and item.get("id") == finding_id:
             item["status"] = SOURCE_FINDING_STATUS_RESOLVED
-            item["resolution_action"] = resolution_action or "source_review_approved"
+            item["resolution_action"] = resolution_action
             item["review_note"] = note
             item["resolved_by_user_id"] = str(reviewed_by_user_id or "").strip() or None
             item["resolved_at"] = reviewed_at or None

@@ -436,11 +436,8 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
                 "charge_line_id": finding.get("charge_line_id"),
                 "note_required": True,
                 "available_actions": [
-                    "link_existing_charge",
-                    "add_missing_charge",
-                    "confirm_corrected_mapping",
+                    "resolved_in_workspace",
                     "not_commercially_applicable",
-                    "approve_source",
                 ],
             })
 
