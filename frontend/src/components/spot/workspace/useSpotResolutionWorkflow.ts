@@ -312,6 +312,11 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
     };
 
     const submitProductCodeRequest = async (chargeId: string) => {
+        if (!productCodeDomain) {
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: "Draft Quote shipment direction is missing; ProductCode request cannot be submitted." });
+            return;
+        }
+
         const decisionId = `dec-${Date.now()}`;
         const newDecisionItem = {
             decision_id: decisionId,
@@ -323,6 +328,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
                 display_label: state.requestForm.label,
                 bucket: state.requestForm.bucket,
                 category: state.requestForm.bucket,
+                domain: productCodeDomain,
                 currency: state.requestForm.currency,
                 amount: state.requestForm.amount,
                 unit: state.requestForm.unit,
