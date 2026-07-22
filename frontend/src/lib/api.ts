@@ -5,6 +5,7 @@ import { getJson, sendJson } from './api/shared';
 import { mapQuoteDetailToComputeResult } from './quote-detail-mapping';
 import { ReplyAnalysisResult, SPEChargeLine, SPEConditions, SPECommodity } from './spot-types';
 import { DraftQuote, DraftQuoteFinalizeResponse, DraftQuoteReopenResponse, DraftQuoteResolvePayload, DraftQuoteResolveResponse } from './draft-quote-types';
+import { normalizeDraftQuotePayload } from './draft-quote-normalization';
 import {
   LoginData,
   User,
@@ -801,7 +802,8 @@ export async function getDraftQuote(id: string): Promise<DraftQuote> {
     throw new Error(`Failed to fetch draft quote: ${detail}`);
   }
 
-  return response.json();
+  const payload = await response.json();
+  return normalizeDraftQuotePayload(payload as DraftQuote);
 }
 
 

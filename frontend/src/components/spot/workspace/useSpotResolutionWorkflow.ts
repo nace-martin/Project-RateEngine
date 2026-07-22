@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useState } from "react";
 import { useAuth } from "../../../context/auth-context";
 import { useConfirmDialog } from "../../../context/confirm-dialog-context";
+import { inferProductCodeDomainFromDraftQuote } from "../../../lib/draft-quote-domain";
 import { DecisionResult, DraftCharge, DraftQuote, DraftQuoteResolveResponse } from "../../../lib/draft-quote-types";
 import {
     createSpotResolutionState,
@@ -26,7 +27,6 @@ interface ProductCodeSelectorOption {
     domain: string;
 }
 
-const PRODUCT_CODE_DOMAINS = new Set(["IMPORT", "EXPORT", "DOMESTIC"]);
 const REOPEN_ROLES = new Set(["manager", "admin"]);
 const GENERIC_UNKNOWN_LABEL = "Unknown Charge Block";
 
@@ -68,8 +68,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
     const { user } = useAuth();
     const { confirm } = useConfirmDialog();
 
-    const shipmentDirection = String(initialData.shipment_context.direction || "").toUpperCase();
-    const productCodeDomain = PRODUCT_CODE_DOMAINS.has(shipmentDirection) ? shipmentDirection : null;
+    const productCodeDomain = inferProductCodeDomainFromDraftQuote(initialData.shipment_context);
     const role = String(user?.role || "").toLowerCase();
     const isReopenAuthorized = REOPEN_ROLES.has(role);
 
@@ -312,6 +311,11 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
     };
 
     const submitProductCodeRequest = async (chargeId: string) => {
+        if (!productCodeDomain) {
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: "Trusted route evidence is incomplete or contradictory; ProductCode request cannot be submitted." });
+            return;
+        }
+
         const decisionId = `dec-${Date.now()}`;
         const newDecisionItem = {
             decision_id: decisionId,
@@ -323,6 +327,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
                 display_label: state.requestForm.label,
                 bucket: state.requestForm.bucket,
                 category: state.requestForm.bucket,
+                domain: productCodeDomain,
                 currency: state.requestForm.currency,
                 amount: state.requestForm.amount,
                 unit: state.requestForm.unit,

@@ -134,6 +134,9 @@ assert.ok(hookSrc.includes('type: "classify_unclassified"'), "Unknown-item live 
 assert.ok(!hookSrc.includes('type: "map_to_product_code",\n            target_id: itemId'), "Unknown-item mapping must not submit map_to_product_code with an unclassified item ID");
 assert.ok(!hookSrc.includes('newChargeId = `chg-new-${Date.now()}`;\n            try'), "Live unknown charge creation must not create synthetic IDs");
 assert.ok(!hookSrc.includes('domain: "IMPORT"'), "ProductCode requests must not hardcode IMPORT domain");
+assert.ok(hookSrc.includes("inferProductCodeDomainFromDraftQuote(initialData.shipment_context)"), "ProductCode request domain must come from Draft Quote route evidence");
+assert.ok(hookSrc.includes("domain: productCodeDomain"), "ProductCode requests must include derived domain in details");
+assert.ok(hookSrc.includes("Trusted route evidence is incomplete or contradictory"), "ProductCode requests must fail visibly when trusted route evidence is incomplete");
 assert.ok(!hookSrc.includes('currency: "SGD"'), "Unknown ProductCode requests must not hardcode SGD currency");
 assert.ok(workspaceSrc.includes("actions.openUnknownMapExisting"), "Unknown Map Existing must open a detail-collection workflow instead of submitting from ProductCode-only selection");
 assert.ok(workspaceSrc.includes('collectChargeDetails={currentIssue.type === "unknown_charge"}'), "Unknown Map Existing must collect full charge details");

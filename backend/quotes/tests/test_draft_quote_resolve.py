@@ -228,9 +228,51 @@ class DraftQuoteResolveHighValueTests(TestCase):
     def test_draft_quote_payload_direction_uses_route_countries_over_json_direction(self):
         from quotes.services.draft_quote_adapter import build_draft_quote_payload
 
-        self.envelope.shipment_context_json = {"direction": "EXPORT", "origin_country": "SG", "destination_country": "PG", "mode": "AIR"}
+        self.envelope.shipment_context_json = {
+            "direction": "EXPORT",
+            "origin_country": "SG",
+            "destination_country": "PG",
+            "origin_code": "SIN",
+            "destination_code": "POM",
+            "mode": "AIR",
+        }
         self.envelope.save(update_fields=["shipment_context_json"])
         payload = build_draft_quote_payload(self.envelope)
+        self.assertEqual(payload["shipment_context"]["direction"], "IMPORT")
+        self.assertEqual(payload["shipment_context"]["origin"], "SIN")
+        self.assertEqual(payload["shipment_context"]["destination"], "POM")
+        self.assertEqual(payload["shipment_context"]["origin_country"], "SG")
+        self.assertEqual(payload["shipment_context"]["destination_country"], "PG")
+        self.assertEqual(payload["shipment_context"]["origin_code"], "SIN")
+        self.assertEqual(payload["shipment_context"]["destination_code"], "POM")
+
+    def test_draft_quote_payload_derives_export_and_domestic_from_trusted_countries(self):
+        from quotes.services.draft_quote_adapter import build_draft_quote_payload
+
+        self.envelope.shipment_context_json = {"origin_country": "PG", "destination_country": "AU", "origin_code": "POM", "destination_code": "BNE", "mode": "AIR"}
+        self.envelope.save(update_fields=["shipment_context_json"])
+        export_payload = build_draft_quote_payload(self.envelope)
+        self.assertEqual(export_payload["shipment_context"]["direction"], "EXPORT")
+        self.assertEqual(export_payload["shipment_context"]["origin_country"], "PG")
+        self.assertEqual(export_payload["shipment_context"]["destination_country"], "AU")
+
+        self.envelope.shipment_context_json = {"origin_country": "PG", "destination_country": "PG", "origin_code": "POM", "destination_code": "LAE", "mode": "AIR"}
+        self.envelope.save(update_fields=["shipment_context_json"])
+        domestic_payload = build_draft_quote_payload(self.envelope)
+        self.assertEqual(domestic_payload["shipment_context"]["direction"], "DOMESTIC")
+        self.assertEqual(domestic_payload["shipment_context"]["origin_code"], "POM")
+        self.assertEqual(domestic_payload["shipment_context"]["destination_code"], "LAE")
+
+    def test_draft_quote_payload_preserves_stale_origin_destination_compatibility(self):
+        from quotes.services.draft_quote_adapter import build_draft_quote_payload
+
+        self.envelope.shipment_context_json = {"origin": "Singapore", "destination": "Port Moresby", "origin_country": "SG", "destination_country": "PG", "mode": "AIR"}
+        self.envelope.save(update_fields=["shipment_context_json"])
+        payload = build_draft_quote_payload(self.envelope)
+        self.assertEqual(payload["shipment_context"]["origin"], "Singapore")
+        self.assertEqual(payload["shipment_context"]["destination"], "Port Moresby")
+        self.assertEqual(payload["shipment_context"]["origin_code"], "")
+        self.assertEqual(payload["shipment_context"]["destination_code"], "")
         self.assertEqual(payload["shipment_context"]["direction"], "IMPORT")
 
     def test_draft_quote_payload_omits_direction_when_route_countries_are_unsupported(self):
