@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useState } from "react";
 import { useAuth } from "../../../context/auth-context";
 import { useConfirmDialog } from "../../../context/confirm-dialog-context";
-import { inferProductCodeDomainFromDraftQuote } from "../../../lib/draft-quote-domain";
+import { resolveProductCodeDomainFromDraftQuote } from "../../../lib/draft-quote-domain";
 import { DecisionResult, DraftCharge, DraftQuote, DraftQuoteResolveResponse } from "../../../lib/draft-quote-types";
 import {
     createSpotResolutionState,
@@ -68,7 +68,8 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
     const { user } = useAuth();
     const { confirm } = useConfirmDialog();
 
-    const productCodeDomain = inferProductCodeDomainFromDraftQuote(initialData.shipment_context);
+    const productCodeDomainResolution = resolveProductCodeDomainFromDraftQuote(initialData.shipment_context);
+    const productCodeDomain = productCodeDomainResolution.domain;
     const role = String(user?.role || "").toLowerCase();
     const isReopenAuthorized = REOPEN_ROLES.has(role);
 
@@ -77,7 +78,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
         if (!productCodeDomain) {
             setProductCodes([]);
-            setProductCodeLoadError("Draft Quote shipment direction is missing; ProductCode selection is disabled.");
+            setProductCodeLoadError(productCodeDomainResolution.issueMessage || "Draft Quote shipment direction is missing; ProductCode selection is disabled.");
             setIsLoadingProductCodes(false);
             return;
         }
@@ -110,7 +111,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         return () => {
             cancelled = true;
         };
-    }, [productCodeDomain, productCodeRetryNonce]);
+    }, [productCodeDomain, productCodeDomainResolution.issueMessage, productCodeRetryNonce]);
 
     const refreshLiveDraftQuote = async () => {
         if (!isLive || !envelopeId) {
@@ -312,7 +313,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
     const submitProductCodeRequest = async (chargeId: string) => {
         if (!productCodeDomain) {
-            dispatch({ type: "SET_ACTION_MESSAGE", payload: "Trusted route evidence is incomplete or contradictory; ProductCode request cannot be submitted." });
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: productCodeDomainResolution.issueMessage || "Draft Quote ProductCode domain is unavailable; ProductCode request cannot be submitted." });
             return;
         }
 
@@ -348,7 +349,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         } catch (err) {
             console.error("Failed to submit ProductCode request:", err);
             const errMsg = err instanceof Error ? err.message : String(err);
-            dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error submitting ProductCode request: ${errMsg}` });
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: `Backend rejected ProductCode request: ${errMsg}` });
             return;
         }
 
