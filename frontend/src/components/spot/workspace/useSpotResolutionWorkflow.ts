@@ -4,6 +4,7 @@ import { useConfirmDialog } from "../../../context/confirm-dialog-context";
 import { resolveProductCodeDomainFromDraftQuote } from "../../../lib/draft-quote-domain";
 import { DecisionResult, DraftCharge, DraftQuote, DraftQuoteResolveResponse } from "../../../lib/draft-quote-types";
 import {
+    SourceFindingReviewQueueItem,
     createSpotResolutionState,
     spotResolutionReducer,
     selectCombinedUnresolved,
@@ -309,6 +310,44 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
             const errMsg = err instanceof Error ? err.message : String(err);
             dispatch({ type: "SET_ACTION_MESSAGE", payload: `API error classifying unknown item: ${errMsg}` });
         }
+    };
+
+    const resolveSourceFinding = async (finding: SourceFindingReviewQueueItem, action: string, chargeLineId?: string | null) => {
+        if (selectIsReviewLocked(state)) return;
+        const reviewNote = typeof window !== "undefined"
+            ? window.prompt("Add a required source-review note explaining this resolution:")
+            : "Source finding reviewed.";
+        if (!reviewNote || !reviewNote.trim()) {
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: "Source finding resolution requires a non-empty review note." });
+            return;
+        }
+        const decisionId = `dec-${Date.now()}`;
+        const decisionItem = {
+            decision_id: decisionId,
+            type: "resolve_source_finding",
+            target_id: finding.id,
+            details: {
+                source_batch_id: finding.source_batch_id,
+                source_finding_id: finding.source_finding_id,
+                action,
+                review_note: reviewNote.trim(),
+                charge_line_id: chargeLineId || finding.charge_line_id || null
+            },
+            audit_metadata: { user_id: 1, timestamp: new Date().toISOString() }
+        };
+        try {
+            await submitLiveDecision(decisionItem);
+            if (isLive) {
+                await refreshLiveDraftQuote();
+                return;
+            }
+        } catch (err) {
+            console.error("Failed to submit source finding resolution:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            dispatch({ type: "SET_ACTION_MESSAGE", payload: `Backend rejected source finding resolution: ${errMsg}` });
+            return;
+        }
+        dispatch({ type: "RESOLVE_SOURCE_FINDING", payload: { issueId: finding.id, message: "Source finding resolved." } });
     };
 
     const submitProductCodeRequest = async (chargeId: string) => {
@@ -737,6 +776,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
             mapProductCode,
             classifyUnknownAsExistingCharge,
             submitProductCodeRequest,
+            resolveSourceFinding,
             useApprovedProductCode,
             acceptSuggestedMapping,
             ignoreCharge,

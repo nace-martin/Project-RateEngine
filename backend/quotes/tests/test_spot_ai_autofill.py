@@ -42,6 +42,7 @@ from quotes.spot_models import (
     SPEChargeLineDB,
     SPEAcknowledgementDB,
 )
+from quotes.intake_safety import normalize_source_analysis_summary
 from quotes.spot_services import ReplyAnalysisService, SpotTriggerReason
 
 
@@ -1505,12 +1506,50 @@ def test_ai_source_warnings_block_until_source_review(monkeypatch):
     )
     assert acknowledge_response.status_code == 400
 
-    review_response = client.post(
-        f"/api/v3/spot/envelopes/{spe.id}/sources/{analyze_response.json()['source_batch_id']}/review/",
+    source_batch_id = analyze_response.json()["source_batch_id"]
+    blanket_review_response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/sources/{source_batch_id}/review/",
         {"reviewed_safe_to_quote": True, "review_note": "Reviewed source warning."},
         format="json",
     )
+    assert blanket_review_response.status_code == 400
+    assert "blanket source approval" in blanket_review_response.json()["error"]
+
+    source_batch = SPESourceBatchDB.objects.get(id=source_batch_id)
+    source_summary = normalize_source_analysis_summary(source_batch.analysis_summary_json)
+    unresolved_findings = [
+        finding
+        for finding in source_summary["source_findings"]
+        if finding["status"] != "resolved" and finding["blocking"]
+    ]
+    assert len(unresolved_findings) == 1
+    source_finding = unresolved_findings[0]
+    assert source_finding["type"] == "critic_missed_charges"
+    assert source_finding["evidence"]["source_text"] == "Destination delivery fee"
+
+    review_response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/sources/{source_batch_id}/review/",
+        {
+            "reviewed_safe_to_quote": True,
+            "source_finding_id": source_finding["id"],
+            "resolution_action": "resolved_in_workspace",
+            "review_note": "Reviewed source warning against workspace charges.",
+        },
+        format="json",
+    )
     assert review_response.status_code == 200
+
+    source_batch.refresh_from_db()
+    resolved_summary = normalize_source_analysis_summary(source_batch.analysis_summary_json)
+    resolved_finding = next(
+        finding for finding in resolved_summary["source_findings"] if finding["id"] == source_finding["id"]
+    )
+    assert resolved_finding["status"] == "resolved"
+    assert resolved_finding["resolution_action"] == "resolved_in_workspace"
+    assert resolved_finding["review_note"] == "Reviewed source warning against workspace charges."
+    assert resolved_finding["resolved_by_user_id"] == str(user.id)
+    assert resolved_finding["resolved_at"]
+    assert resolved_finding["evidence"]["source_text"] == "Destination delivery fee"
 
     acknowledge_response = client.post(
         f"/api/v3/spot/envelopes/{spe.id}/acknowledge/",
