@@ -86,6 +86,10 @@ export interface DraftQuote {
     shipment_context: {
         origin: string;
         destination: string;
+        origin_country?: string;
+        destination_country?: string;
+        origin_code?: string;
+        destination_code?: string;
         mode: string;
         pieces: number;
         actual_weight_kg: number;

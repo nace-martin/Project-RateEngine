@@ -33,8 +33,10 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
 
     # Classify shipment direction (IMPORT vs EXPORT vs DOMESTIC).
     # Origin/destination countries are the only trusted direction source.
-    origin_country = shipment_ctx.get('origin_country', '')
-    destination_country = shipment_ctx.get('destination_country', '')
+    origin_country = str(shipment_ctx.get('origin_country') or '').strip().upper()
+    destination_country = str(shipment_ctx.get('destination_country') or '').strip().upper()
+    origin_code = str(shipment_ctx.get('origin_code') or '').strip().upper()
+    destination_code = str(shipment_ctx.get('destination_code') or '').strip().upper()
     direction = None
     if origin_country and destination_country:
         try:
@@ -47,8 +49,12 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
 
     # 2. Shipment Context
     shipment_context = {
-        "origin": shipment_ctx.get('origin_code') or shipment_ctx.get('origin') or '',
-        "destination": shipment_ctx.get('destination_code') or shipment_ctx.get('destination') or '',
+        "origin": origin_code or shipment_ctx.get('origin') or '',
+        "destination": destination_code or shipment_ctx.get('destination') or '',
+        "origin_country": origin_country,
+        "destination_country": destination_country,
+        "origin_code": origin_code,
+        "destination_code": destination_code,
         "mode": mode,
         "pieces": int(shipment_ctx.get('pieces') or 1),
         "actual_weight_kg": float(shipment_ctx.get('actual_weight_kg') or shipment_ctx.get('weight') or 0.0),

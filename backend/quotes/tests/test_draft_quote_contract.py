@@ -169,6 +169,16 @@ class DraftQuoteContractTests(SimpleTestCase):
         self.assertIn("edit_charge", decisions_by_type)
         self.assertIn("classify_unclassified", decisions_by_type)
 
+    def test_request_product_code_domain_is_supported_in_details_not_decision_level(self):
+        """Decision-level domain is not part of the public resolve contract; domain metadata belongs in details."""
+        payload = json.loads(json.dumps(self.resolve_raw_data))
+        request_decision = next(d for d in payload["decisions"] if d["type"] == "request_product_code")
+        request_decision["details"]["domain"] = "IMPORT"
+        schema = DraftQuoteResolveSchema(**payload)
+        parsed_request = next(d for d in schema.decisions if d.type == "request_product_code")
+        self.assertEqual(parsed_request.details["domain"], "IMPORT")
+        self.assertFalse(hasattr(parsed_request, "domain"))
+
     def test_resolve_validation_rules_reject_invalid_payloads(self):
         """Verify resolve validation schema rejects invalid decision type or details."""
         # 1. Invalid decision type
