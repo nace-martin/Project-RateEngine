@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 from typing import Any, Iterable
+import re
 
 
 REVIEW_STATUS_PENDING = "PENDING"
 REVIEW_STATUS_APPROVED = "APPROVED"
 REVIEW_STATUS_NOT_REQUIRED = "NOT_REQUIRED"
+SOURCE_FINDING_STATUS_OPEN = "open"
+SOURCE_FINDING_STATUS_RESOLVED = "resolved"
+SOURCE_FINDING_BLOCKING_TYPES = {
+    "missing_required_fields",
+    "critic_missed_charges",
+    "critic_hallucinations",
+    "unmapped_lines",
+    "no_imported_charges",
+    "multiple_currencies",
+}
 
 
 def _string_list(value: Any) -> list[str]:
@@ -26,12 +37,124 @@ def _int_value(value: Any) -> int:
         return 0
 
 
+def _slug(value: Any) -> str:
+    text = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    return text[:60] or "finding"
+
+
+def _existing_source_findings(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    findings = raw.get("source_findings")
+    if not isinstance(findings, list):
+        return {}
+    return {str(item.get("id") or ""): dict(item) for item in findings if isinstance(item, dict) and item.get("id")}
+
+
+def _finding_payload(
+    raw: dict[str, Any],
+    *,
+    finding_id: str,
+    finding_type: str,
+    message: str,
+    evidence_text: str | None = None,
+    charge_line_id: str | None = None,
+    blocking: bool = True,
+) -> dict[str, Any]:
+    existing = _existing_source_findings(raw).get(finding_id, {})
+    status = existing.get("status") or SOURCE_FINDING_STATUS_OPEN
+    return {
+        "id": finding_id,
+        "type": finding_type,
+        "message": message,
+        "evidence": existing.get("evidence") or {"source_text": evidence_text or message},
+        "charge_line_id": existing.get("charge_line_id") or charge_line_id,
+        "status": status,
+        "blocking": bool(blocking),
+        "resolution_action": existing.get("resolution_action"),
+        "review_note": existing.get("review_note"),
+        "resolved_by_user_id": existing.get("resolved_by_user_id"),
+        "resolved_at": existing.get("resolved_at"),
+    }
+
+
+def _derive_source_findings(raw: dict[str, Any], summary: dict[str, Any]) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    if summary["ai_used"] and not summary["can_proceed"]:
+        findings.append(_finding_payload(
+            raw,
+            finding_id="source-missing-required-fields",
+            finding_type="missing_required_fields",
+            message="Imported lines are missing required rate or currency fields.",
+        ))
+    for idx, text in enumerate(summary["critic_missed_charges"]):
+        findings.append(_finding_payload(
+            raw,
+            finding_id=f"critic-missed-charges-{idx}-{_slug(text)}",
+            finding_type="critic_missed_charges",
+            message=f"Possible missed charge: {text}",
+            evidence_text=text,
+        ))
+    for idx, text in enumerate(summary["critic_hallucinations"]):
+        findings.append(_finding_payload(
+            raw,
+            finding_id=f"critic-hallucinations-{idx}-{_slug(text)}",
+            finding_type="critic_hallucinations",
+            message=f"Questionable extracted mapping or charge: {text}",
+            evidence_text=text,
+        ))
+    if summary["unmapped_line_count"] > 0:
+        findings.append(_finding_payload(
+            raw,
+            finding_id="source-unmapped-lines",
+            finding_type="unmapped_lines",
+            message=f"{summary['unmapped_line_count']} extracted charge(s) could not be mapped cleanly.",
+        ))
+    if summary["imported_charge_count"] == 0 and summary["ai_used"]:
+        findings.append(_finding_payload(
+            raw,
+            finding_id="source-no-imported-charges",
+            finding_type="no_imported_charges",
+            message="No charge lines were imported for review.",
+        ))
+    if len(summary["detected_currencies"]) > 1:
+        findings.append(_finding_payload(
+            raw,
+            finding_id="source-multiple-currencies",
+            finding_type="multiple_currencies",
+            message="Multiple currencies were detected in a single source: " + ", ".join(summary["detected_currencies"]),
+        ))
+    if summary["low_confidence_line_count"] > 0:
+        findings.append(_finding_payload(
+            raw,
+            finding_id="source-low-confidence-lines",
+            finding_type="low_confidence_lines",
+            message=f"{summary['low_confidence_line_count']} extracted charge line(s) were low-confidence.",
+            blocking=False,
+        ))
+    if summary["pdf_fallback_used"]:
+        findings.append(_finding_payload(
+            raw,
+            finding_id="source-pdf-fallback-used",
+            finding_type="pdf_fallback_used",
+            message="Scanned-PDF fallback extraction was used; verify the imported lines carefully.",
+            blocking=False,
+        ))
+    return findings
+
+
+def unresolved_source_findings(value: Any) -> list[dict[str, Any]]:
+    summary = normalize_source_analysis_summary(value)
+    return [
+        item for item in summary.get("source_findings", [])
+        if item.get("blocking") and item.get("status") != SOURCE_FINDING_STATUS_RESOLVED
+    ]
+
+
 def _derive_blocking_reasons(summary: dict[str, Any]) -> tuple[list[str], list[str], str, bool]:
     risk_flags: list[str] = []
     blocking_reasons: list[str] = []
     high_risk = False
 
-    if not summary["can_proceed"]:
+    if summary["ai_used"] and not summary["can_proceed"]:
         risk_flags.append("missing_required_fields")
         blocking_reasons.append("Imported lines are missing required rate or currency fields.")
         high_risk = True
@@ -145,11 +268,24 @@ def normalize_source_analysis_summary(value: Any) -> dict[str, Any]:
         review_status = REVIEW_STATUS_NOT_REQUIRED
         reviewed_safe_to_quote = False
 
+    summary["source_findings"] = _derive_source_findings(raw, summary)
+    unresolved_findings = [
+        item for item in summary["source_findings"]
+        if item.get("blocking") and item.get("status") != SOURCE_FINDING_STATUS_RESOLVED
+    ]
+    review_required = bool(unresolved_findings)
+    if review_required:
+        review_status = REVIEW_STATUS_APPROVED if not unresolved_findings else REVIEW_STATUS_PENDING
+        reviewed_safe_to_quote = review_status == REVIEW_STATUS_APPROVED
+    else:
+        review_status = REVIEW_STATUS_NOT_REQUIRED
+        reviewed_safe_to_quote = False
+
     summary["review_required"] = review_required
     summary["review_status"] = review_status
     summary["reviewed_safe_to_quote"] = reviewed_safe_to_quote
     summary["risk_flags"] = risk_flags
-    summary["blocking_reasons"] = blocking_reasons
+    summary["blocking_reasons"] = [item["message"] for item in unresolved_findings]
     summary["risk_level"] = risk_level
     summary["requires_review_note"] = requires_review_note
     return summary
@@ -201,23 +337,33 @@ def mark_source_analysis_review(
     reviewed_by_user_id: str | None,
     reviewed_at: str | None,
     review_note: str | None = None,
+    source_finding_id: str | None = None,
+    resolution_action: str | None = None,
+    charge_line_id: str | None = None,
 ) -> dict[str, Any]:
-    summary = normalize_source_analysis_summary(value)
-    review_required = bool(summary["review_required"])
+    raw = dict(value) if isinstance(value, dict) else {}
+    summary = normalize_source_analysis_summary(raw)
+    note = str(review_note or "").strip() or None
+    finding_id = str(source_finding_id or "").strip() or None
 
-    if review_required:
-        summary["review_status"] = (
-            REVIEW_STATUS_APPROVED if reviewed_safe_to_quote else REVIEW_STATUS_PENDING
-        )
-        summary["reviewed_safe_to_quote"] = bool(reviewed_safe_to_quote)
-    else:
-        summary["review_status"] = REVIEW_STATUS_NOT_REQUIRED
-        summary["reviewed_safe_to_quote"] = False
+    updated_findings = []
+    for finding in summary.get("source_findings", []):
+        item = dict(finding)
+        if reviewed_safe_to_quote and (finding_id is None or item.get("id") == finding_id):
+            item["status"] = SOURCE_FINDING_STATUS_RESOLVED
+            item["resolution_action"] = resolution_action or "source_review_approved"
+            item["review_note"] = note
+            item["resolved_by_user_id"] = str(reviewed_by_user_id or "").strip() or None
+            item["resolved_at"] = reviewed_at or None
+            if charge_line_id:
+                item["charge_line_id"] = str(charge_line_id)
+        updated_findings.append(item)
 
-    summary["reviewed_by_user_id"] = str(reviewed_by_user_id or "").strip() or None
-    summary["reviewed_at"] = reviewed_at or None
-    summary["review_note"] = str(review_note or "").strip() or None
-    return summary
+    raw["source_findings"] = updated_findings
+    raw["reviewed_by_user_id"] = str(reviewed_by_user_id or "").strip() or None
+    raw["reviewed_at"] = reviewed_at or None
+    raw["review_note"] = note
+    return normalize_source_analysis_summary(raw)
 
 
 def sync_source_analysis_summary_counts(

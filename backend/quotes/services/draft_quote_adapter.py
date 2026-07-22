@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from quotes.spot_models import SpotPricingEnvelopeDB, SPEChargeLineDB
 from quotes.contracts.draft_quote_contract import DraftQuoteSchema
+from quotes.intake_safety import normalize_source_analysis_summary, unresolved_source_findings
 
 VALID_PRODUCT_CODE_DOMAINS = {"IMPORT", "EXPORT", "DOMESTIC"}
 
@@ -419,6 +420,29 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
             "type": "unclassified_item",
             "message": item['review_reason'] or "Unclassified commercial-looking item requires operator classification"
         })
+    for batch in spe_db.source_batches.all():
+        summary = normalize_source_analysis_summary(batch.analysis_summary_json)
+        for finding in unresolved_source_findings(summary):
+            review_queue.append({
+                "id": f"source:{batch.id}:{finding['id']}",
+                "type": "source_finding",
+                "message": finding["message"],
+                "blocker_reason": finding["message"],
+                "source_batch_id": str(batch.id),
+                "source_batch_label": batch.label or batch.file_name or "Imported source",
+                "source_finding_id": finding["id"],
+                "source_finding_type": finding["type"],
+                "evidence": finding.get("evidence"),
+                "charge_line_id": finding.get("charge_line_id"),
+                "note_required": True,
+                "available_actions": [
+                    "link_existing_charge",
+                    "add_missing_charge",
+                    "confirm_corrected_mapping",
+                    "not_commercially_applicable",
+                    "approve_source",
+                ],
+            })
 
     # 10. Correction Actions
     correction_actions = []

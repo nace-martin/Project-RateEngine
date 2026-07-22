@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from pricing_v4.models import ProductCode, ProductCodeCreationRequest
+from quotes.intake_safety import mark_source_analysis_review, normalize_source_analysis_summary, unresolved_source_findings
 from quotes.contracts.draft_quote_contract import (
     DecisionItemSchema,
     DecisionResultSchema,
@@ -365,6 +366,51 @@ def _create_product_code_request_for_unclassified(envelope, decision, user):
     return "skipped", "ProductCode request created and pending admin review.", None, charge_line
 
 
+SOURCE_FINDING_RESOLUTION_ACTIONS = {
+    "link_existing_charge",
+    "add_missing_charge",
+    "confirm_corrected_mapping",
+    "not_commercially_applicable",
+    "approve_source",
+}
+
+
+def _resolve_source_finding(envelope, decision, user):
+    details = decision.details
+    action = str(details.get("action") or "").strip()
+    if action not in SOURCE_FINDING_RESOLUTION_ACTIONS:
+        return "rejected", "Source finding resolution action is not supported.", "SOURCE_FINDING_ACTION_INVALID"
+    note = str(details.get("review_note") or "").strip()
+    if not note:
+        return "rejected", "Source finding resolution requires a non-empty review note.", "REVIEW_NOTE_REQUIRED"
+    batch = envelope.source_batches.select_for_update().filter(id=details.get("source_batch_id")).first()
+    if not batch:
+        return "rejected", "Source batch was not found for this envelope.", "SOURCE_BATCH_NOT_FOUND"
+    finding_id = str(details.get("source_finding_id") or "").strip()
+    current = normalize_source_analysis_summary(batch.analysis_summary_json)
+    if not any(item.get("id") == finding_id for item in current.get("source_findings", [])):
+        return "rejected", "Source finding was not found for this source batch.", "SOURCE_FINDING_NOT_FOUND"
+    if not any(item.get("id") == finding_id for item in unresolved_source_findings(current)):
+        return "skipped", "Source finding was already resolved.", None
+
+    charge_line_id = details.get("charge_line_id")
+    if charge_line_id and not envelope.charge_lines.filter(id=charge_line_id).exists():
+        return "rejected", "Linked charge line was not found for this envelope.", "CHARGE_LINE_NOT_FOUND"
+
+    batch.analysis_summary_json = mark_source_analysis_review(
+        batch.analysis_summary_json,
+        reviewed_safe_to_quote=True,
+        reviewed_by_user_id=str(user.id),
+        reviewed_at=timezone.now().isoformat(),
+        review_note=note,
+        source_finding_id=finding_id,
+        resolution_action=action,
+        charge_line_id=str(charge_line_id) if charge_line_id else None,
+    )
+    batch.save(update_fields=["analysis_summary_json", "updated_at"])
+    return "accepted", "Source finding resolved.", None
+
+
 def _apply_classify_unclassified(envelope, decision, payload, user):
     batch, item = _unclassified_item(envelope, decision.target_id)
     if not item:
@@ -457,6 +503,8 @@ def apply_draft_quote_decisions(
                 status_val, message_val, error_code_val = _apply_edit_charge(charge_line, dec_item, payload, user)
             elif decision_type == "classify_unclassified":
                 status_val, message_val, error_code_val = _apply_classify_unclassified(envelope, dec_item, payload, user)
+            elif decision_type == "resolve_source_finding":
+                status_val, message_val, error_code_val = _resolve_source_finding(envelope, dec_item, user)
             elif decision_type == "request_product_code":
                 if not charge_line:
                     status_val, message_val, error_code_val, charge_line = _create_product_code_request_for_unclassified(envelope, dec_item, user)

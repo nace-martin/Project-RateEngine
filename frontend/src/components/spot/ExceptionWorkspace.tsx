@@ -183,6 +183,8 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId, en
                                 <div className="mt-2 bg-slate-950 border border-slate-850 rounded-xl p-3.5 text-xs text-slate-300 leading-relaxed">
                                     {currentIssue.type === "review_item" ? (
                                         "RateEngine extracted this charge from the supplier quote, but it could not safely match a billing code. Choosing the correct billing code ensures accurate reporting, margins, and customer invoicing."
+                                    ) : currentIssue.type === "source_finding" ? (
+                                        "The source-level safety review found a possible missed charge, questionable mapping, or source review blocker. Resolve only this finding with a note so quote creation is not blocked by hidden source evidence."
                                     ) : (
                                         "The quote contains commercial-looking text blocks that did not match standard layout definitions. Decide whether this represents a real charge, a conditions note, or should be ignored."
                                     )}
@@ -297,6 +299,46 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId, en
                                                 className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-red-400 rounded-lg text-xs font-semibold transition"
                                             >
                                                 Ignore as Non-Commercial
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : currentIssue.type === "source_finding" ? (
+                                    <div className="flex flex-col gap-4">
+                                        <div className="bg-amber-950/20 border border-amber-900/60 rounded-xl p-4 text-xs text-amber-100">
+                                            <div className="font-bold text-amber-300 mb-1">Source batch: {currentIssue.finding.source_batch_label || currentIssue.finding.source_batch_id}</div>
+                                            <div>Finding type: <span className="font-mono">{currentIssue.finding.source_finding_type || "source_finding"}</span></div>
+                                            <div className="mt-2 text-amber-200">A review note is required. Evidence will be preserved after resolution.</div>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                onClick={() => actions.resolveSourceFinding(currentIssue.finding, "link_existing_charge", currentIssue.finding.charge_line_id || null)}
+                                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition"
+                                            >
+                                                Link to Existing Charge
+                                            </button>
+                                            <button
+                                                onClick={() => actions.resolveSourceFinding(currentIssue.finding, "add_missing_charge", currentIssue.finding.charge_line_id || null)}
+                                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition"
+                                            >
+                                                Missing Charge Added
+                                            </button>
+                                            <button
+                                                onClick={() => actions.resolveSourceFinding(currentIssue.finding, "confirm_corrected_mapping", currentIssue.finding.charge_line_id || null)}
+                                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition"
+                                            >
+                                                Confirm Corrected Mapping
+                                            </button>
+                                            <button
+                                                onClick={() => actions.resolveSourceFinding(currentIssue.finding, "not_commercially_applicable")}
+                                                className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-red-400 rounded-lg text-xs font-semibold transition"
+                                            >
+                                                Not Commercially Applicable
+                                            </button>
+                                            <button
+                                                onClick={() => actions.resolveSourceFinding(currentIssue.finding, "approve_source")}
+                                                className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-200 rounded-lg text-xs font-semibold transition"
+                                            >
+                                                Approve Source With Note
                                             </button>
                                         </div>
                                     </div>

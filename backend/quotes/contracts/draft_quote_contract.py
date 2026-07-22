@@ -177,6 +177,20 @@ class IgnoreDetails(BaseModel):
     reason: str = Field(..., description="Reason why item is ignored (must not be empty)")
 
 
+class ResolveSourceFindingDetails(BaseModel):
+    source_batch_id: str = Field(..., description="Source batch containing the finding")
+    source_finding_id: str = Field(..., description="Stable source finding ID")
+    action: str = Field(..., description="Resolution action")
+    review_note: str = Field(..., description="Required operator review note")
+    charge_line_id: Optional[str] = Field(None, description="Optional charge line linked to the finding")
+
+    @model_validator(mode="after")
+    def validate_review_note(self) -> ResolveSourceFindingDetails:
+        if not self.review_note or not self.review_note.strip():
+            raise ValueError("Source finding resolution requires a non-empty review_note.")
+        return self
+
+
 class ChargeValuesSchema(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -244,6 +258,7 @@ class DecisionItemSchema(BaseModel):
             "edit_charge",
             "classify_unclassified",
             "use_approved_product_code",
+            "resolve_source_finding",
         }
         if self.type not in valid_types:
             raise ValueError(f"Invalid decision type: {self.type}")
@@ -258,6 +273,8 @@ class DecisionItemSchema(BaseModel):
             IgnoreDetails(**self.details)
             if not self.details.get("reason") or not str(self.details["reason"]).strip():
                 raise ValueError("Ignored decisions must carry a non-empty reason.")
+        elif self.type == "resolve_source_finding":
+            ResolveSourceFindingDetails(**self.details)
         elif self.type == "edit_charge":
             EditChargeDetails(**self.details)
         elif self.type == "classify_unclassified":

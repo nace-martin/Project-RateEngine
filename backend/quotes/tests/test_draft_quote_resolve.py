@@ -300,6 +300,111 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self.charge.refresh_from_db()
         self.assertIsNone(self.charge.manual_resolved_product_code_id)
 
+    def test_source_finding_appears_blocks_finalize_and_resolves_with_note(self):
+        self.batch.analysis_summary_json = {
+            **self.batch.analysis_summary_json,
+            "ai_used": True,
+            "can_proceed": True,
+            "imported_charge_count": 1,
+            "critic_missed_charges": ["Destination delivery fee"],
+        }
+        self.batch.save(update_fields=["analysis_summary_json"])
+
+        self.client.force_authenticate(user=self.sales)
+        read = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        self.assertEqual(read.status_code, status.HTTP_200_OK)
+        source_items = [item for item in read.data["review_queue"] if item["type"] == "source_finding"]
+        self.assertEqual(len(source_items), 1)
+        self.assertIn("Destination delivery fee", source_items[0]["message"])
+        self.assertEqual(self._finalize().status_code, status.HTTP_400_BAD_REQUEST)
+
+        missing_note = self._post([
+            self._decision(
+                "resolve_source_finding",
+                target_id=source_items[0]["id"],
+                details={
+                    "source_batch_id": source_items[0]["source_batch_id"],
+                    "source_finding_id": source_items[0]["source_finding_id"],
+                    "action": "not_commercially_applicable",
+                    "review_note": "",
+                },
+                decision_id="source-missing-note",
+            )
+        ])
+        self.assertEqual(missing_note.status_code, status.HTTP_400_BAD_REQUEST)
+
+        resolved = self._post([
+            self._decision(
+                "resolve_source_finding",
+                target_id=source_items[0]["id"],
+                details={
+                    "source_batch_id": source_items[0]["source_batch_id"],
+                    "source_finding_id": source_items[0]["source_finding_id"],
+                    "action": "not_commercially_applicable",
+                    "review_note": "Reviewed supplier evidence; destination delivery not applicable to A2A quote.",
+                },
+                decision_id="source-resolve",
+            )
+        ])
+        self.assertEqual(resolved.status_code, status.HTTP_200_OK)
+        self.assertEqual(resolved.data["rejected_decisions"], [])
+        self.batch.refresh_from_db()
+        findings = self.batch.analysis_summary_json["source_findings"]
+        self.assertEqual(findings[0]["status"], "resolved")
+        self.assertIn("Destination delivery fee", findings[0]["evidence"]["source_text"])
+
+        reread = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        self.assertFalse([item for item in reread.data["review_queue"] if item["type"] == "source_finding"])
+
+    def test_source_finding_resolution_clears_only_target_finding_and_is_idempotent(self):
+        self.batch.analysis_summary_json = {
+            **self.batch.analysis_summary_json,
+            "ai_used": True,
+            "can_proceed": True,
+            "imported_charge_count": 1,
+            "critic_missed_charges": ["Destination delivery fee", "Terminal handling"],
+        }
+        self.batch.save(update_fields=["analysis_summary_json"])
+        self.client.force_authenticate(user=self.sales)
+        read = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        source_items = [item for item in read.data["review_queue"] if item["type"] == "source_finding"]
+        self.assertEqual(len(source_items), 2)
+        key = uuid.uuid4()
+        decision = self._decision(
+            "resolve_source_finding",
+            target_id=source_items[0]["id"],
+            details={
+                "source_batch_id": source_items[0]["source_batch_id"],
+                "source_finding_id": source_items[0]["source_finding_id"],
+                "action": "link_existing_charge",
+                "review_note": "Linked to existing destination charge.",
+                "charge_line_id": str(self.charge.id),
+            },
+            decision_id="source-one",
+        )
+        self._post([decision], key=key)
+        self._post([decision], key=key)
+        reread = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        remaining = [item for item in reread.data["review_queue"] if item["type"] == "source_finding"]
+        self.assertEqual(len(remaining), 1)
+        self.assertIn("Terminal handling", remaining[0]["message"])
+
+    def test_low_confidence_source_finding_does_not_block_finalize(self):
+        self.batch.analysis_summary_json = {
+            **self.batch.analysis_summary_json,
+            "ai_used": True,
+            "can_proceed": True,
+            "imported_charge_count": 1,
+            "low_confidence_line_count": 1,
+        }
+        self.batch.save(update_fields=["analysis_summary_json"])
+        self._resolve_all_blockers()
+        self.client.force_authenticate(user=self.sales)
+        read = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        self.assertFalse([item for item in read.data["review_queue"] if item["type"] == "source_finding"])
+        finalize = self._finalize()
+        self.assertEqual(finalize.status_code, status.HTTP_200_OK)
+
     def test_map_to_product_code_replay_is_idempotent(self):
         key = uuid.uuid4()
         decision = self._decision("map_to_product_code", details={"product_code": self.product_code.code})

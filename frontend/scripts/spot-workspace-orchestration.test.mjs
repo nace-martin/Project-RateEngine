@@ -114,6 +114,10 @@ console.log("✓ Verified ExceptionWorkspace does not locally declare resolution
 // 4. Verify hook owns the API calls
 assert.ok(hookSrc.includes('import("../../../lib/api")'), "useSpotResolutionWorkflow hook must import API functions");
 assert.ok(hookSrc.includes("resolveDraftQuoteDecisions"), "useSpotResolutionWorkflow must call resolveDraftQuoteDecisions");
+assert.ok(hookSrc.includes('type: "resolve_source_finding"'), "Source findings must submit authoritative resolve decisions");
+assert.ok(hookSrc.includes("Source finding resolution requires a non-empty review note"), "Source finding resolution must require a review note");
+assert.ok(workspaceSrc.includes('currentIssue.type === "source_finding"'), "ExceptionWorkspace must render source finding blockers");
+assert.ok(workspaceSrc.includes("Approve Source With Note"), "ExceptionWorkspace must expose source approval with note workflow");
 assert.ok(hookSrc.includes("getDraftQuote"), "useSpotResolutionWorkflow must reload the Draft Quote after live unknown-item decisions");
 assert.ok(hookSrc.includes("finalizeDraftQuoteReview"), "useSpotResolutionWorkflow must call finalizeDraftQuoteReview");
 assert.ok(hookSrc.includes("reopenDraftQuoteReview"), "useSpotResolutionWorkflow must call reopenDraftQuoteReview for authorized live reopen");

@@ -1,12 +1,29 @@
 import { DraftCharge, DraftChargeStatus, Evidence, DraftQuote } from "../../../lib/draft-quote-types";
 
+export interface SourceFindingReviewQueueItem {
+    id: string;
+    type: "source_finding";
+    message: string;
+    blocker_reason?: string;
+    source_batch_id: string;
+    source_batch_label?: string;
+    source_finding_id: string;
+    source_finding_type?: string;
+    evidence?: Evidence | null;
+    charge_line_id?: string | null;
+    note_required?: boolean;
+    available_actions?: string[];
+}
+
+export type ReviewQueueItem = { id: string; type: string; message: string; [key: string]: unknown };
+
 export interface Decision {
     id: string; // charge id or item id
-    type: "map" | "request" | "ignore" | "accept" | "add";
+    type: "map" | "request" | "ignore" | "accept" | "add" | "source";
     description: string;
     originalState: {
         suggestedCharges: DraftCharge[];
-        reviewQueue: Array<{ id: string; type: string; message: string }>;
+        reviewQueue: ReviewQueueItem[];
         unclassifiedItems: Array<{ id: string; raw_text: string; evidence: Evidence | null; review_reason: string }>;
         ignoredItems: Array<{ id: string; raw_text: string; ignored_reason: string; evidence: Evidence | null }>;
     };
@@ -28,11 +45,19 @@ export type SpotWorkspaceIssue =
           problem: string;
           evidence: Evidence | null;
           itemDetails: { id: string; raw_text: string; evidence: Evidence | null; review_reason: string };
+      }
+    | {
+          type: "source_finding";
+          id: string;
+          title: string;
+          problem: string;
+          evidence: Evidence | null;
+          finding: SourceFindingReviewQueueItem;
       };
 
 export interface SpotResolutionState {
     suggestedCharges: DraftCharge[];
-    reviewQueue: Array<{ id: string; type: string; message: string }>;
+    reviewQueue: ReviewQueueItem[];
     unclassifiedItems: Array<{ id: string; raw_text: string; evidence: Evidence | null; review_reason: string }>;
     ignoredItems: Array<{ id: string; raw_text: string; ignored_reason: string; evidence: Evidence | null }>;
     decisions: Decision[];
@@ -94,6 +119,7 @@ export type SpotResolutionAction =
     | { type: "DISMISS_ACTION_MESSAGE" }
     | { type: "TOGGLE_PROTOTYPE_OVERRIDE" }
     | { type: "TOGGLE_HELP_TEXT" }
+    | { type: "RESOLVE_SOURCE_FINDING"; payload: { issueId: string; message: string } }
     | { type: "SET_ACTION_MESSAGE"; payload: string };
 
 export function createSpotResolutionState(initialData: DraftQuote): SpotResolutionState {
@@ -428,6 +454,17 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
             };
         }
 
+        case "RESOLVE_SOURCE_FINDING": {
+            const snapshot = captureSnapshotHelper(state, action.payload.issueId, "source", action.payload.message);
+            return {
+                ...state,
+                decisions: [...state.decisions.filter(d => d.id !== action.payload.issueId), snapshot],
+                reviewQueue: state.reviewQueue.filter(q => q.id !== action.payload.issueId),
+                actionMessage: action.payload.message,
+                selectedActionType: null
+            };
+        }
+
         case "FINALIZE_REVIEW":
             return {
                 ...state,
@@ -474,6 +511,17 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
 export function selectCombinedUnresolved(state: SpotResolutionState): SpotWorkspaceIssue[] {
     return [
         ...state.reviewQueue.map(item => {
+            if (item.type === "source_finding") {
+                const finding = item as unknown as SourceFindingReviewQueueItem;
+                return {
+                    id: item.id,
+                    type: "source_finding" as const,
+                    title: `Source Review: ${finding.source_batch_label || "Imported source"}`,
+                    problem: finding.blocker_reason || finding.message || "Imported source finding requires review.",
+                    evidence: finding.evidence || null,
+                    finding
+                };
+            }
             const charge = state.suggestedCharges.find(c => c.id === item.id);
             return {
                 id: item.id,
