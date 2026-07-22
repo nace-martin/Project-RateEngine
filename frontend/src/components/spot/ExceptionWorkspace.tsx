@@ -516,7 +516,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId, en
                                                 <span className="font-semibold block text-slate-100">{charge.display_label}</span>
                                                 <span className="text-xs text-slate-400 block mt-0.5">
                                                     Billing Code: <strong className="font-mono text-indigo-300">{charge.suggested_product_code || "Unmapped"}</strong>
-                                                    {charge.rate && ` | ${humanizeRate(charge.rate, charge.unit, charge.display_label)}`}
+                                                    {charge.rate !== null && charge.rate !== undefined && ` | ${humanizeRate(charge.rate, charge.unit, charge.display_label)}`}
                                                 </span>
                                             </div>
                                         </div>

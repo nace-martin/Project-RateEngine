@@ -249,14 +249,16 @@ export const formatListWithAnd = (items: string[]): string => {
 };
 
 // Helper to convert rate specs into human-friendly text
-export function humanizeRate(rate: number | string | null, unit: string | null, label: string): string {
-    const numericRate = typeof rate === "number" ? rate : Number(String(rate ?? "").trim());
+export function humanizeRate(rate: number | string | null | undefined, unit: string | null, label: string): string {
+    if (rate === null || rate === undefined || (typeof rate === "string" && rate.trim() === "")) {
+        return "Flat fee";
+    }
+
+    const numericRate = typeof rate === "number" ? rate : Number(rate.trim());
     if (!Number.isFinite(numericRate)) {
         return "Rate unavailable";
     }
-    if (!numericRate) {
-        return "Flat fee";
-    }
+
     if (label.includes("Min")) {
         return `Minimum USD 230.00 or USD ${numericRate.toFixed(2)} per ${unit || "kg"}`;
     }
