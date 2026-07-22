@@ -27,8 +27,33 @@ interface ProductCodeSelectorOption {
 }
 
 const PRODUCT_CODE_DOMAINS = new Set(["IMPORT", "EXPORT", "DOMESTIC"]);
+const PNG_COUNTRY_VALUES = new Set(["PG", "PNG", "PAPUA NEW GUINEA"]);
+const PNG_AIRPORT_CODES = new Set(["POM", "LAE", "HGU"]);
 const REOPEN_ROLES = new Set(["manager", "admin"]);
 const GENERIC_UNKNOWN_LABEL = "Unknown Charge Block";
+
+function normalizeProductCodeDomain(value: unknown): string | null {
+    const normalized = String(value || "").trim().toUpperCase();
+    return PRODUCT_CODE_DOMAINS.has(normalized) ? normalized : null;
+}
+
+function isPngRouteValue(country: unknown, code: unknown): boolean {
+    const countryValue = String(country || "").trim().toUpperCase();
+    const codeValue = String(code || "").trim().toUpperCase();
+    return PNG_COUNTRY_VALUES.has(countryValue) || PNG_AIRPORT_CODES.has(codeValue);
+}
+
+function inferProductCodeDomainFromShipmentContext(shipmentContext: DraftQuote["shipment_context"]): string | null {
+    const explicitDirection = normalizeProductCodeDomain(shipmentContext.direction);
+    if (explicitDirection) return explicitDirection;
+
+    const originIsPng = isPngRouteValue(shipmentContext.origin_country, shipmentContext.origin_code);
+    const destinationIsPng = isPngRouteValue(shipmentContext.destination_country, shipmentContext.destination_code);
+    if (originIsPng && destinationIsPng) return "DOMESTIC";
+    if (originIsPng && !destinationIsPng) return "EXPORT";
+    if (!originIsPng && destinationIsPng) return "IMPORT";
+    return null;
+}
 
 interface UseSpotResolutionWorkflowProps {
     initialData: DraftQuote;
@@ -68,8 +93,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
     const { user } = useAuth();
     const { confirm } = useConfirmDialog();
 
-    const shipmentDirection = String(initialData.shipment_context.direction || "").toUpperCase();
-    const productCodeDomain = PRODUCT_CODE_DOMAINS.has(shipmentDirection) ? shipmentDirection : null;
+    const productCodeDomain = inferProductCodeDomainFromShipmentContext(initialData.shipment_context);
     const role = String(user?.role || "").toLowerCase();
     const isReopenAuthorized = REOPEN_ROLES.has(role);
 
@@ -322,6 +346,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
             decision_id: decisionId,
             type: "request_product_code",
             target_id: chargeId,
+            domain: productCodeDomain,
             details: {
                 proposed_code: state.requestForm.label,
                 description: state.requestForm.source || state.requestForm.label,
