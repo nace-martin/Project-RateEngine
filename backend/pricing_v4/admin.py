@@ -18,6 +18,7 @@ from .models import (
     DomesticSellRate,
     CustomerDiscount,
     CommodityChargeRule,
+    ProductCodeContextRule,
     ProductCodeCreationRequest,
 )
 from .services.pricing_rate_scope import LOCAL_CATEGORIES, PricingRateScope
@@ -176,14 +177,17 @@ class AgentAdmin(admin.ModelAdmin):
 
 @admin.register(ProductCode)
 class ProductCodeAdmin(admin.ModelAdmin):
-    list_display = ['id', 'code', 'description', 'domain', 'category', 'default_unit', 'is_gst_applicable', 'gst_treatment']
-    list_filter = ['domain', 'category', 'default_unit', 'is_gst_applicable', 'gst_treatment']
+    list_display = ['id', 'code', 'description', 'domain', 'category', 'default_unit', 'is_active', 'retired_at', 'is_gst_applicable', 'gst_treatment']
+    list_filter = ['domain', 'category', 'default_unit', 'is_active', 'retired_at', 'is_gst_applicable', 'gst_treatment']
     search_fields = ['id', 'code', 'description']
     ordering = ['id']
     
     fieldsets = (
         ('Identity', {
             'fields': ('id', 'code', 'description', 'domain', 'category')
+        }),
+        ('Lifecycle', {
+            'fields': ('is_active', 'retired_at', 'replacement_product_code')
         }),
         ('Tax Configuration', {
             'fields': ('is_gst_applicable', 'gst_rate', 'gst_treatment')
@@ -193,6 +197,65 @@ class ProductCodeAdmin(admin.ModelAdmin):
         }),
         ('Defaults', {
             'fields': ('default_unit', 'percent_of_product_code')
+        }),
+    )
+
+
+@admin.register(ProductCodeContextRule)
+class ProductCodeContextRuleAdmin(admin.ModelAdmin):
+    list_display = [
+        'canonical_charge_type',
+        'product_code',
+        'product_code_domain',
+        'leg_role',
+        'commercial_position',
+        'transport_mode',
+        'operational_location',
+        'calculation_basis',
+        'service_scope',
+        'priority',
+        'is_active',
+        'review_status',
+        'source',
+        'updated_at',
+    ]
+    list_filter = [
+        'product_code_domain',
+        'leg_role',
+        'commercial_position',
+        'transport_mode',
+        'is_active',
+        'review_status',
+        'source',
+    ]
+    search_fields = [
+        'canonical_charge_type__code',
+        'canonical_charge_type__name',
+        'product_code__code',
+        'product_code__description',
+        'notes',
+    ]
+    list_select_related = ['canonical_charge_type', 'product_code']
+    autocomplete_fields = ['product_code']
+    ordering = ['priority', 'canonical_charge_type__code', 'id']
+    readonly_fields = ['created_at', 'updated_at']
+
+    fieldsets = (
+        ('Rule Identity', {
+            'fields': ('canonical_charge_type', 'product_code', 'product_code_domain')
+        }),
+        ('Trusted Leg Context', {
+            'fields': ('leg_role', 'commercial_position', 'transport_mode')
+        }),
+        ('Optional Match Dimensions', {
+            'fields': ('operational_location', 'calculation_basis', 'service_scope')
+        }),
+        ('Lifecycle and Review', {
+            'fields': ('priority', 'is_active', 'review_status', 'source')
+        }),
+        ('Notes and Audit', {
+            'fields': ('notes', 'created_by', 'updated_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',),
         }),
     )
 
