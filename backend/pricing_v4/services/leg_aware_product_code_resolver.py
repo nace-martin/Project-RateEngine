@@ -7,9 +7,13 @@ from django.db.models import QuerySet
 from pricing_v4.contracts.charge_context import (
     PHASE_16D_RULE_VERSION,
     ChargeContext,
+    CommercialPosition,
+    LegRole,
+    ProductCodeDomain,
     ProductCodeResolverBlockerCode,
     ProductCodeResolutionResult,
     ProductCodeResolutionStatus,
+    TransportMode,
     coerce_charge_context,
 )
 from pricing_v4.models import CanonicalChargeType, ProductCode, ProductCodeContextRule
@@ -38,6 +42,15 @@ class LegAwareProductCodeResolver:
         charge_context: ChargeContext | dict[str, Any],
         requested_product_code: ProductCode | int | str | None = None,
     ) -> ProductCodeResolutionResult:
+        raw_blockers = self._raw_context_blockers(charge_context)
+        if raw_blockers:
+            return ProductCodeResolutionResult(
+                status=ProductCodeResolutionStatus.CONTEXT_INCOMPLETE,
+                review_reason="Charge context is incomplete or invalid for leg-aware ProductCode resolution.",
+                blocker_codes=raw_blockers,
+                audit_evidence={"missing_context": [code.value for code in raw_blockers], "rule_version": self.rule_version},
+            )
+
         try:
             context = coerce_charge_context(charge_context)
         except Exception as exc:
@@ -58,34 +71,45 @@ class LegAwareProductCodeResolver:
                 audit_evidence={"missing_context": [code.value for code in missing], "rule_version": self.rule_version},
             )
 
-        if requested_product_code is not None:
-            rejected = self._validate_requested_product_code(context, requested_product_code)
-            if rejected is not None:
-                return rejected
-
         rules = list(self._matching_rules(context))
-        candidates = [self._candidate_payload(rule, context) for rule in rules]
+        deterministic_result = self._resolve_from_rules(context, rules)
+        if requested_product_code is None:
+            return deterministic_result
+        if deterministic_result.status != ProductCodeResolutionStatus.ASSIGNED:
+            return deterministic_result
 
-        if requested_product_code is not None:
-            requested = self._get_requested_product_code(requested_product_code)
-            requested_rules = [rule for rule in rules if rule.product_code_id == requested.id]
-            if not requested_rules:
-                return ProductCodeResolutionResult(
-                    status=ProductCodeResolutionStatus.REJECTED,
-                    resolved_context=context.to_audit_dict(),
-                    candidate_product_codes=candidates,
-                    review_reason="Requested ProductCode is not valid for the trusted leg context.",
-                    blocker_codes=[ProductCodeResolverBlockerCode.PRODUCTCODE_DOMAIN_MISMATCH],
-                    audit_evidence={
-                        "requested_product_code": self._product_payload(requested),
-                        "candidate_count": len(candidates),
-                        "rule_version": self.rule_version,
-                    },
-                )
+        requested_rejection = self._validate_requested_against_deterministic(
+            context,
+            requested_product_code,
+            deterministic_result,
+        )
+        if requested_rejection is not None:
+            return requested_rejection
+        return deterministic_result
 
-            return self._resolve_from_rules(context, requested_rules, requested_product_code=requested, all_candidates=candidates)
-
-        return self._resolve_from_rules(context, rules, all_candidates=candidates)
+    def _raw_context_blockers(self, charge_context: ChargeContext | dict[str, Any]) -> list[ProductCodeResolverBlockerCode]:
+        if isinstance(charge_context, ChargeContext):
+            return []
+        raw = charge_context if isinstance(charge_context, dict) else {}
+        blockers: list[ProductCodeResolverBlockerCode] = []
+        enum_fields = {
+            "leg_role": LegRole,
+            "product_code_domain": ProductCodeDomain,
+            "commercial_position": CommercialPosition,
+            "transport_mode": TransportMode,
+        }
+        for field_name, blocker in MANDATORY_CONTEXT_FIELDS:
+            value = raw.get(field_name)
+            if value is None or str(value).strip() == "":
+                blockers.append(blocker)
+                continue
+            enum_cls = enum_fields.get(field_name)
+            if enum_cls is not None:
+                try:
+                    enum_cls(str(value).strip().upper())
+                except ValueError:
+                    blockers.append(blocker)
+        return blockers
 
     def _missing_context(self, context: ChargeContext) -> list[ProductCodeResolverBlockerCode]:
         missing: list[ProductCodeResolverBlockerCode] = []
@@ -106,6 +130,7 @@ class LegAwareProductCodeResolver:
                 canonical_charge_type__code=canonical_code,
                 canonical_charge_type__is_active=True,
                 product_code_domain=context.product_code_domain.value,
+                product_code__domain=context.product_code_domain.value,
                 leg_role=context.leg_role.value,
                 commercial_position=context.commercial_position.value,
                 transport_mode=context.transport_mode.value,
@@ -125,7 +150,6 @@ class LegAwareProductCodeResolver:
         self,
         context: ChargeContext,
         rules: list[ProductCodeContextRule],
-        requested_product_code: ProductCode | None = None,
         all_candidates: list[dict[str, Any]] | None = None,
     ) -> ProductCodeResolutionResult:
         candidates = all_candidates if all_candidates is not None else [self._candidate_payload(rule, context) for rule in rules]
@@ -163,20 +187,6 @@ class LegAwareProductCodeResolver:
 
         selected_rule = top_rules[0]
         selected_product = selected_rule.product_code
-        if requested_product_code is not None and requested_product_code.id != selected_product.id:
-            return ProductCodeResolutionResult(
-                status=ProductCodeResolutionStatus.REJECTED,
-                resolved_context=context.to_audit_dict(),
-                candidate_product_codes=candidates,
-                review_reason="Requested ProductCode is not the deterministic result for the trusted leg context.",
-                blocker_codes=[ProductCodeResolverBlockerCode.PRODUCTCODE_DOMAIN_MISMATCH],
-                audit_evidence={
-                    "requested_product_code": self._product_payload(requested_product_code),
-                    "selected_rule_id": selected_rule.id,
-                    "rule_version": self.rule_version,
-                },
-            )
-
         return ProductCodeResolutionResult(
             status=ProductCodeResolutionStatus.ASSIGNED,
             selected_product_code=selected_product.code,
@@ -201,30 +211,40 @@ class LegAwareProductCodeResolver:
             specificity += 1
         return specificity
 
-    def _validate_requested_product_code(
+    def _validate_requested_against_deterministic(
         self,
         context: ChargeContext,
         requested_product_code: ProductCode | int | str,
+        deterministic_result: ProductCodeResolutionResult,
     ) -> ProductCodeResolutionResult | None:
         try:
             product_code = self._get_requested_product_code(requested_product_code)
         except ProductCode.DoesNotExist:
             return ProductCodeResolutionResult(
                 status=ProductCodeResolutionStatus.REJECTED,
-                resolved_context=context.to_audit_dict(),
+                resolved_context=deterministic_result.resolved_context,
+                candidate_product_codes=deterministic_result.candidate_product_codes,
                 review_reason="Requested ProductCode does not exist.",
                 blocker_codes=[ProductCodeResolverBlockerCode.PRODUCTCODE_DOMAIN_MISMATCH],
-                audit_evidence={"requested_product_code": str(requested_product_code), "rule_version": self.rule_version},
+                audit_evidence={
+                    **deterministic_result.audit_evidence,
+                    "requested_product_code": str(requested_product_code),
+                    "deterministic_product_code_id": deterministic_result.selected_product_code_id,
+                    "rule_version": self.rule_version,
+                },
             )
 
         if product_code.domain != context.product_code_domain.value:
             return ProductCodeResolutionResult(
                 status=ProductCodeResolutionStatus.REJECTED,
-                resolved_context=context.to_audit_dict(),
+                resolved_context=deterministic_result.resolved_context,
+                candidate_product_codes=deterministic_result.candidate_product_codes,
                 review_reason="Requested ProductCode domain does not match trusted leg domain.",
                 blocker_codes=[ProductCodeResolverBlockerCode.PRODUCTCODE_DOMAIN_MISMATCH],
                 audit_evidence={
+                    **deterministic_result.audit_evidence,
                     "requested_product_code": self._product_payload(product_code),
+                    "deterministic_product_code_id": deterministic_result.selected_product_code_id,
                     "trusted_product_code_domain": context.product_code_domain.value,
                     "rule_version": self.rule_version,
                 },
@@ -233,10 +253,31 @@ class LegAwareProductCodeResolver:
         if not product_code.is_active or product_code.retired_at:
             return ProductCodeResolutionResult(
                 status=ProductCodeResolutionStatus.REJECTED,
-                resolved_context=context.to_audit_dict(),
+                resolved_context=deterministic_result.resolved_context,
+                candidate_product_codes=deterministic_result.candidate_product_codes,
                 review_reason="Requested ProductCode is inactive or retired.",
                 blocker_codes=[ProductCodeResolverBlockerCode.PRODUCTCODE_INACTIVE_OR_RETIRED],
-                audit_evidence={"requested_product_code": self._product_payload(product_code), "rule_version": self.rule_version},
+                audit_evidence={
+                    **deterministic_result.audit_evidence,
+                    "requested_product_code": self._product_payload(product_code),
+                    "deterministic_product_code_id": deterministic_result.selected_product_code_id,
+                    "rule_version": self.rule_version,
+                },
+            )
+
+        if product_code.id != deterministic_result.selected_product_code_id:
+            return ProductCodeResolutionResult(
+                status=ProductCodeResolutionStatus.REJECTED,
+                resolved_context=deterministic_result.resolved_context,
+                candidate_product_codes=deterministic_result.candidate_product_codes,
+                review_reason="Requested ProductCode is not the deterministic result for the trusted leg context.",
+                blocker_codes=[ProductCodeResolverBlockerCode.PRODUCTCODE_DOMAIN_MISMATCH],
+                audit_evidence={
+                    **deterministic_result.audit_evidence,
+                    "requested_product_code": self._product_payload(product_code),
+                    "deterministic_product_code_id": deterministic_result.selected_product_code_id,
+                    "rule_version": self.rule_version,
+                },
             )
         return None
 

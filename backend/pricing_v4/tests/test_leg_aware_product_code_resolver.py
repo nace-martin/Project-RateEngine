@@ -14,6 +14,7 @@ from pricing_v4.contracts.charge_context import (
     JourneyPattern,
     LegRole,
     ProductCodeDomain,
+    ProductCodeResolverBlockerCode,
     ProductCodeResolutionStatus,
     TransportMode,
 )
@@ -232,6 +233,66 @@ def test_exact_single_match_assigns():
     assert result.selected_product_code == specific.code
 
 
+def test_requested_generic_product_code_cannot_override_more_specific_rule():
+    cct = canonical_type()
+    generic = product_code(2150, "IMP-GENERIC-REQUEST", ProductCode.DOMAIN_IMPORT)
+    specific = product_code(2151, "IMP-SPECIFIC-DETERMINISTIC", ProductCode.DOMAIN_IMPORT)
+    make_rule(cct, generic, leg_role=LegRole.INTERNATIONAL_IMPORT)
+    make_rule(cct, specific, leg_role=LegRole.INTERNATIONAL_IMPORT, operational_location="POM")
+
+    result = resolve(context(operational_location="POM"), requested=generic)
+
+    assert result.status == ProductCodeResolutionStatus.REJECTED
+    assert result.selected_product_code is None
+    assert len(result.candidate_product_codes) == 2
+    assert result.audit_evidence["deterministic_product_code_id"] == specific.id
+    assert result.audit_evidence["requested_product_code"]["id"] == generic.id
+
+
+def test_requested_product_code_cannot_clear_ambiguous_equal_specificity_rules():
+    cct = canonical_type()
+    first = product_code(2152, "IMP-AMB-REQUEST-1", ProductCode.DOMAIN_IMPORT)
+    second = product_code(2153, "IMP-AMB-REQUEST-2", ProductCode.DOMAIN_IMPORT)
+    make_rule(cct, first, leg_role=LegRole.INTERNATIONAL_IMPORT)
+    make_rule(cct, second, leg_role=LegRole.INTERNATIONAL_IMPORT)
+
+    result = resolve(context(), requested=first)
+
+    assert result.status == ProductCodeResolutionStatus.NEEDS_CLARIFICATION
+    assert result.selected_product_code is None
+    assert len(result.candidate_product_codes) == 2
+    assert ProductCodeResolverBlockerCode.PRODUCTCODE_CONTEXT_RULE_AMBIGUOUS in result.blocker_codes
+
+
+def test_requested_deterministic_product_code_succeeds():
+    cct = canonical_type()
+    generic = product_code(2154, "IMP-GENERIC-VALID", ProductCode.DOMAIN_IMPORT)
+    specific = product_code(2155, "IMP-SPECIFIC-VALID", ProductCode.DOMAIN_IMPORT)
+    make_rule(cct, generic, leg_role=LegRole.INTERNATIONAL_IMPORT)
+    make_rule(cct, specific, leg_role=LegRole.INTERNATIONAL_IMPORT, operational_location="POM")
+
+    result = resolve(context(operational_location="POM"), requested=specific.code)
+
+    assert result.status == ProductCodeResolutionStatus.ASSIGNED
+    assert result.selected_product_code == specific.code
+    assert result.selected_product_code_id == specific.id
+    assert len(result.candidate_product_codes) == 2
+
+
+def test_different_requested_product_code_is_rejected_after_deterministic_resolution():
+    cct = canonical_type()
+    selected = product_code(2156, "IMP-SELECTED", ProductCode.DOMAIN_IMPORT)
+    other = product_code(2157, "IMP-OTHER", ProductCode.DOMAIN_IMPORT)
+    make_rule(cct, selected, leg_role=LegRole.INTERNATIONAL_IMPORT)
+
+    result = resolve(context(), requested=other)
+
+    assert result.status == ProductCodeResolutionStatus.REJECTED
+    assert result.selected_product_code is None
+    assert result.audit_evidence["deterministic_product_code_id"] == selected.id
+    assert result.audit_evidence["requested_product_code"]["id"] == other.id
+
+
 def test_equal_specificity_matches_remain_ambiguous():
     cct = canonical_type()
     first = product_code(2104, "IMP-AMB-1", ProductCode.DOMAIN_IMPORT)
@@ -257,21 +318,35 @@ def test_priority_cannot_hide_equal_specificity_configuration_conflict():
     assert result.status == ProductCodeResolutionStatus.NEEDS_CLARIFICATION
 
 
-def test_missing_context_fails_closed():
-    result = LegAwareProductCodeResolver().resolve(
-        {
-            "journey_direction": "IMPORT",
-            "journey_pattern": "IMP_POM",
-            "leg_role": "INTERNATIONAL_IMPORT",
-            "leg_sequence": 1,
-            "product_code_domain": "IMPORT",
-            "commercial_position": "FREIGHT",
-            "transport_mode": "INTERNATIONAL_AIR",
-            "canonical_charge_type": "",
-        }
-    )
+@pytest.mark.parametrize(
+    "missing_field,expected_blocker",
+    [
+        ("canonical_charge_type", ProductCodeResolverBlockerCode.CONTEXT_MISSING_CANONICAL_CHARGE_TYPE),
+        ("leg_role", ProductCodeResolverBlockerCode.CONTEXT_MISSING_LEG_ROLE),
+        ("product_code_domain", ProductCodeResolverBlockerCode.CONTEXT_MISSING_PRODUCT_CODE_DOMAIN),
+        ("commercial_position", ProductCodeResolverBlockerCode.CONTEXT_MISSING_COMMERCIAL_POSITION),
+        ("transport_mode", ProductCodeResolverBlockerCode.CONTEXT_MISSING_TRANSPORT_MODE),
+    ],
+)
+@pytest.mark.parametrize("missing_value", [None, ""])
+def test_missing_mandatory_context_fields_report_specific_blockers(missing_field, expected_blocker, missing_value):
+    raw_payload = context().to_audit_dict()
+    raw_payload[missing_field] = missing_value
+
+    result = LegAwareProductCodeResolver().resolve(raw_payload)
 
     assert result.status == ProductCodeResolutionStatus.CONTEXT_INCOMPLETE
+    assert result.blocker_codes == [expected_blocker]
+
+
+def test_invalid_enum_context_reports_field_specific_blocker():
+    raw_payload = context().to_audit_dict()
+    raw_payload["leg_role"] = "CLIENT_SUPPLIED_EXPORT"
+
+    result = LegAwareProductCodeResolver().resolve(raw_payload)
+
+    assert result.status == ProductCodeResolutionStatus.CONTEXT_INCOMPLETE
+    assert result.blocker_codes == [ProductCodeResolverBlockerCode.CONTEXT_MISSING_LEG_ROLE]
 
 
 def test_no_rule_returns_not_found():
@@ -317,6 +392,27 @@ def test_retired_product_code_is_never_assigned():
     result = resolve(context())
 
     assert result.status == ProductCodeResolutionStatus.NOT_FOUND
+
+
+def test_persisted_rule_product_code_domain_mismatch_fails_closed():
+    cct = canonical_type()
+    export_pc = product_code(1150, "EXP-MISMATCH-PERSISTED", ProductCode.DOMAIN_EXPORT)
+    ProductCodeContextRule.objects.create(
+        canonical_charge_type=cct,
+        product_code=export_pc,
+        product_code_domain=ProductCode.DOMAIN_IMPORT,
+        leg_role=LegRole.INTERNATIONAL_IMPORT.value,
+        commercial_position=CommercialPosition.FREIGHT.value,
+        transport_mode=TransportMode.INTERNATIONAL_AIR.value,
+        is_active=True,
+        review_status=ProductCodeContextRule.ReviewStatus.APPROVED,
+    )
+
+    result = resolve(context(domain=ProductCodeDomain.IMPORT))
+
+    assert result.status == ProductCodeResolutionStatus.NOT_FOUND
+    assert result.selected_product_code is None
+    assert result.candidate_product_codes == []
 
 
 def test_incompatible_manual_product_code_selection_is_rejected():
