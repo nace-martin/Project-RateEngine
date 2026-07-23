@@ -16,7 +16,8 @@ from django.utils import timezone
 
 from pricing_v4.contracts.charge_context import JourneyDirection, JourneyPattern, LegRole, ProductCodeDomain, TransportMode
 from quotes.contracts.journey_contracts import JourneyPlannerBlockerCode, JourneyStatus
-from quotes.models import RouteAutomationPolicyDB, ShipmentJourneyDB, ShipmentLegDB
+from parties.models import Company
+from quotes.models import Quote, RouteAutomationPolicyDB, ShipmentJourneyDB, ShipmentLegDB
 from quotes.services.air_journey_planner import AirJourneyPlanner
 from quotes.services.journey_persistence import ShipmentJourneyPersistenceService, get_route_policy_state
 from quotes.spot_models import SPEChargeLineDB, SpotPricingEnvelopeDB
@@ -51,6 +52,12 @@ def plan(payload):
 
 def make_user():
     return get_user_model().objects.create_user(username="phase16e", password="test")
+
+
+def make_quote(user=None):
+    user = user or make_user()
+    customer = Company.objects.create(name=f"Phase 16E Customer {timezone.now().timestamp()}", is_customer=True)
+    return Quote.objects.create(customer=customer, mode="AIR", shipment_type=Quote.ShipmentType.IMPORT, created_by=user)
 
 
 def make_spe(user=None, origin="SIN", destination="POM", origin_country="SG", destination_country="PG"):
@@ -171,7 +178,7 @@ def test_missing_countries_fail_closed(field):
 
     result = plan(payload)
 
-    assert result.status == JourneyStatus.BLOCKED
+    assert result.status == JourneyStatus.NEEDS_REVIEW
     assert JourneyPlannerBlockerCode.JOURNEY_COUNTRY_MISSING in result.blockers
     assert result.legs == []
 
@@ -186,7 +193,7 @@ def test_missing_countries_fail_closed(field):
 def test_unsupported_overseas_to_overseas_and_domestic_only_fail_visibly(payload):
     result = plan(payload)
 
-    assert result.status == JourneyStatus.BLOCKED
+    assert result.status == JourneyStatus.NEEDS_REVIEW
     assert JourneyPlannerBlockerCode.JOURNEY_DIRECTION_UNSUPPORTED in result.blockers
     assert result.legs == []
 
@@ -194,7 +201,7 @@ def test_unsupported_overseas_to_overseas_and_domestic_only_fail_visibly(payload
 def test_multi_stop_requests_fail_visibly_without_guessing_legs():
     result = plan(request_payload(origin="SIN", destination="LAE", via_codes=["BNE"]))
 
-    assert result.status == JourneyStatus.BLOCKED
+    assert result.status == JourneyStatus.NEEDS_REVIEW
     assert JourneyPlannerBlockerCode.JOURNEY_MULTI_STOP_UNSUPPORTED in result.blockers
     assert result.legs == []
 
@@ -258,7 +265,7 @@ def test_revision_uniqueness_prevents_duplicate_revision_numbers():
     spe = make_spe(user=user, origin="SIN", destination="POM")
     journey = persist(request_payload(origin="SIN", destination="POM"), spe=spe, user=user)
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises((IntegrityError, ValidationError)):
         with transaction.atomic():
             ShipmentJourneyDB.objects.create(
                 spot_envelope=spe,
@@ -271,7 +278,7 @@ def test_revision_uniqueness_prevents_duplicate_revision_numbers():
                 route_policy_key="IMP_POM",
                 rule_version=journey.rule_version,
                 input_fingerprint="x" * 64,
-                status=ShipmentJourneyDB.Status.BLOCKED,
+                status=ShipmentJourneyDB.Status.NEEDS_REVIEW,
                 blockers_json=[],
             )
 
@@ -339,6 +346,244 @@ def test_read_only_diagnostic_command_performs_no_writes():
     assert payload["route_policy"]["enabled"] is False
     assert payload["writes_performed"] is False
     assert after == before
+
+
+def assert_invalid_without_legs(payload, expected_blocker):
+    result = plan(payload)
+    assert result.status == JourneyStatus.NEEDS_REVIEW
+    assert expected_blocker in result.blockers
+    assert result.legs == []
+
+
+def test_missing_import_overseas_origin_code_blocks_without_legs():
+    assert_invalid_without_legs(request_payload(origin="", destination="POM"), JourneyPlannerBlockerCode.JOURNEY_PATTERN_UNSUPPORTED)
+
+
+def test_missing_export_overseas_destination_code_blocks_without_legs():
+    assert_invalid_without_legs(request_payload(origin_country="PG", destination_country="SG", origin="POM", destination=""), JourneyPlannerBlockerCode.JOURNEY_PATTERN_UNSUPPORTED)
+
+
+def test_non_air_service_domain_blocks_without_legs():
+    assert_invalid_without_legs(request_payload(service_domain="SEA"), JourneyPlannerBlockerCode.JOURNEY_REQUEST_INVALID)
+
+
+def test_missing_service_domain_blocks_without_legs():
+    assert_invalid_without_legs(request_payload(service_domain=""), JourneyPlannerBlockerCode.JOURNEY_REQUEST_INVALID)
+
+
+def test_missing_quote_date_blocks_without_legs():
+    assert_invalid_without_legs(request_payload(quote_date=""), JourneyPlannerBlockerCode.JOURNEY_REQUEST_INVALID)
+
+
+def test_non_png_country_with_png_origin_code_blocks_without_legs():
+    assert_invalid_without_legs(request_payload(origin_country="SG", destination_country="PG", origin="POM", destination="LAE"), JourneyPlannerBlockerCode.JOURNEY_GATEWAY_INVALID)
+
+
+def test_non_png_country_with_png_destination_code_blocks_without_legs():
+    assert_invalid_without_legs(request_payload(origin_country="PG", destination_country="AU", origin="LAE", destination="LAE"), JourneyPlannerBlockerCode.JOURNEY_GATEWAY_INVALID)
+
+
+def test_generic_supplier_origin_destination_text_cannot_be_trusted_route_codes():
+    payload = request_payload()
+    payload.pop("customer_origin_code")
+    payload.pop("customer_destination_code")
+    payload["origin"] = "Singapore free text"
+    payload["destination"] = "Port Moresby free text"
+    assert_invalid_without_legs(payload, JourneyPlannerBlockerCode.JOURNEY_PATTERN_UNSUPPORTED)
+
+
+def test_invalid_numeric_date_and_boolean_inputs_return_controlled_blockers():
+    result = plan(request_payload(actual_weight="not-decimal", quote_date="bad-date", pickup_requested="maybe"))
+    assert result.status == JourneyStatus.NEEDS_REVIEW
+    assert JourneyPlannerBlockerCode.JOURNEY_REQUEST_INVALID in result.blockers
+    assert result.legs == []
+
+
+def test_spot_only_journey_reused_when_quote_parent_later_supplied():
+    user = make_user()
+    spe = make_spe(user=user, origin="SIN", destination="POM")
+    quote = make_quote(user=user)
+    payload = request_payload(origin="SIN", destination="POM")
+
+    first = ShipmentJourneyPersistenceService().persist_plan(plan=plan(payload), spot_envelope=spe, created_by=user)
+    second = ShipmentJourneyPersistenceService().persist_plan(plan=plan(payload), quote=quote, spot_envelope=spe, created_by=user)
+
+    assert second.id == first.id
+    assert second.quote_id == quote.id
+    assert second.spot_envelope_id == spe.id
+    assert second.revision == 1
+    assert ShipmentJourneyDB.objects.filter(quote=quote).count() == 1
+    assert ShipmentJourneyDB.objects.filter(spot_envelope=spe).count() == 1
+
+
+def test_quote_only_journey_reused_when_spot_parent_later_supplied():
+    user = make_user()
+    quote = make_quote(user=user)
+    spe = make_spe(user=user, origin="SIN", destination="POM")
+    payload = request_payload(origin="SIN", destination="POM")
+
+    first = ShipmentJourneyPersistenceService().persist_plan(plan=plan(payload), quote=quote, created_by=user)
+    second = ShipmentJourneyPersistenceService().persist_plan(plan=plan(payload), quote=quote, spot_envelope=spe, created_by=user)
+
+    assert second.id == first.id
+    assert second.quote_id == quote.id
+    assert second.spot_envelope_id == spe.id
+    assert ShipmentJourneyDB.objects.filter(quote=quote).count() == 1
+    assert ShipmentJourneyDB.objects.filter(spot_envelope=spe).count() == 1
+
+
+def test_fresh_journey_created_with_both_parents():
+    user = make_user()
+    quote = make_quote(user=user)
+    spe = make_spe(user=user, origin="SIN", destination="POM")
+
+    journey = ShipmentJourneyPersistenceService().persist_plan(plan=plan(request_payload(origin="SIN", destination="POM")), quote=quote, spot_envelope=spe, created_by=user)
+
+    assert journey.quote_id == quote.id
+    assert journey.spot_envelope_id == spe.id
+    assert journey.revision == 1
+
+
+def test_conflicting_quote_and_spot_histories_fail_closed():
+    user = make_user()
+    quote = make_quote(user=user)
+    spe = make_spe(user=user, origin="SIN", destination="POM")
+    service = ShipmentJourneyPersistenceService()
+    service.persist_plan(plan=plan(request_payload(origin="SIN", destination="POM")), quote=quote, created_by=user)
+    service.persist_plan(plan=plan(request_payload(origin="SIN", destination="LAE")), spot_envelope=spe, created_by=user)
+
+    with pytest.raises(ValidationError, match="Conflicting quote and SPOT journey histories"):
+        service.persist_plan(plan=plan(request_payload(origin="SIN", destination="POM")), quote=quote, spot_envelope=spe, created_by=user)
+
+
+def test_no_duplicate_quote_or_spot_revision_numbers_on_parent_handover():
+    user = make_user()
+    quote = make_quote(user=user)
+    spe = make_spe(user=user, origin="SIN", destination="POM")
+    service = ShipmentJourneyPersistenceService()
+    service.persist_plan(plan=plan(request_payload(origin="SIN", destination="POM")), spot_envelope=spe, created_by=user)
+    service.persist_plan(plan=plan(request_payload(origin="SIN", destination="POM")), quote=quote, spot_envelope=spe, created_by=user)
+
+    assert ShipmentJourneyDB.objects.filter(quote=quote, revision=1).count() == 1
+    assert ShipmentJourneyDB.objects.filter(spot_envelope=spe, revision=1).count() == 1
+
+
+def test_finalized_journey_may_receive_only_missing_parent_audit_link():
+    user = make_user()
+    quote = make_quote(user=user)
+    spe = make_spe(user=user, origin="SIN", destination="POM")
+    journey = ShipmentJourneyPersistenceService().persist_plan(plan=plan(request_payload(origin="SIN", destination="POM")), spot_envelope=spe, created_by=user)
+    before = list(journey.legs.values("leg_key", "origin_code", "destination_code"))
+    journey.status = ShipmentJourneyDB.Status.FINALIZED
+    journey.finalized_at = timezone.now()
+    journey.save()
+
+    updated = ShipmentJourneyPersistenceService().attach_second_parent_reference(journey=journey, quote=quote)
+
+    assert updated.quote_id == quote.id
+    assert updated.status == ShipmentJourneyDB.Status.FINALIZED
+    assert list(updated.legs.values("leg_key", "origin_code", "destination_code")) == before
+
+
+def test_finalized_journey_route_and_leg_data_remain_immutable():
+    journey = persist(request_payload(origin="SIN", destination="LAE"))
+    leg = journey.legs.order_by("sequence").first()
+    journey.status = ShipmentJourneyDB.Status.FINALIZED
+    journey.finalized_at = timezone.now()
+    journey.save()
+
+    journey.customer_destination_code = "POM"
+    with pytest.raises(ValidationError, match="immutable"):
+        journey.save()
+    leg.destination_code = "HGU"
+    with pytest.raises(ValidationError, match="immutable"):
+        leg.save()
+
+
+def test_editing_deleting_or_adding_finalized_legs_fails():
+    journey = persist(request_payload(origin="SIN", destination="POM"))
+    leg = journey.legs.first()
+    journey.status = ShipmentJourneyDB.Status.FINALIZED
+    journey.finalized_at = timezone.now()
+    journey.save()
+
+    leg.service_scope = "D2D"
+    with pytest.raises(ValidationError, match="immutable"):
+        leg.save()
+    with pytest.raises(ValidationError, match="immutable"):
+        leg.delete()
+    with pytest.raises(ValidationError, match="immutable"):
+        ShipmentLegDB.objects.create(
+            journey=journey,
+            leg_key="02:DOMESTIC_ON_FORWARDING:POM:LAE",
+            sequence=2,
+            role=LegRole.DOMESTIC_ON_FORWARDING.value,
+            transport_mode=TransportMode.DOMESTIC_AIR.value,
+            origin_code="POM",
+            destination_code="LAE",
+            product_code_domain=ProductCodeDomain.DOMESTIC.value,
+        )
+
+
+def test_deleting_finalized_journey_fails():
+    journey = persist(request_payload(origin="SIN", destination="POM"))
+    journey.status = ShipmentJourneyDB.Status.FINALIZED
+    journey.finalized_at = timezone.now()
+    journey.save()
+
+    with pytest.raises(ValidationError, match="cannot be deleted"):
+        journey.delete()
+
+
+def test_inconsistent_finalized_status_timestamp_fails_validation():
+    journey = persist(request_payload(origin="SIN", destination="POM"))
+    journey.status = ShipmentJourneyDB.Status.FINALIZED
+    journey.finalized_at = None
+    with pytest.raises(ValidationError, match="finalized_at"):
+        journey.full_clean()
+    journey.status = ShipmentJourneyDB.Status.PLANNED
+    journey.finalized_at = timezone.now()
+    with pytest.raises(ValidationError, match="FINALIZED"):
+        journey.full_clean()
+
+
+def test_revision_lifecycle_a_a_reuses_a_b_a_creates_third_revision():
+    user = make_user()
+    spe = make_spe(user=user, origin="SIN", destination="POM")
+    service = ShipmentJourneyPersistenceService()
+    payload_a = request_payload(origin="SIN", destination="POM")
+    payload_b = request_payload(origin="SIN", destination="LAE")
+
+    first = service.persist_plan(plan=plan(payload_a), spot_envelope=spe, created_by=user)
+    same = service.persist_plan(plan=plan(payload_a), spot_envelope=spe, created_by=user)
+    second = service.persist_plan(plan=plan(payload_b), spot_envelope=spe, created_by=user)
+    third = service.persist_plan(plan=plan(payload_a), spot_envelope=spe, created_by=user)
+
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert same.id == first.id
+    assert second.revision == 2
+    assert second.supersedes_id == first.id
+    assert first.status == ShipmentJourneyDB.Status.SUPERSEDED
+    assert third.revision == 3
+    assert third.supersedes_id == second.id
+
+
+def test_finalized_prior_revision_not_mutated_when_new_revision_created():
+    user = make_user()
+    spe = make_spe(user=user, origin="SIN", destination="POM")
+    service = ShipmentJourneyPersistenceService()
+    first = service.persist_plan(plan=plan(request_payload(origin="SIN", destination="POM")), spot_envelope=spe, created_by=user)
+    first.status = ShipmentJourneyDB.Status.FINALIZED
+    first.finalized_at = timezone.now()
+    first.save()
+
+    second = service.persist_plan(plan=plan(request_payload(origin="SIN", destination="LAE")), spot_envelope=spe, created_by=user)
+    first.refresh_from_db()
+
+    assert first.status == ShipmentJourneyDB.Status.FINALIZED
+    assert second.supersedes_id == first.id
+    assert second.revision == 2
 
 
 def test_no_pricing_engine_productcode_resolver_or_spot_finalization_calls_occur():

@@ -36,11 +36,13 @@ class AirJourneyPlanner:
     def plan(self, request: JourneyRequest | dict) -> JourneyPlan:
         normalized = coerce_journey_request(request)
         blockers: list[JourneyPlannerBlockerCode] = []
+        self._request_validation_blockers(normalized, blockers)
         self._multi_stop_blockers(normalized, blockers)
         direction = self._direction(normalized, blockers)
+        self._route_code_blockers(normalized, direction, blockers)
         pattern = self._pattern(normalized, direction, blockers)
         legs: list[JourneyLeg] = []
-        if direction and pattern and not self._has_route_blocker(blockers):
+        if direction and pattern and not blockers:
             legs = self._legs(normalized, pattern)
             blockers.extend(self._validate_gateway(pattern, legs))
             blockers.extend(self._automation_blockers(pattern))
@@ -53,10 +55,18 @@ class AirJourneyPlanner:
             route_policy_key=pattern.value if pattern else "UNSUPPORTED",
             rule_version=self.rule_version,
             input_fingerprint=normalized.input_fingerprint(),
-            status=JourneyStatus.BLOCKED if blockers else JourneyStatus.PLANNED,
+            status=JourneyStatus.NEEDS_REVIEW if blockers else JourneyStatus.PLANNED,
             legs=legs,
             blockers=self._dedupe(blockers),
         )
+
+    def _request_validation_blockers(self, request: JourneyRequest, blockers: list[JourneyPlannerBlockerCode]) -> None:
+        for code in request.raw_evidence.get("_validation_blockers", []):
+            blockers.append(JourneyPlannerBlockerCode(code))
+        if not request.service_domain or request.service_domain != "AIR":
+            blockers.append(JourneyPlannerBlockerCode.JOURNEY_REQUEST_INVALID)
+        if request.quote_date.isoformat() == "1970-01-01":
+            blockers.append(JourneyPlannerBlockerCode.JOURNEY_REQUEST_INVALID)
 
     def _multi_stop_blockers(self, request: JourneyRequest, blockers: list[JourneyPlannerBlockerCode]) -> None:
         for key in ["via", "via_code", "via_codes", "intermediate_code", "intermediate_codes", "stops"]:
@@ -79,6 +89,27 @@ class AirJourneyPlanner:
             return JourneyDirection.EXPORT
         blockers.append(JourneyPlannerBlockerCode.JOURNEY_DIRECTION_UNSUPPORTED)
         return None
+
+    def _route_code_blockers(
+        self,
+        request: JourneyRequest,
+        direction: JourneyDirection | None,
+        blockers: list[JourneyPlannerBlockerCode],
+    ) -> None:
+        if direction == JourneyDirection.IMPORT:
+            if not request.customer_origin_code:
+                blockers.append(JourneyPlannerBlockerCode.JOURNEY_PATTERN_UNSUPPORTED)
+            if request.origin_country != PNG_COUNTRY_CODE and request.customer_origin_code in SUPPORTED_CUSTOMER_CODES:
+                blockers.append(JourneyPlannerBlockerCode.JOURNEY_GATEWAY_INVALID)
+            if request.destination_country == PNG_COUNTRY_CODE and request.customer_destination_code not in SUPPORTED_CUSTOMER_CODES:
+                blockers.append(JourneyPlannerBlockerCode.JOURNEY_PATTERN_UNSUPPORTED)
+        if direction == JourneyDirection.EXPORT:
+            if not request.customer_destination_code:
+                blockers.append(JourneyPlannerBlockerCode.JOURNEY_PATTERN_UNSUPPORTED)
+            if request.destination_country != PNG_COUNTRY_CODE and request.customer_destination_code in SUPPORTED_CUSTOMER_CODES:
+                blockers.append(JourneyPlannerBlockerCode.JOURNEY_GATEWAY_INVALID)
+            if request.origin_country == PNG_COUNTRY_CODE and request.customer_origin_code not in SUPPORTED_CUSTOMER_CODES:
+                blockers.append(JourneyPlannerBlockerCode.JOURNEY_PATTERN_UNSUPPORTED)
 
     def _pattern(
         self,
@@ -177,19 +208,6 @@ class AirJourneyPlanner:
         if pattern == JourneyPattern.EXP_HGU:
             return [JourneyPlannerBlockerCode.ROUTE_AUTOMATION_DISABLED]
         return []
-
-    @staticmethod
-    def _has_route_blocker(blockers: list[JourneyPlannerBlockerCode]) -> bool:
-        return any(
-            blocker
-            in {
-                JourneyPlannerBlockerCode.JOURNEY_COUNTRY_MISSING,
-                JourneyPlannerBlockerCode.JOURNEY_DIRECTION_UNSUPPORTED,
-                JourneyPlannerBlockerCode.JOURNEY_PATTERN_UNSUPPORTED,
-                JourneyPlannerBlockerCode.JOURNEY_MULTI_STOP_UNSUPPORTED,
-            }
-            for blocker in blockers
-        )
 
     @staticmethod
     def _dedupe(blockers: list[JourneyPlannerBlockerCode]) -> list[JourneyPlannerBlockerCode]:

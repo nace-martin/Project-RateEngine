@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Any
 
@@ -24,8 +24,10 @@ SUPPORTED_CUSTOMER_CODES = {"POM", "LAE", "HGU"}
 
 class JourneyStatus(StrEnum):
     PLANNED = "PLANNED"
-    BLOCKED = "BLOCKED"
+    NEEDS_REVIEW = "NEEDS_REVIEW"
+    PRICED = "PRICED"
     FINALIZED = "FINALIZED"
+    SUPERSEDED = "SUPERSEDED"
 
 
 class JourneyPlannerBlockerCode(StrEnum):
@@ -34,6 +36,7 @@ class JourneyPlannerBlockerCode(StrEnum):
     JOURNEY_GATEWAY_INVALID = "JOURNEY_GATEWAY_INVALID"
     JOURNEY_PATTERN_UNSUPPORTED = "JOURNEY_PATTERN_UNSUPPORTED"
     JOURNEY_MULTI_STOP_UNSUPPORTED = "JOURNEY_MULTI_STOP_UNSUPPORTED"
+    JOURNEY_REQUEST_INVALID = "JOURNEY_REQUEST_INVALID"
     ROUTE_AUTOMATION_DISABLED = "ROUTE_AUTOMATION_DISABLED"
     ROUTE_RATE_GATE_UNMET = "ROUTE_RATE_GATE_UNMET"
 
@@ -164,36 +167,83 @@ def coerce_journey_request(value: JourneyRequest | dict[str, Any]) -> JourneyReq
     if isinstance(value, JourneyRequest):
         return value.normalized()
     data = dict(value or {})
-    quote_date_value = data.get("quote_date") or date.today()
-    if not isinstance(quote_date_value, date):
-        quote_date_value = date.fromisoformat(str(quote_date_value))
+    validation_blockers: list[str] = []
+    quote_date_value = _date_or_sentinel(data.get("quote_date"), validation_blockers)
+    pieces = _int_or_zero(data.get("pieces"), validation_blockers)
+    actual_weight = _decimal_or_none(data.get("actual_weight") or data.get("actual_weight_kg"), validation_blockers)
+    volumetric_weight = _decimal_or_none(data.get("volumetric_weight") or data.get("volumetric_weight_kg"), validation_blockers)
+    chargeable_weight = _decimal_or_none(data.get("chargeable_weight") or data.get("chargeable_weight_kg"), validation_blockers)
+    pickup_requested = _bool_or_false(data.get("pickup_requested", False), validation_blockers)
+    delivery_requested = _bool_or_false(data.get("delivery_requested", False), validation_blockers)
+    raw_evidence = dict(data)
+    if validation_blockers:
+        raw_evidence["_validation_blockers"] = validation_blockers
     return JourneyRequest(
         origin_country=data.get("origin_country") or data.get("originCountry") or "",
         destination_country=data.get("destination_country") or data.get("destinationCountry") or "",
-        customer_origin_code=data.get("customer_origin_code") or data.get("origin_code") or data.get("origin") or "",
-        customer_destination_code=data.get("customer_destination_code") or data.get("destination_code") or data.get("destination") or "",
-        service_domain=data.get("service_domain") or data.get("mode") or "AIR",
-        service_scope=data.get("service_scope") or "",
+        customer_origin_code=data.get("customer_origin_code") or data.get("customerOriginCode") or data.get("origin_code") or "",
+        customer_destination_code=data.get("customer_destination_code") or data.get("customerDestinationCode") or data.get("destination_code") or "",
+        service_domain=data.get("service_domain") or data.get("serviceDomain") or "",
+        service_scope=data.get("service_scope") or data.get("serviceScope") or "",
         quote_date=quote_date_value,
-        pieces=int(data.get("pieces") or 0),
-        actual_weight=_decimal_or_none(data.get("actual_weight") or data.get("actual_weight_kg")),
-        volumetric_weight=_decimal_or_none(data.get("volumetric_weight") or data.get("volumetric_weight_kg")),
-        chargeable_weight=_decimal_or_none(data.get("chargeable_weight") or data.get("chargeable_weight_kg")),
+        pieces=pieces,
+        actual_weight=actual_weight,
+        volumetric_weight=volumetric_weight,
+        chargeable_weight=chargeable_weight,
         commodity=data.get("commodity") or "",
-        pickup_requested=bool(data.get("pickup_requested", False)),
-        delivery_requested=bool(data.get("delivery_requested", False)),
-        raw_evidence={k: v for k, v in data.items() if k not in {"origin_country", "destination_country", "customer_origin_code", "customer_destination_code"}},
+        pickup_requested=pickup_requested,
+        delivery_requested=delivery_requested,
+        raw_evidence=raw_evidence,
     ).normalized()
+
+
+def _date_or_sentinel(value: Any, validation_blockers: list[str]) -> date:
+    if value in (None, ""):
+        validation_blockers.append(JourneyPlannerBlockerCode.JOURNEY_REQUEST_INVALID.value)
+        return date(1970, 1, 1)
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        validation_blockers.append(JourneyPlannerBlockerCode.JOURNEY_REQUEST_INVALID.value)
+        return date(1970, 1, 1)
+
+
+def _int_or_zero(value: Any, validation_blockers: list[str]) -> int:
+    if value in (None, ""):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        validation_blockers.append(JourneyPlannerBlockerCode.JOURNEY_REQUEST_INVALID.value)
+        return 0
+
+
+def _bool_or_false(value: Any, validation_blockers: list[str]) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return False
+    if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+        return value.strip().lower() == "true"
+    validation_blockers.append(JourneyPlannerBlockerCode.JOURNEY_REQUEST_INVALID.value)
+    return False
+
+
+def _decimal_or_none(value: Any, validation_blockers: list[str] | None = None) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        if validation_blockers is not None:
+            validation_blockers.append(JourneyPlannerBlockerCode.JOURNEY_REQUEST_INVALID.value)
+        return None
 
 
 def _norm(value: Any, max_len: int) -> str:
     return str(value or "").strip().upper()[:max_len]
-
-
-def _decimal_or_none(value: Any) -> Decimal | None:
-    if value in (None, ""):
-        return None
-    return Decimal(str(value))
 
 
 def _decimal_string(value: Any) -> str | None:

@@ -425,8 +425,10 @@ class RouteAutomationPolicyDB(models.Model):
 class ShipmentJourneyDB(models.Model):
     class Status(models.TextChoices):
         PLANNED = 'PLANNED', 'Planned'
-        BLOCKED = 'BLOCKED', 'Blocked'
+        NEEDS_REVIEW = 'NEEDS_REVIEW', 'Needs review'
+        PRICED = 'PRICED', 'Priced'
         FINALIZED = 'FINALIZED', 'Finalized'
+        SUPERSEDED = 'SUPERSEDED', 'Superseded'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     quote = models.ForeignKey(Quote, on_delete=models.CASCADE, null=True, blank=True, related_name='shipment_journeys')
@@ -463,20 +465,44 @@ class ShipmentJourneyDB(models.Model):
         super().clean()
         if not self.quote_id and not self.spot_envelope_id:
             raise ValidationError('ShipmentJourneyDB requires either quote or SPOT envelope parent.')
+        if self.status == self.Status.FINALIZED and self.finalized_at is None:
+            raise ValidationError({'finalized_at': 'Finalized shipment journeys require finalized_at.'})
+        if self.finalized_at is not None and self.status != self.Status.FINALIZED:
+            raise ValidationError({'status': 'finalized_at is only valid when status is FINALIZED.'})
+
+    def _validate_finalized_immutability(self):
+        if not self.pk:
+            return
+        previous = type(self).objects.filter(pk=self.pk).first()
+        if not previous or previous.status != self.Status.FINALIZED:
+            return
+        immutable_fields = [
+            'revision', 'direction', 'pattern', 'gateway_code', 'customer_origin_code',
+            'customer_destination_code', 'route_policy_key', 'rule_version', 'input_fingerprint',
+            'status', 'blockers_json', 'supersedes_id', 'created_by_id', 'finalized_at',
+        ]
+        for field_name in immutable_fields:
+            if getattr(previous, field_name) != getattr(self, field_name):
+                raise ValidationError('Finalized shipment journey revisions are immutable.')
+        for parent_field in ['quote_id', 'spot_envelope_id']:
+            previous_value = getattr(previous, parent_field)
+            current_value = getattr(self, parent_field)
+            if previous_value and previous_value != current_value:
+                raise ValidationError('Finalized shipment journey parent links are immutable.')
+            if previous_value is None and current_value is None:
+                continue
+            if previous_value is None and current_value:
+                continue
 
     def save(self, *args, **kwargs):
-        if self.pk:
-            previous = type(self).objects.filter(pk=self.pk).first()
-            if previous and previous.finalized_at:
-                immutable_fields = [
-                    'quote_id', 'spot_envelope_id', 'revision', 'direction', 'pattern', 'gateway_code',
-                    'customer_origin_code', 'customer_destination_code', 'route_policy_key', 'rule_version',
-                    'input_fingerprint', 'status', 'blockers_json', 'supersedes_id', 'created_by_id', 'finalized_at',
-                ]
-                for field_name in immutable_fields:
-                    if getattr(previous, field_name) != getattr(self, field_name):
-                        raise ValidationError('Finalized shipment journey revisions are immutable.')
+        self.full_clean()
+        self._validate_finalized_immutability()
         super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status == self.Status.FINALIZED:
+            raise ValidationError('Finalized shipment journey revisions cannot be deleted.')
+        return super().delete(*args, **kwargs)
 
     def __str__(self):
         return f"Journey {self.revision} {self.pattern or 'UNSUPPORTED'}"
@@ -485,7 +511,10 @@ class ShipmentJourneyDB(models.Model):
 class ShipmentLegDB(models.Model):
     class Status(models.TextChoices):
         PLANNED = 'PLANNED', 'Planned'
-        BLOCKED = 'BLOCKED', 'Blocked'
+        NEEDS_REVIEW = 'NEEDS_REVIEW', 'Needs review'
+        PRICED = 'PRICED', 'Priced'
+        FINALIZED = 'FINALIZED', 'Finalized'
+        SUPERSEDED = 'SUPERSEDED', 'Superseded'
 
     class RateCoverageStatus(models.TextChoices):
         NOT_CHECKED = 'NOT_CHECKED', 'Not checked'
@@ -518,6 +547,10 @@ class ShipmentLegDB(models.Model):
 
     def clean(self):
         super().clean()
+        if self.journey_id:
+            parent = ShipmentJourneyDB.objects.get(pk=self.journey_id)
+            if parent.status == ShipmentJourneyDB.Status.FINALIZED:
+                raise ValidationError('Finalized shipment journey legs are immutable.')
         if self.sequence < 1:
             raise ValidationError({'sequence': 'Leg sequence starts at 1.'})
         if self.role == LegRole.INTERNATIONAL_IMPORT.value and self.destination_code != 'POM':
@@ -528,6 +561,16 @@ class ShipmentLegDB(models.Model):
             raise ValidationError({'origin_code': 'Domestic on-forwarding legs must start at POM.'})
         if self.role == LegRole.DOMESTIC_PRE_CARRIAGE.value and self.destination_code != 'POM':
             raise ValidationError({'destination_code': 'Domestic pre-carriage legs must end at POM.'})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        parent = ShipmentJourneyDB.objects.get(pk=self.journey_id) if self.journey_id else None
+        if parent and parent.status == ShipmentJourneyDB.Status.FINALIZED:
+            raise ValidationError('Finalized shipment journey legs are immutable.')
+        return super().delete(*args, **kwargs)
 
     def __str__(self):
         return self.leg_key
