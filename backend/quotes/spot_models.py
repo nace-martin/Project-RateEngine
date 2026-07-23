@@ -509,6 +509,18 @@ class SPEChargeLineDB(models.Model):
         blank=True,
         help_text='Timestamp when manual SPOT charge review was saved.',
     )
+
+    # Phase 16E-A dark-mode journey audit context. Nullable to avoid historical
+    # backfills and non-behavioural until later orchestration phases.
+    journey_leg = models.ForeignKey(
+        'quotes.ShipmentLegDB',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='spot_charge_lines',
+    )
+    charge_context_json = models.JSONField(default=dict, blank=True)
+    product_code_resolution_audit_json = models.JSONField(default=dict, blank=True)
     
     # === Diagnostic / Audit Metadata (Phase 10.3b) ===
     calculation_basis = models.CharField(

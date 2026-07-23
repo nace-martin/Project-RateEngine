@@ -4,6 +4,7 @@ import uuid
 from datetime import timedelta
 
 from django.conf import settings  # For AUTH_USER_MODEL
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -15,6 +16,7 @@ from core.models import Policy, FxSnapshot, Location
 from core.commodity import COMMODITY_CHOICES, DEFAULT_COMMODITY_CODE
 # --- END UPDATE ---
 from services.models import MODE_CHOICES, ServiceComponent, SERVICE_SCOPE_CHOICES
+from pricing_v4.contracts.charge_context import JourneyDirection, JourneyPattern, LegRole, ProductCodeDomain, TransportMode
 
 
 # --- V3 Refactored Quote Model ---
@@ -386,6 +388,151 @@ class QuoteVersion(models.Model):
         return f"{self.quote.quote_number} - v{self.version_number}"
 
 
+class RouteAutomationPolicyDB(models.Model):
+    """Audited dark-mode route automation policy.
+
+    Missing policy means disabled. Phase 16E-A seeds supported patterns as disabled
+    only; no route is enabled by this PR.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    route_pattern = models.CharField(max_length=20, choices=[(item.value, item.value) for item in JourneyPattern], unique=True, db_index=True)
+    enabled = models.BooleanField(default=False, db_index=True)
+    disabled_reason = models.TextField(blank=True, default="")
+    effective_from = models.DateField(null=True, blank=True)
+    effective_until = models.DateField(null=True, blank=True)
+    required_rate_gate_json = models.JSONField(default=dict, blank=True)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'route_automation_policies'
+        ordering = ['route_pattern']
+        verbose_name = 'Route Automation Policy'
+        verbose_name_plural = 'Route Automation Policies'
+
+    def clean(self):
+        super().clean()
+        if self.enabled:
+            raise ValidationError({'enabled': 'Phase 16E-A does not enable route automation.'})
+        if not self.disabled_reason:
+            raise ValidationError({'disabled_reason': 'Disabled route policies require an explicit reason.'})
+
+    def __str__(self):
+        return f"{self.route_pattern}: {'enabled' if self.enabled else 'disabled'}"
+
+
+class ShipmentJourneyDB(models.Model):
+    class Status(models.TextChoices):
+        PLANNED = 'PLANNED', 'Planned'
+        BLOCKED = 'BLOCKED', 'Blocked'
+        FINALIZED = 'FINALIZED', 'Finalized'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    quote = models.ForeignKey(Quote, on_delete=models.CASCADE, null=True, blank=True, related_name='shipment_journeys')
+    spot_envelope = models.ForeignKey('quotes.SpotPricingEnvelopeDB', on_delete=models.CASCADE, null=True, blank=True, related_name='shipment_journeys')
+    revision = models.PositiveIntegerField()
+    direction = models.CharField(max_length=10, choices=[(item.value, item.value) for item in JourneyDirection], blank=True, default='')
+    pattern = models.CharField(max_length=20, choices=[(item.value, item.value) for item in JourneyPattern], blank=True, default='')
+    gateway_code = models.CharField(max_length=10, blank=True, default='POM')
+    customer_origin_code = models.CharField(max_length=20, blank=True, default='')
+    customer_destination_code = models.CharField(max_length=20, blank=True, default='')
+    route_policy_key = models.CharField(max_length=50, blank=True, default='')
+    rule_version = models.CharField(max_length=80)
+    input_fingerprint = models.CharField(max_length=64, db_index=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNED, db_index=True)
+    blockers_json = models.JSONField(default=list, blank=True)
+    supersedes = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='superseded_by')
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    finalized_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'shipment_journeys'
+        ordering = ['-created_at', '-revision']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quote__isnull=False) | models.Q(spot_envelope__isnull=False),
+                name='shipment_journey_parent_required',
+            ),
+            models.UniqueConstraint(fields=['quote', 'revision'], condition=models.Q(quote__isnull=False), name='uniq_shipment_journey_quote_revision'),
+            models.UniqueConstraint(fields=['spot_envelope', 'revision'], condition=models.Q(spot_envelope__isnull=False), name='uniq_shipment_journey_spot_revision'),
+        ]
+
+    def clean(self):
+        super().clean()
+        if not self.quote_id and not self.spot_envelope_id:
+            raise ValidationError('ShipmentJourneyDB requires either quote or SPOT envelope parent.')
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).first()
+            if previous and previous.finalized_at:
+                immutable_fields = [
+                    'quote_id', 'spot_envelope_id', 'revision', 'direction', 'pattern', 'gateway_code',
+                    'customer_origin_code', 'customer_destination_code', 'route_policy_key', 'rule_version',
+                    'input_fingerprint', 'status', 'blockers_json', 'supersedes_id', 'created_by_id', 'finalized_at',
+                ]
+                for field_name in immutable_fields:
+                    if getattr(previous, field_name) != getattr(self, field_name):
+                        raise ValidationError('Finalized shipment journey revisions are immutable.')
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Journey {self.revision} {self.pattern or 'UNSUPPORTED'}"
+
+
+class ShipmentLegDB(models.Model):
+    class Status(models.TextChoices):
+        PLANNED = 'PLANNED', 'Planned'
+        BLOCKED = 'BLOCKED', 'Blocked'
+
+    class RateCoverageStatus(models.TextChoices):
+        NOT_CHECKED = 'NOT_CHECKED', 'Not checked'
+        MISSING = 'MISSING', 'Missing'
+        AVAILABLE = 'AVAILABLE', 'Available'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    journey = models.ForeignKey(ShipmentJourneyDB, on_delete=models.CASCADE, related_name='legs')
+    leg_key = models.CharField(max_length=120)
+    sequence = models.PositiveIntegerField()
+    role = models.CharField(max_length=32, choices=[(item.value, item.value) for item in LegRole])
+    transport_mode = models.CharField(max_length=32, choices=[(item.value, item.value) for item in TransportMode])
+    origin_code = models.CharField(max_length=20)
+    destination_code = models.CharField(max_length=20)
+    product_code_domain = models.CharField(max_length=10, choices=[(item.value, item.value) for item in ProductCodeDomain])
+    required = models.BooleanField(default=True)
+    service_scope = models.CharField(max_length=20, blank=True, default='')
+    chargeable_weight = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNED, db_index=True)
+    rate_coverage_status = models.CharField(max_length=20, choices=RateCoverageStatus.choices, default=RateCoverageStatus.NOT_CHECKED, db_index=True)
+    blockers_json = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        db_table = 'shipment_legs'
+        ordering = ['journey', 'sequence']
+        constraints = [
+            models.UniqueConstraint(fields=['journey', 'sequence'], name='uniq_shipment_leg_journey_sequence'),
+            models.UniqueConstraint(fields=['journey', 'leg_key'], name='uniq_shipment_leg_journey_leg_key'),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.sequence < 1:
+            raise ValidationError({'sequence': 'Leg sequence starts at 1.'})
+        if self.role == LegRole.INTERNATIONAL_IMPORT.value and self.destination_code != 'POM':
+            raise ValidationError({'destination_code': 'International import legs must end at POM.'})
+        if self.role == LegRole.INTERNATIONAL_EXPORT.value and self.origin_code != 'POM':
+            raise ValidationError({'origin_code': 'International export legs must start at POM.'})
+        if self.role == LegRole.DOMESTIC_ON_FORWARDING.value and self.origin_code != 'POM':
+            raise ValidationError({'origin_code': 'Domestic on-forwarding legs must start at POM.'})
+        if self.role == LegRole.DOMESTIC_PRE_CARRIAGE.value and self.destination_code != 'POM':
+            raise ValidationError({'destination_code': 'Domestic pre-carriage legs must end at POM.'})
+
+    def __str__(self):
+        return self.leg_key
+
+
 # --- V3 QuoteLine MODEL ---
 class QuoteLine(models.Model):
     """
@@ -537,6 +684,18 @@ class QuoteLine(models.Model):
         max_digits=12, decimal_places=2, default=0,
         help_text="Calculated GST amount for this line"
     )
+
+    # Phase 16E-A dark-mode journey audit context. Nullable to avoid historical
+    # backfills and non-behavioural until later orchestration phases.
+    journey_leg = models.ForeignKey(
+        'quotes.ShipmentLegDB',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='quote_lines',
+    )
+    charge_context_json = models.JSONField(default=dict, blank=True)
+    product_code_resolution_audit_json = models.JSONField(default=dict, blank=True)
 
     def __str__(self):
         name = self.service_component.description if self.service_component else 'Manual Line'
