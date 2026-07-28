@@ -121,8 +121,8 @@ class QuoteLineMigrationSafetyTests(TransactionTestCase):
                 cursor.execute(
                     "SELECT column_name, data_type, numeric_precision, numeric_scale, "
                     "character_maximum_length FROM information_schema.columns "
-                    "WHERE table_name = 'quotes_quoteline' AND column_name IN %s",
-                    [tuple(PRESERVED_COLUMNS)],
+                    "WHERE table_name = 'quotes_quoteline' AND column_name = ANY(%s)",
+                    [list(PRESERVED_COLUMNS)],
                 )
                 physical = {row[0]: row[1:] for row in cursor.fetchall()}
             self.assertEqual(physical['base_exchange_rate'], ('numeric', 12, 6, None))
