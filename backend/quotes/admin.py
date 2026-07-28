@@ -2,7 +2,8 @@
 
 from django.contrib import admin
 from .models import (
-    Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote
+    Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote,
+    RouteAutomationPolicyDB, ShipmentJourneyDB, ShipmentLegDB,
 )
 from .spot_models import (
     SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB,
@@ -130,6 +131,42 @@ class SpotPricingEnvelopeAdmin(admin.ModelAdmin):
 admin.site.register(Quote, QuoteAdmin)
 admin.site.register(QuoteVersion, QuoteVersionAdmin)
 admin.site.register(SpotPricingEnvelopeDB, SpotPricingEnvelopeAdmin)
+
+
+@admin.register(RouteAutomationPolicyDB)
+class RouteAutomationPolicyAdmin(admin.ModelAdmin):
+    list_display = ('route_pattern', 'enabled', 'disabled_reason', 'effective_from', 'effective_until', 'updated_at')
+    list_filter = ('enabled', 'route_pattern')
+    readonly_fields = ('updated_at',)
+
+    def save_model(self, request, obj, form, change):
+        obj.updated_by = request.user
+        super().save_model(request, obj, form, change)
+
+
+class ShipmentLegInline(admin.TabularInline):
+    model = ShipmentLegDB
+    extra = 0
+    can_delete = False
+    readonly_fields = [field.name for field in ShipmentLegDB._meta.fields]
+
+
+@admin.register(ShipmentJourneyDB)
+class ShipmentJourneyAdmin(admin.ModelAdmin):
+    list_display = ('id', 'quote', 'spot_envelope', 'revision', 'direction', 'pattern', 'status', 'created_at', 'finalized_at')
+    list_filter = ('direction', 'pattern', 'status', 'created_at')
+    search_fields = ('id', 'quote__quote_number', 'spot_envelope__id', 'input_fingerprint')
+    readonly_fields = [field.name for field in ShipmentJourneyDB._meta.fields]
+    inlines = [ShipmentLegInline]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 class ExpectedTemplateLineInline(admin.TabularInline):

@@ -375,11 +375,12 @@ JOURNEY_DIRECTION_UNSUPPORTED
 JOURNEY_GATEWAY_INVALID
 JOURNEY_PATTERN_UNSUPPORTED
 JOURNEY_MULTI_STOP_UNSUPPORTED
+JOURNEY_REQUEST_INVALID
 ROUTE_AUTOMATION_DISABLED
 ROUTE_RATE_GATE_UNMET
 ```
 
-A planning blocker prevents automatic pricing. A reviewable draft may still be created to preserve commercial evidence.
+A planning blocker prevents automatic pricing. `JOURNEY_REQUEST_INVALID` is reserved for malformed or missing trusted request evidence such as absent `service_domain`, absent `quote_date`, invalid dates, invalid decimals, or invalid boolean values. A reviewable draft may still be created to preserve commercial evidence.
 
 ## 6. Persistence design
 
