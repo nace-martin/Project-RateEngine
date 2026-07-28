@@ -16,6 +16,44 @@ ROUTE_POLICIES = {
 }
 
 
+def quote_line_preservation_fields():
+    return {
+        'base_exchange_rate': models.DecimalField(
+            blank=True,
+            decimal_places=6,
+            max_digits=12,
+            null=True,
+        ),
+        'caf_percent': models.DecimalField(
+            blank=True,
+            decimal_places=4,
+            max_digits=10,
+            null=True,
+        ),
+        'provider_name': models.CharField(
+            blank=True,
+            help_text='Actual name of the agent or carrier providing the rate.',
+            max_length=255,
+            null=True,
+        ),
+    }
+
+
+def ensure_quote_line_preservation_columns(apps, schema_editor):
+    QuoteLine = apps.get_model('quotes', 'QuoteLine')
+    with schema_editor.connection.cursor() as cursor:
+        existing = {
+            column.name
+            for column in schema_editor.connection.introspection.get_table_description(
+                cursor, QuoteLine._meta.db_table
+            )
+        }
+    for name, field in quote_line_preservation_fields().items():
+        if name not in existing:
+            field.set_attributes_from_name(name)
+            schema_editor.add_field(QuoteLine, field)
+
+
 def seed_disabled_route_policies(apps, schema_editor):
     RouteAutomationPolicyDB = apps.get_model('quotes', 'RouteAutomationPolicyDB')
     for pattern, reason in ROUTE_POLICIES.items():
@@ -42,6 +80,18 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(
+                    ensure_quote_line_preservation_columns,
+                    migrations.RunPython.noop,
+                ),
+            ],
+            state_operations=[
+                migrations.AddField(model_name='quoteline', name=name, field=field)
+                for name, field in quote_line_preservation_fields().items()
+            ],
+        ),
         migrations.AddField(
             model_name='quoteline',
             name='charge_context_json',
