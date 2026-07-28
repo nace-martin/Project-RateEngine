@@ -1,7 +1,7 @@
 # RateEngine Phase 16C — International Air Journey and Leg-Aware ProductCode Architecture
 
 **Document ID:** RE-ARCH-16C-AIR-001
-**Version:** 1.2
+**Version:** 1.3
 **Architecture date:** 21 July 2026
 **Status:** Authoritative design baseline
 **Source rules:** `docs/business-rules/phase-16a-air-freight-journey-productcode-rules.md` version 1.1
@@ -23,6 +23,16 @@ This document fixes the architecture for:
 - line, leg, journey and customer-output reconciliation.
 
 It is a design document only. It does not alter pricing, ProductCodes, rates, GST, FX, margins, SPOT decisions or production behaviour.
+
+### Phase 16E-A migration safety
+
+`quotes.0047` preserves the nullable historical
+`QuoteLine.base_exchange_rate`, `QuoteLine.caf_percent`, and
+`QuoteLine.provider_name` columns before any table rebuild. Migration `0048`
+repairs an already-applied schema when those columns are missing, but populated
+values lost during an earlier `0047` run must be restored from a pre-0047
+backup. These preservation-only fields are not connected to pricing, totals,
+output, or journey automation.
 
 ## 2. Architecture decisions
 
