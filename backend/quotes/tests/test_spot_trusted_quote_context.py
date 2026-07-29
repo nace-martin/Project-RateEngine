@@ -1,4 +1,5 @@
 from copy import deepcopy
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import override_settings
@@ -347,3 +348,48 @@ class TrustedQuoteSpotContextTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIsNone(response.data["quote_id"])
+
+    @patch(
+        "quotes.spot_services.RateAvailabilityService.get_component_outcomes",
+        side_effect=RuntimeError("SENSITIVE_SENTINEL"),
+    )
+    def test_coverage_failure_response_and_logs_are_sanitized(self, _mock_outcomes):
+        with self.assertLogs("quotes.services.spot_quote_context", level="WARNING") as captured:
+            response = self._post()
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error_code"], "SPOT_QUOTE_COVERAGE_UNAVAILABLE")
+        response_text = str(response.data)
+        log_text = "\n".join(captured.output)
+        self.assertNotIn("SENSITIVE_SENTINEL", response_text)
+        self.assertNotIn("SENSITIVE_SENTINEL", log_text)
+        for value in ("CAN", "POM", "COLLECT", "Trusted Context Customer"):
+            self.assertNotIn(value, log_text)
+
+    @patch(
+        "quotes.spot_views._normalize_shipment_context",
+        side_effect=ValueError("SENSITIVE_SENTINEL"),
+    )
+    def test_standalone_validation_response_and_logs_are_sanitized(self, _mock_normalize):
+        payload = self._payload()
+        payload.pop("quote_id")
+        payload["shipment_context"] = {
+            "origin_code": "SUBMITTED_CONTEXT_SENTINEL",
+        }
+
+        with self.assertLogs("django.request", level="WARNING") as captured:
+            response = self._post(payload=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data,
+            {
+                "error": "Standalone SPOT context is incomplete or invalid.",
+                "error_code": "SPOT_STANDALONE_CONTEXT_INCOMPLETE",
+            },
+        )
+        response_text = str(response.data)
+        log_text = "\n".join(captured.output)
+        self.assertNotIn("SENSITIVE_SENTINEL", response_text)
+        self.assertNotIn("SENSITIVE_SENTINEL", log_text)
+        self.assertNotIn("SUBMITTED_CONTEXT_SENTINEL", log_text)

@@ -134,10 +134,9 @@ def derive_missing_components(context: dict) -> list[str] | None:
         )
         return sorted(coverage.missing_required)
     except Exception:
-        logger.exception(
-            "Failed deriving missing components for trusted Quote context %s->%s",
-            context.get("origin_code"),
-            context.get("destination_code"),
+        logger.warning(
+            "Trusted Quote rate-coverage evaluation failed.",
+            exc_info=False,
         )
         return None
 

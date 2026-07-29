@@ -1613,10 +1613,10 @@ class SpotEnvelopeListCreateAPIView(APIView):
                             "payment_term": ctx.get("payment_term", "").lower() or None,
                         }
                     )
-                except Exception as e:
+                except Exception:
                     return Response(
                         {
-                            'error': f"Standalone SPOT context is incomplete or invalid: {str(e)}",
+                            'error': 'Standalone SPOT context is incomplete or invalid.',
                             'error_code': 'SPOT_STANDALONE_CONTEXT_INCOMPLETE',
                         },
                         status=status.HTTP_400_BAD_REQUEST
