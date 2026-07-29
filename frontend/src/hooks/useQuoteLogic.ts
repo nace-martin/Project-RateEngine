@@ -59,8 +59,13 @@ interface UseQuoteLogicProps {
     initialOrigin?: LocationSearchResult;
     initialDestination?: LocationSearchResult;
     user?: User | null; // Auth user
-    onSubmit: (data: QuoteFormSchemaV3) => Promise<void>;
+    onSubmit: (data: QuoteFormSchemaV3) => Promise<QuoteSubmitResult | void>;
     isEditMode?: boolean; // Skip SPOT validation when editing existing quotes
+}
+
+export interface QuoteSubmitResult {
+    quoteId: string;
+    holdNavigation?: boolean;
 }
 
 export function useQuoteLogic({
@@ -236,6 +241,11 @@ export function useQuoteLogic({
                 return;
             }
 
+            const persistedQuote = await onSubmit(data);
+            if (!persistedQuote?.quoteId) {
+                return;
+            }
+
             const originCode = (data.origin_airport || originLocation?.code || '').toUpperCase();
             const destinationCode = (data.destination_airport || destinationLocation?.code || '').toUpperCase();
             const originCountry = resolveCountryCode(originLocation, originCode);
@@ -275,8 +285,6 @@ export function useQuoteLogic({
                 const commodity = mapCargoToSPECommodity(data.cargo_type);
                 const paymentTermUpper: 'PREPAID' | 'COLLECT' =
                     data.payment_term === 'COLLECT' ? 'COLLECT' : 'PREPAID';
-                const paymentTermLower: 'prepaid' | 'collect' =
-                    paymentTermUpper === 'COLLECT' ? 'collect' : 'prepaid';
                 const selectedCounterparty = parsePricingCounterparty(data.pricing_counterparty);
                 const triggerResult = await evaluateSpotTrigger({
                     origin_country: originCountry,
@@ -294,23 +302,7 @@ export function useQuoteLogic({
                 if (triggerResult.is_spot_required && triggerResult.trigger) {
                     setSpotMode(true);
                     const spe = await createSpotEnvelope({
-                        shipment_context: {
-                            origin_country: originCountry,
-                            destination_country: destCountry,
-                            origin_code: originCode,
-                            destination_code: destinationCode,
-                            customer_name: selectedCustomer?.name || undefined,
-                            customer_id: data.customer_id,
-                            contact_id: data.contact_id || undefined,
-                            incoterm: data.incoterm || undefined,
-                            output_currency: data.output_currency || 'PGK',
-                            commodity: commodity as SPECommodity,
-                            total_weight_kg: Number(cargoMetrics.chargeableWeight || 1.0),
-                            pieces: Number(cargoMetrics.pieces || 1),
-                            service_scope: (data.service_scope || 'P2P').toLowerCase(),
-                            payment_term: paymentTermLower,
-                            missing_components: triggerResult.trigger?.missing_components,
-                        },
+                        quote_id: persistedQuote.quoteId,
                         charges: [],
                         trigger_code: triggerResult.trigger.code,
                         trigger_text: triggerResult.trigger.text,
@@ -350,7 +342,9 @@ export function useQuoteLogic({
             }
 
             setSpotMode(false);
-            await onSubmit(data);
+            if (!persistedQuote.holdNavigation) {
+                router.push(`/quotes/${persistedQuote.quoteId}`);
+            }
         } finally {
             submitLockRef.current = false;
         }

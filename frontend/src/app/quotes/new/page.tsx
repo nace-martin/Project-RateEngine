@@ -166,7 +166,7 @@ function NewQuoteContent() {
           setPendingQuoteId(response.id);
           setShowMissingRatesModal(true);
           setIsSubmitting(false);
-          return;
+          return { quoteId: response.id, holdNavigation: true };
         }
       }
 
@@ -176,7 +176,7 @@ function NewQuoteContent() {
         variant: "success",
       });
 
-      router.push(`/quotes/${response.id}`);
+      return { quoteId: response.id };
     } catch (error: unknown) {
       console.error("API Error:", error);
       const message = error instanceof Error ? error.message : "An unexpected error occurred.";

@@ -250,7 +250,7 @@ export interface SPEIntakeSafety {
 
 /** Create SPE request */
 export interface CreateSPERequest {
-    shipment_context: SPEShipmentContext;
+    shipment_context?: Partial<SPEShipmentContext>;
     charges: Omit<SPEChargeLine, 'id'>[];
     conditions?: Partial<SPEConditions>;
     trigger_code: string;
@@ -296,6 +296,7 @@ export interface TemplateValidation {
 /** Full SPE response from API */
 export interface SpotPricingEnvelope {
     id: string;
+    quote_id?: string | null;
     status: SPEStatus;
     shipment: SPEShipmentContext;
     shipment_context_hash?: string;

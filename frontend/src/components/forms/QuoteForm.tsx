@@ -21,6 +21,7 @@ import { SummaryCard, SummaryStack, type SummaryLine } from "@/components/ui/sum
 import { Button } from "@/components/ui/button";
 import { Form } from "@/components/ui/form";
 import { useQuoteLogic } from "@/hooks/useQuoteLogic";
+import type { QuoteSubmitResult } from "@/hooks/useQuoteLogic";
 import {
   formatIncoterm,
   formatPaymentTerm,
@@ -65,7 +66,7 @@ interface QuoteFormProps {
   initialOrigin?: LocationSearchResult;
   initialDestination?: LocationSearchResult;
   user?: User | null;
-  onSubmit: (data: QuoteFormSchemaV3) => Promise<void>;
+  onSubmit: (data: QuoteFormSchemaV3) => Promise<QuoteSubmitResult | void>;
   isSubmitting?: boolean;
   serverError?: string | null;
   isEditMode?: boolean;

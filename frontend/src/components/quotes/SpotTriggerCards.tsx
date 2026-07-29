@@ -9,6 +9,7 @@ export interface SpotWorkflowRequiredCardProps {
   spotLaunchError: string | null;
   onLaunchSpot: () => void | Promise<void>;
   onReturnToEdit: () => void;
+  contextChanged?: boolean;
 }
 
 export function SpotWorkflowRequiredCard({
@@ -17,14 +18,16 @@ export function SpotWorkflowRequiredCard({
   spotLaunchError,
   onLaunchSpot,
   onReturnToEdit,
+  contextChanged = false,
 }: SpotWorkflowRequiredCardProps) {
   return (
     <Card className="border-amber-200 bg-amber-50/40">
       <CardHeader>
         <CardTitle className="text-lg text-amber-800">SPOT Workflow Required</CardTitle>
         <CardDescription>
-          This quote is incomplete and is not linked to an active SPOT envelope yet.
-          Launch the current SPOT workflow from here, or return to edit if you need to refresh the quote inputs.
+          {contextChanged
+            ? "The linked SPOT review uses older shipment details. Start a new SPOT review from the current Quote."
+            : "This quote is incomplete and is not linked to an active SPOT envelope yet. Launch the current SPOT workflow from here, or return to edit if you need to refresh the quote inputs."}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex items-center justify-between gap-4">
@@ -49,7 +52,7 @@ export function SpotWorkflowRequiredCard({
                 Opening SPOT...
               </>
             ) : (
-              "Open SPOT Workflow"
+              contextChanged ? "Start New SPOT Review" : "Open SPOT Workflow"
             )}
           </Button>
         </div>

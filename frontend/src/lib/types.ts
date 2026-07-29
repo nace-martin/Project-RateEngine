@@ -538,7 +538,13 @@ export interface V3QuoteComputeResponse {
   branding?: QuoteBrandingRef | null;
   mode: string;
   shipment_type: string; // The backend calculates and returns this
-  spot_negotiation?: { id: string } | null;
+  spot_negotiation?: {
+    id: string;
+    context_status?: "CURRENT" | "SPOT_QUOTE_CONTEXT_CHANGED" | "SPOT_QUOTE_DIRECTION_CONFLICT" | "SPOT_QUOTE_COVERAGE_UNAVAILABLE";
+    can_reopen?: boolean;
+    message?: string | null;
+    details?: Record<string, unknown>;
+  } | null;
   incoterm: string;
   payment_term: string;
   service_scope: string;
