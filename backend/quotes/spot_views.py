@@ -83,6 +83,13 @@ from quotes.services.spot_learning_service import (
     record_manual_resolution_event,
     record_conditional_resolution_event,
 )
+from quotes.services.spot_quote_context import (
+    SpotQuoteContextError,
+    build_trusted_quote_context,
+    derive_missing_components,
+    trusted_context_hash,
+    validate_client_context,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -1504,14 +1511,20 @@ class SpotEnvelopeListCreateAPIView(APIView):
                     quote = get_quote_for_user(request.user, quote_id)
                 except (ValueError, AttributeError, TypeError, DjangoValidationError):
                      return Response(
-                        {'error': f"Invalid quote_id format: {quote_id}"},
+                        {
+                            'error': f"Invalid quote_id format: {quote_id}",
+                            'error_code': 'SPOT_QUOTE_ID_INVALID',
+                        },
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 except Exception as e:
                     from django.http import Http404
                     if isinstance(e, Http404):
                         return Response(
-                            {'error': f"Quote not found: {quote_id}"},
+                            {
+                                'error': f"Quote not found: {quote_id}",
+                                'error_code': 'SPOT_QUOTE_NOT_FOUND',
+                            },
                             status=status.HTTP_404_NOT_FOUND
                         )
                     raise e
@@ -1519,12 +1532,17 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 from quotes.state_machine import is_quote_editable
                 if not is_quote_editable(quote):
                     return Response(
-                        {'error': f"Cannot create SPE for locked quote ({quote.status})."},
+                        {
+                            'error': f"Cannot create SPE for locked quote ({quote.status}).",
+                            'error_code': 'SPOT_QUOTE_NOT_EDITABLE',
+                        },
                         status=status.HTTP_403_FORBIDDEN
                     )
             
             # Validate required fields
-            required = ['shipment_context', 'trigger_code', 'trigger_text']
+            required = ['trigger_code', 'trigger_text']
+            if quote is None:
+                required.append('shipment_context')
             for field in required:
                 if field not in data:
                     return Response(
@@ -1537,28 +1555,72 @@ class SpotEnvelopeListCreateAPIView(APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
             
-            if not isinstance(data['shipment_context'], dict):
+            client_context = data.get('shipment_context') or {}
+            if not isinstance(client_context, dict):
                 return Response(
                     {'error': 'shipment_context must be a dictionary'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Create DB record
-            try:
-                ctx = _normalize_shipment_context(data['shipment_context'])
-            except Exception as e:
-                return Response(
-                    {'error': f"Failed to normalize shipment context: {str(e)}"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
             if quote is not None:
-                ctx.setdefault("customer_id", str(quote.customer_id) if quote.customer_id else None)
-                ctx.setdefault("contact_id", str(quote.contact_id) if quote.contact_id else None)
-                ctx.setdefault("incoterm", quote.incoterm)
-                ctx.setdefault("service_scope", quote.service_scope)
-                ctx.setdefault("payment_term", str(quote.payment_term).upper() if quote.payment_term else None)
-                ctx.setdefault("output_currency", quote.output_currency)
+                try:
+                    ctx, missing_context = build_trusted_quote_context(quote)
+                except SpotQuoteContextError as exc:
+                    return Response(
+                        {
+                            'error': exc.message,
+                            'error_code': exc.code,
+                            'details': exc.details,
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if missing_context:
+                    return Response(
+                        {
+                            'error': 'Persisted Quote is missing trusted context required for SPOT intake.',
+                            'error_code': 'SPOT_QUOTE_CONTEXT_INCOMPLETE',
+                            'missing_fields': missing_context,
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                missing_components = derive_missing_components(ctx)
+                if missing_components is None:
+                    return Response(
+                        {
+                            'error': 'Unable to derive current SPOT rate coverage from the persisted Quote.',
+                            'error_code': 'SPOT_QUOTE_COVERAGE_UNAVAILABLE',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                ctx["missing_components"] = missing_components
+                conflicts = validate_client_context(client_context, ctx)
+                if conflicts:
+                    return Response(
+                        {
+                            'error': 'Client shipment context conflicts with the persisted Quote.',
+                            'error_code': 'SPOT_QUOTE_CONTEXT_CONFLICT',
+                            'conflicts': conflicts,
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+            else:
+                try:
+                    ctx = _normalize_shipment_context(client_context)
+                    SPEShipmentContext(
+                        **{
+                            **ctx,
+                            "service_scope": ctx["service_scope"].lower(),
+                            "payment_term": ctx.get("payment_term", "").lower() or None,
+                        }
+                    )
+                except Exception as e:
+                    return Response(
+                        {
+                            'error': f"Standalone SPOT context is incomplete or invalid: {str(e)}",
+                            'error_code': 'SPOT_STANDALONE_CONTEXT_INCOMPLETE',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
             if (
                 not ctx.get("payment_term")
@@ -1587,6 +1649,18 @@ class SpotEnvelopeListCreateAPIView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            context_hash = trusted_context_hash(ctx)
+            if quote is not None and not data.get("charges"):
+                retry = get_spes_for_user(request.user, _spe_queryset()).filter(
+                    quote=quote,
+                    status=SpotPricingEnvelopeDB.Status.DRAFT,
+                    shipment_context_hash=context_hash,
+                    spot_trigger_reason_code=data['trigger_code'],
+                    spot_trigger_reason_text=data['trigger_text'],
+                ).order_by('-created_at', '-id').first()
+                if retry is not None:
+                    return Response(SpotPricingEnvelopeSerializer(retry).data, status=status.HTTP_200_OK)
+
             try:
                 spe_db = SpotPricingEnvelopeDB.objects.create(
                     status='draft',
@@ -1597,6 +1671,10 @@ class SpotEnvelopeListCreateAPIView(APIView):
                     created_by=request.user,
                     expires_at=now + timedelta(hours=validity_hours),
                     quote=quote,
+                    owner=quote.owner if quote is not None else None,
+                    organization=quote.organization if quote is not None else None,
+                    branch=quote.branch if quote is not None else None,
+                    department=quote.department if quote is not None else None,
                 )
             except Exception as e:
                 logger.error("Database error creating SPE: %s", str(e), exc_info=True)

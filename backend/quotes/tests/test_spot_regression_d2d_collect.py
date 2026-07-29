@@ -1,7 +1,7 @@
 from rest_framework.test import APITestCase, APIClient
 from django.contrib.auth import get_user_model
 from rest_framework import status
-from parties.models import Company
+from parties.models import Company, Contact
 from core.models import Country
 from core.tests.helpers import create_location
 from quotes.models import Quote
@@ -19,6 +19,12 @@ class SPOTRegressionD2DCollectTests(APITestCase):
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
         self.customer = Company.objects.create(name="Seed Customer Pty Ltd")
+        self.contact = Contact.objects.create(
+            company=self.customer,
+            first_name="Seed",
+            last_name="Contact",
+            email="seed@example.com",
+        )
         
         # Create Countries
         self.cn = Country.objects.create(code="CN", name="China")
@@ -57,6 +63,7 @@ class SPOTRegressionD2DCollectTests(APITestCase):
         # Create a real quote
         quote = Quote.objects.create(
             customer=self.customer,
+            contact=self.contact,
             mode="AIR",
             shipment_type="IMPORT",
             origin_location=self.origin,
@@ -64,7 +71,17 @@ class SPOTRegressionD2DCollectTests(APITestCase):
             status="DRAFT",
             service_scope="D2D",
             payment_term="COLLECT",
+            incoterm="EXW",
             commodity_code="GCR",
+            request_details_json={
+                "dimensions": [{
+                    "pieces": 1,
+                    "length_cm": 100,
+                    "width_cm": 100,
+                    "height_cm": 60,
+                    "gross_weight_kg": 100,
+                }],
+            },
             created_by=self.user
         )
 

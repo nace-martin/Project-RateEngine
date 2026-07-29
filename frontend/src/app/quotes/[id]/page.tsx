@@ -73,7 +73,7 @@ export default function QuoteDetailPage() {
     const currentStatus = getEffectiveQuoteStatus(quote.status, quote.valid_until);
     if (currentStatus !== "INCOMPLETE") return null;
     const existingSpotEnvelopeId = quote.spot_negotiation?.id;
-    if (!existingSpotEnvelopeId) return null;
+    if (!existingSpotEnvelopeId || quote.spot_negotiation?.can_reopen === false) return null;
     const params = buildSpotWorkflowParams(quote);
     params.set("returnTo", `/quotes/${quote.id}`);
     return `/quotes/spot/${existingSpotEnvelopeId}?${params.toString()}`;
@@ -127,7 +127,10 @@ export default function QuoteDetailPage() {
     }
 
     const currentStatus = getEffectiveQuoteStatus(quote.status, quote.valid_until);
-    if (currentStatus !== "INCOMPLETE" || quote.spot_negotiation?.id) {
+    if (
+      currentStatus !== "INCOMPLETE"
+      || (quote.spot_negotiation?.id && quote.spot_negotiation.can_reopen !== false)
+    ) {
       setSpotTriggerResult(null);
       setSpotTriggerChecking(false);
       setSpotTriggerChecked(false);
@@ -186,19 +189,7 @@ export default function QuoteDetailPage() {
       }
 
       const spe = await createSpotEnvelope({
-        shipment_context: {
-          origin_country: context.originCountry,
-          destination_country: context.destinationCountry,
-          origin_code: context.originCode,
-          destination_code: context.destinationCode,
-          customer_name: context.customerName,
-          commodity: context.commodity,
-          total_weight_kg: context.chargeableWeight,
-          pieces: context.pieces,
-          service_scope: context.serviceScope.toLowerCase(),
-          payment_term: context.paymentTerm === "COLLECT" ? "collect" : "prepaid",
-          missing_components: triggerResult.trigger.missing_components,
-        },
+        quote_id: quote.id,
         charges: [],
         trigger_code: triggerResult.trigger.code,
         trigger_text: triggerResult.trigger.text,
@@ -215,6 +206,8 @@ export default function QuoteDetailPage() {
       setSpotLaunching(false);
     }
   };
+
+  const spotContextChanged = quote?.spot_negotiation?.can_reopen === false;
 
 
   if (loading) {
@@ -455,9 +448,10 @@ export default function QuoteDetailPage() {
             <SpotWorkflowRequiredCard
               quote={quote}
               spotLaunching={spotLaunching}
-              spotLaunchError={spotLaunchError}
+              spotLaunchError={spotContextChanged ? quote.spot_negotiation?.message || null : spotLaunchError}
               onLaunchSpot={handleLaunchSpotWorkflow}
               onReturnToEdit={() => router.push(`/quotes/${quote.id}/edit`)}
+              contextChanged={spotContextChanged}
             />
           ) : canEditQuotes ? (
             <IncompleteQuoteCard
@@ -520,7 +514,7 @@ async function evaluateLatestSpotTrigger(
 }
 
 function buildQuoteEditHref(quote: V3QuoteComputeResponse): string {
-  if (quote.spot_negotiation?.id) {
+  if (quote.spot_negotiation?.id && quote.spot_negotiation.can_reopen !== false) {
     const params = buildSpotWorkflowParams(quote);
     params.set("returnTo", `/quotes/${quote.id}`);
     return `/quotes/spot/${quote.spot_negotiation.id}?${params.toString()}`;
@@ -532,6 +526,9 @@ function buildQuoteEditHref(quote: V3QuoteComputeResponse): string {
 function buildSpotWorkflowParams(quote: V3QuoteComputeResponse): URLSearchParams {
   const context = buildSpotResumeContext(quote);
   return new URLSearchParams({
+    origin_code: context.originCode,
+    dest_code: context.destinationCode,
+    commodity: context.commodity,
     customer_name: context.customerName,
     service_scope: context.serviceScope,
     payment_term: context.paymentTerm,

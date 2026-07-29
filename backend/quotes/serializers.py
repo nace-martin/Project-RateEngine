@@ -19,9 +19,69 @@ from quotes.intake_safety import (
     normalize_source_analysis_summary,
 )
 from quotes.quote_result_contract import build_quote_result_from_quote
+from quotes.services.spot_quote_context import (
+    SpotQuoteContextError,
+    build_trusted_quote_context,
+    derive_missing_components,
+    trusted_context_hash,
+)
 # --- END IMPORTS ---
 
 # --- V3 Serializers ---
+
+SPOT_QUOTE_CONTEXT_CHANGED_MESSAGE = (
+    "The shipment details changed after this SPOT review was created. "
+    "Start a new SPOT review using the updated Quote details."
+)
+
+
+def _spot_negotiation_payload(quote):
+    envelopes = getattr(quote, "spot_envelopes", None)
+    if not envelopes:
+        return None
+    latest = envelopes.order_by("-created_at", "-id").first()
+    if not latest:
+        return None
+    try:
+        context, missing = build_trusted_quote_context(quote)
+    except SpotQuoteContextError as exc:
+        return {
+            "id": str(latest.id),
+            "context_status": exc.code,
+            "can_reopen": False,
+            "message": exc.message,
+            "details": exc.details,
+        }
+    if missing:
+        return {
+            "id": str(latest.id),
+            "context_status": "SPOT_QUOTE_CONTEXT_CHANGED",
+            "can_reopen": False,
+            "message": SPOT_QUOTE_CONTEXT_CHANGED_MESSAGE,
+            "details": {"missing_fields": missing},
+        }
+    missing_components = derive_missing_components(context)
+    if missing_components is None:
+        return {
+            "id": str(latest.id),
+            "context_status": "SPOT_QUOTE_COVERAGE_UNAVAILABLE",
+            "can_reopen": False,
+            "message": "Current SPOT rate coverage could not be verified. Start a new SPOT review.",
+        }
+    context["missing_components"] = missing_components
+    if trusted_context_hash(context) != latest.shipment_context_hash:
+        return {
+            "id": str(latest.id),
+            "context_status": "SPOT_QUOTE_CONTEXT_CHANGED",
+            "can_reopen": False,
+            "message": SPOT_QUOTE_CONTEXT_CHANGED_MESSAGE,
+        }
+    return {
+        "id": str(latest.id),
+        "context_status": "CURRENT",
+        "can_reopen": True,
+        "message": None,
+    }
 
 class V3DimensionInputSerializer(serializers.Serializer):
     """Serializer for the 'dimensions' list in the compute request."""
@@ -454,13 +514,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
         return ", ".join(sorted(providers))
 
     def get_spot_negotiation(self, obj):
-        spe = getattr(obj, 'spot_envelopes', None)
-        if not spe:
-            return None
-        latest = spe.order_by('-created_at', '-id').first()
-        if not latest:
-            return None
-        return {'id': str(latest.id)}
+        return _spot_negotiation_payload(obj)
 
     def get_branding(self, obj):
         request = self.context.get("request")
@@ -815,6 +869,7 @@ class SPEAcknowledgementSerializer(serializers.ModelSerializer):
         return str(obj.acknowledged_by_id) if obj.acknowledged_by_id else None
 
 class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
+    quote_id = serializers.UUIDField(read_only=True)
     customer_name = serializers.SerializerMethodField()
     shipment = serializers.JSONField(source='shipment_context_json')
     conditions = serializers.JSONField(source='conditions_json')
@@ -832,7 +887,7 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
     class Meta:
         model = SpotPricingEnvelopeDB
         fields = (
-            'id', 'status', 'customer_name', 'shipment', 'conditions',
+            'id', 'quote_id', 'status', 'customer_name', 'shipment', 'conditions',
             'spot_trigger_reason_code', 'spot_trigger_reason_text',
             'created_at', 'expires_at', 'is_expired',
             'shipment_context_hash', 'context_integrity_valid',
