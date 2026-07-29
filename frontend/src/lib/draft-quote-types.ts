@@ -138,6 +138,7 @@ export interface DraftQuote {
         finalized_by: number | null;
         finalized_at: string | null;
         remaining_blockers: number;
+        blockers: Array<{ code: string; message: string; [key: string]: unknown }>;
         available_actions: string[];
     };
 }
@@ -182,6 +183,8 @@ export interface DraftQuoteFinalizeResponse {
     status: 'accepted' | 'rejected';
     review_status: 'draft' | 'in_review' | 'finalized';
     remaining_blockers: number;
+    error_code?: string | null;
+    blockers: Array<{ code: string; message: string; [key: string]: unknown }>;
     finalized_by?: number | null;
     finalized_at?: string | null;
     message: string;

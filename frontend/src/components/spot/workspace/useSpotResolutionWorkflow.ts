@@ -638,6 +638,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
                         finalized_by: result.finalized_by ?? null,
                         finalized_at: result.finalized_at ?? null,
                         remaining_blockers: result.remaining_blockers,
+                        blockers: result.blockers,
                         available_actions: ["reopen"]
                     }
                 });
@@ -654,6 +655,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
                     finalized_by: null,
                     finalized_at: new Date().toISOString(),
                     remaining_blockers: 0,
+                    blockers: [],
                     available_actions: ["reopen"]
                 }
             });

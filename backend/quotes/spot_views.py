@@ -1954,8 +1954,8 @@ class SpotChargeLineConditionalResolutionAPIView(APIView):
 
     Resolve a conditional-charge blocker without erasing the original conditional
     audit flag. Supported actions:
-    - KEEP: acknowledge the conditional charge and leave it in the quote
-    - REMOVE: delete the charge line from the draft SPE
+    - KEEP: quote owner acknowledges unresolved applicability and excludes it from the firm total
+    - REMOVE: manager/admin confirms removal from the draft SPE
     """
 
     permission_classes = [IsAuthenticated]
@@ -1988,6 +1988,23 @@ class SpotChargeLineConditionalResolutionAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if action == "KEEP" and request.user.id not in {spe_db.owner_id, spe_db.created_by_id}:
+            return Response(
+                {
+                    "error": "Only the quote owner can acknowledge unresolved conditional applicability.",
+                    "error_code": "QUOTE_OWNER_ACKNOWLEDGEMENT_REQUIRED",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if action == "REMOVE" and not _user_is_manager_or_admin(request.user):
+            return Response(
+                {
+                    "error": "Manager authority is required to remove a conditional charge.",
+                    "error_code": "MANAGER_OVERRIDE_REQUIRED",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # Record learning event BEFORE potential delete (REMOVE deletes the line)
         try:
             record_conditional_resolution_event(
@@ -2003,15 +2020,35 @@ class SpotChargeLineConditionalResolutionAPIView(APIView):
             charge_line.conditional_acknowledged = True
             charge_line.conditional_acknowledged_by = request.user
             charge_line.conditional_acknowledged_at = timezone.now()
+            charge_line.exclude_from_totals = True
+            conditional_note = (
+                "Applicability remains unresolved; excluded from the current firm total."
+            )
+            if conditional_note not in (charge_line.note or ""):
+                charge_line.note = " ".join(
+                    value for value in (charge_line.note, conditional_note) if value
+                )
             charge_line.save(
                 update_fields=[
                     "conditional_acknowledged",
                     "conditional_acknowledged_by",
                     "conditional_acknowledged_at",
+                    "exclude_from_totals",
+                    "note",
                 ]
             )
             if charge_line.source_batch:
                 _sync_batch_analysis_summary(charge_line.source_batch)
+                charge_line.source_batch.refresh_from_db()
+                charge_line.source_batch.analysis_summary_json = mark_source_analysis_review(
+                    charge_line.source_batch.analysis_summary_json,
+                    reviewed_safe_to_quote=True,
+                    reviewed_by_user_id=str(request.user.id),
+                    reviewed_at=timezone.now().isoformat(),
+                    review_note=conditional_note,
+                    source_batch_id=str(charge_line.source_batch.id),
+                )
+                charge_line.source_batch.save(update_fields=["analysis_summary_json", "updated_at"])
         elif action == "REMOVE":
             batch = charge_line.source_batch
             charge_line.delete()
@@ -3158,6 +3195,7 @@ class SpotSourceBatchReviewAPIView(APIView):
             source_finding_id=source_finding_id,
             resolution_action=resolution_action,
             charge_line_id=charge_line_id,
+            source_batch_id=str(batch.id),
         )
         batch.save(update_fields=["analysis_summary_json", "updated_at"])
 
@@ -3638,6 +3676,7 @@ class SpotEnvelopeDraftQuoteFinalizeAPIView(APIView):
 
         response_payload = DraftQuoteFinalizeResponseSchema(
             status="accepted" if accepted else "rejected",
+            error_code=None if accepted else "DRAFT_QUOTE_FINALIZATION_BLOCKED",
             idempotency_key=payload.idempotency_key,
             envelope_id=spe_db.id,
             review_status=state.get("status", "draft"),

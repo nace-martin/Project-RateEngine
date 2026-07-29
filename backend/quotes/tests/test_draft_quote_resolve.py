@@ -10,6 +10,7 @@ from rest_framework.test import APIClient
 from accounts.models import Role, UserMembership
 from parties.models import Branch, Department, Organization
 from pricing_v4.models import ProductCode, ProductCodeCreationRequest
+from quotes.intake_safety import normalize_source_analysis_summary
 from quotes.spot_models import DraftQuoteDecisionDB, SPEChargeLineDB, SPESourceBatchDB, SpotPricingEnvelopeDB
 
 
@@ -440,7 +441,7 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("blanket source approval", response.data["error"])
 
-    def test_low_confidence_source_finding_does_not_block_finalize(self):
+    def test_low_confidence_source_finding_blocks_until_resolved(self):
         self.batch.analysis_summary_json = {
             **self.batch.analysis_summary_json,
             "ai_used": True,
@@ -452,9 +453,135 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self._resolve_all_blockers()
         self.client.force_authenticate(user=self.sales)
         read = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
-        self.assertFalse([item for item in read.data["review_queue"] if item["type"] == "source_finding"])
+        findings = [item for item in read.data["review_queue"] if item["type"] == "source_finding"]
+        self.assertEqual(len(findings), 1)
         finalize = self._finalize()
-        self.assertEqual(finalize.status_code, status.HTTP_200_OK)
+        self.assertEqual(finalize.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(finalize.data["error_code"], "DRAFT_QUOTE_FINALIZATION_BLOCKED")
+        self.assertTrue(finalize.data["blockers"])
+
+        resolved = self._post([self._decision(
+            "resolve_source_finding",
+            target_id=findings[0]["id"],
+            details={
+                "source_batch_id": findings[0]["source_batch_id"],
+                "source_finding_id": findings[0]["source_finding_id"],
+                "action": "resolved_in_workspace",
+                "review_note": "Verified the low-confidence extraction against the supplier source.",
+                "charge_line_id": str(self.charge.id),
+            },
+            decision_id="resolve-low-confidence",
+        )])
+        self.assertEqual(resolved.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._finalize().status_code, status.HTTP_200_OK)
+
+    def test_conditional_acknowledgement_excludes_charge_and_clears_only_its_blocker(self):
+        self._resolve_all_blockers()
+        self.batch.analysis_summary_json = {
+            **self.batch.analysis_summary_json,
+            "ai_used": True,
+            "can_proceed": True,
+            "imported_charge_count": 1,
+            "low_confidence_line_count": 1,
+        }
+        self.batch.save(update_fields=["analysis_summary_json"])
+        self.charge.conditional = True
+        self.charge.exclude_from_totals = False
+        self.charge.note = "Export License: USD 50 (if application)"
+        self.charge.save(update_fields=["conditional", "exclude_from_totals", "note"])
+
+        blocked = self._finalize()
+        self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST)
+        initial_codes = {item["code"] for item in blocked.data["blockers"]}
+        self.assertIn("CONDITIONAL_ACKNOWLEDGEMENT_REQUIRED", initial_codes)
+        self.assertIn("SOURCE_REVIEW_NOT_SAFE", initial_codes)
+
+        self.client.force_authenticate(user=self.sales)
+        acknowledged = self.client.patch(
+            f"/api/v3/spot/envelopes/{self.envelope.id}/charges/{self.charge.id}/conditional-resolution/",
+            {"action": "KEEP"},
+            format="json",
+        )
+        self.assertEqual(acknowledged.status_code, status.HTTP_200_OK)
+        self.charge.refresh_from_db()
+        self.assertTrue(self.charge.conditional)
+        self.assertTrue(self.charge.conditional_acknowledged)
+        self.assertTrue(self.charge.exclude_from_totals)
+        self.assertIn("Export License: USD 50 (if application)", self.charge.note)
+        self.assertIn("excluded from the current firm total", self.charge.note)
+
+        read = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        conditional = next(item for item in read.data["suggested_charges"] if item["id"] == str(self.charge.id))
+        finding = next(item for item in read.data["review_queue"] if item["type"] == "source_finding")
+        self.assertFalse(conditional["include_in_totals"])
+        self.assertTrue(
+            any(
+                "Export License: USD 50 (if application)" in note
+                for note in conditional["conditions"]
+            )
+        )
+        self.batch.refresh_from_db()
+        self.assertFalse(self.batch.analysis_summary_json["reviewed_safe_to_quote"])
+
+        still_blocked = self._finalize()
+        remaining_codes = {item["code"] for item in still_blocked.data["blockers"]}
+        self.assertEqual(still_blocked.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertNotIn("CONDITIONAL_ACKNOWLEDGEMENT_REQUIRED", remaining_codes)
+        self.assertIn("SOURCE_REVIEW_NOT_SAFE", remaining_codes)
+
+        create_quote = self.client.post(
+            f"/api/v3/spot/envelopes/{self.envelope.id}/create-quote/",
+            {"quote_request": {}},
+            format="json",
+        )
+        self.assertEqual(create_quote.status_code, status.HTTP_400_BAD_REQUEST)
+
+        resolved = self._post([self._decision(
+            "resolve_source_finding",
+            target_id=finding["id"],
+            details={
+                "source_batch_id": finding["source_batch_id"],
+                "source_finding_id": finding["source_finding_id"],
+                "action": "resolved_in_workspace",
+                "review_note": "Verified the low-confidence charge against the supplier source.",
+                "charge_line_id": str(self.charge.id),
+            },
+            decision_id="resolve-low-confidence-after-conditional",
+        )])
+        self.assertEqual(resolved.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._finalize().status_code, status.HTTP_200_OK)
+
+    def test_stale_source_finding_resolution_requires_reconfirmation(self):
+        self.batch.analysis_summary_json = {
+            **self.batch.analysis_summary_json,
+            "ai_used": True,
+            "can_proceed": True,
+            "imported_charge_count": 1,
+            "critic_missed_charges": ["Ex-work charge"],
+        }
+        self.batch.save(update_fields=["analysis_summary_json"])
+        self.client.force_authenticate(user=self.sales)
+        first = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        finding = next(item for item in first.data["review_queue"] if item["type"] == "source_finding")
+        self.batch.refresh_from_db()
+        summary = normalize_source_analysis_summary(self.batch.analysis_summary_json)
+        summary["source_findings"][0].update({
+            "status": "resolved",
+            "review_note": "Historical generic decision.",
+            "resolved_source_batch_id": str(uuid.uuid4()),
+            "resolved_finding_identity": summary["source_findings"][0]["finding_identity"],
+        })
+        summary["reviewed_safe_to_quote"] = True
+        summary["review_note"] = "Historical generic decision."
+        self.batch.analysis_summary_json = summary
+        self.batch.save(update_fields=["analysis_summary_json"])
+
+        reread = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        stale = next(item for item in reread.data["review_queue"] if item["type"] == "source_finding")
+        self.assertTrue(stale["stale_resolution"])
+        blocked = self._finalize()
+        self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn(finding["source_finding_id"], {item.get("source_finding_id") for item in blocked.data["blockers"]})
 
     def test_map_to_product_code_replay_is_idempotent(self):
         key = uuid.uuid4()

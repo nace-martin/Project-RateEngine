@@ -387,7 +387,10 @@ def _resolve_source_finding(envelope, decision, user):
     current = normalize_source_analysis_summary(batch.analysis_summary_json)
     if not any(item.get("id") == finding_id for item in current.get("source_findings", [])):
         return "rejected", "Source finding was not found for this source batch.", "SOURCE_FINDING_NOT_FOUND"
-    if not any(item.get("id") == finding_id for item in unresolved_source_findings(current)):
+    if not any(
+        item.get("id") == finding_id
+        for item in unresolved_source_findings(current, source_batch_id=str(batch.id))
+    ):
         return "skipped", "Source finding was already resolved.", None
 
     charge_line_id = details.get("charge_line_id")
@@ -403,6 +406,7 @@ def _resolve_source_finding(envelope, decision, user):
         source_finding_id=finding_id,
         resolution_action=action,
         charge_line_id=str(charge_line_id) if charge_line_id else None,
+        source_batch_id=str(batch.id),
     )
     batch.save(update_fields=["analysis_summary_json", "updated_at"])
     return "accepted", "Source finding resolved.", None

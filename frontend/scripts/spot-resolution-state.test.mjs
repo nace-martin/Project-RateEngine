@@ -305,6 +305,18 @@ console.log("✓ Initial state created successfully.");
     assert.equal(selectChecklistNoUnknown(resolvedState), true);
     assert.equal(selectChecklistProductCodesVerified(resolvedState), true);
     assert.equal(selectCanFinishReview(resolvedState), true);
+    const backendBlockedState = {
+        ...resolvedState,
+        reviewSession: {
+            ...resolvedState.reviewSession,
+            remaining_blockers: 2,
+            blockers: [
+                { code: "SOURCE_REVIEW_NOT_SAFE", message: "Imported source review is not marked safe to quote." },
+                { code: "CONDITIONAL_ACKNOWLEDGEMENT_REQUIRED", message: "Conditional charge acknowledgement is required." }
+            ]
+        }
+    };
+    assert.equal(selectCanFinishReview(backendBlockedState), false);
     assert.equal(selectNextStepGuidance(resolvedState), "Review the remaining commercial term before finishing.");
 
     // Test multiple currencies totals splitting
