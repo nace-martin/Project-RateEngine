@@ -135,7 +135,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId, en
                     </div>
                     <div className="bg-slate-950 border border-slate-800 px-4 py-2.5 rounded-xl shrink-0 text-center sm:text-right">
                         <span className="text-xs text-slate-500 block">Remaining Blockers</span>
-                        <span className="text-lg font-bold text-amber-400">{combinedUnresolved.length} Issues Left</span>
+                        <span className="text-lg font-bold text-amber-400">{Math.max(combinedUnresolved.length, reviewSession.remaining_blockers)} Issues Left</span>
                     </div>
                 </div>
 
@@ -616,6 +616,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId, en
                     checklistNoUnknown={checklistNoUnknown}
                     checklistProductCodesVerified={checklistProductCodesVerified}
                     unresolvedCount={combinedUnresolved.length}
+                    blockerDetails={reviewSession.blockers}
                     canFinishReview={canFinishReview}
                     canUsePrototypeOverride={canUsePrototypeOverride}
                     isLive={isLive}

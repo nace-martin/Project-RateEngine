@@ -398,6 +398,12 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         )
 
         response = self.client.patch(conditional_url, {"action": "REMOVE"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.json()["error_code"], "MANAGER_OVERRIDE_REQUIRED")
+
+        self.user.role = "manager"
+        self.user.save(update_fields=["role"])
+        response = self.client.patch(conditional_url, {"action": "REMOVE"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.json()["charges"], [])
         self.assertFalse(SPEChargeLineDB.objects.filter(id=charge_line_id).exists())

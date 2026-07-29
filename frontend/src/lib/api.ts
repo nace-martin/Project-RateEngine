@@ -851,7 +851,16 @@ export async function finalizeDraftQuoteReview(
 
   const data = await response.json();
   if (!response.ok) {
-    throw new Error(data?.message || data?.error || 'Failed to finalize draft quote review.');
+    const blockers = Array.isArray(data?.blockers)
+      ? data.blockers.map((item: { code?: string; message?: string }) =>
+          [item.code, item.message].filter(Boolean).join(': ')
+        ).join('; ')
+      : '';
+    throw new Error(
+      [data?.error_code, data?.message || data?.error, blockers]
+        .filter(Boolean)
+        .join(' — ') || 'Failed to finalize draft quote review.'
+    );
   }
   return data as DraftQuoteFinalizeResponse;
 }

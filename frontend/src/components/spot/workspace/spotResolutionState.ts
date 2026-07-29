@@ -66,6 +66,7 @@ export interface SpotResolutionState {
         finalized_by: number | null;
         finalized_at: string | null;
         remaining_blockers: number;
+        blockers: Array<{ code: string; message: string; [key: string]: unknown }>;
         available_actions: string[];
     };
     activeIssueId: string | null;
@@ -115,7 +116,7 @@ export type SpotResolutionAction =
     | { type: "ADD_UNKNOWN_AS_CHARGE"; payload: { itemId: string; newChargeId: string; chargeName: string; chargeBucket: string; chargeCurrency: string; chargeAmount: number; chargeUnit: string; chargeProductCode: string; evidence: Evidence | null } }
     | { type: "TOGGLE_INCLUDE_IN_TOTALS"; payload: { chargeId: string } }
     | { type: "UNDO_DECISION"; payload: { decisionId: string } }
-    | { type: "FINALIZE_REVIEW"; payload: { status: "draft" | "finalized" | "in_review"; finalized_by: number | null; finalized_at: string | null; remaining_blockers: number; available_actions: string[] } }
+    | { type: "FINALIZE_REVIEW"; payload: { status: "draft" | "finalized" | "in_review"; finalized_by: number | null; finalized_at: string | null; remaining_blockers: number; blockers: Array<{ code: string; message: string; [key: string]: unknown }>; available_actions: string[] } }
     | { type: "DISMISS_ACTION_MESSAGE" }
     | { type: "TOGGLE_PROTOTYPE_OVERRIDE" }
     | { type: "TOGGLE_HELP_TEXT" }
@@ -135,6 +136,7 @@ export function createSpotResolutionState(initialData: DraftQuote): SpotResoluti
             finalized_by: null,
             finalized_at: null,
             remaining_blockers: reviewQueue.length,
+            blockers: [],
             available_actions: []
         },
         activeIssueId: reviewQueue[0]?.id || initialData.unclassified_items?.[0]?.id || null,
@@ -473,6 +475,7 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
                     finalized_by: action.payload.finalized_by,
                     finalized_at: action.payload.finalized_at,
                     remaining_blockers: action.payload.remaining_blockers,
+                    blockers: action.payload.blockers,
                     available_actions: action.payload.available_actions
                 },
                 actionMessage: "Draft Quote review finalized and locked."
@@ -584,7 +587,8 @@ export function selectCanFinishReview(state: SpotResolutionState): boolean {
     return (
         selectChecklistIssuesResolved(state) &&
         selectChecklistNoUnknown(state) &&
-        selectChecklistProductCodesVerified(state)
+        selectChecklistProductCodesVerified(state) &&
+        state.reviewSession.blockers.length === 0
     );
 }
 

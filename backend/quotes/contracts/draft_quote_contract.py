@@ -100,6 +100,7 @@ class DraftQuoteReviewSessionSchema(BaseModel):
     finalized_by: Optional[int] = Field(None, description="User ID that finalized this review")
     finalized_at: Optional[str] = Field(None, description="ISO timestamp when review was finalized")
     remaining_blockers: int = Field(0, description="Critical blockers that must be cleared before finalization")
+    blockers: List[Dict[str, Any]] = Field(default_factory=list, description="Blocking items preventing finalization")
     available_actions: List[str] = Field(default_factory=list, description="Available review session actions")
 
     @model_validator(mode="after")
@@ -335,6 +336,7 @@ class DraftQuoteFinalizeSchema(BaseModel):
 
 class DraftQuoteFinalizeResponseSchema(BaseModel):
     status: str = Field(..., description="accepted or rejected")
+    error_code: Optional[str] = Field(None, description="Stable programmatic error code")
     idempotency_key: UUID = Field(..., description="The finalize idempotency key")
     envelope_id: UUID = Field(..., description="Target SPOT envelope ID")
     review_status: str = Field(..., description="Current review status")

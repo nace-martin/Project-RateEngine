@@ -67,6 +67,9 @@ def _finding_payload(
     blocking: bool = True,
 ) -> dict[str, Any]:
     existing = _existing_source_findings(raw).get(finding_id, {})
+    identity = hashlib.sha256(
+        f"{finding_id}:{finding_type}:{message}:{evidence_text or message}".encode("utf-8")
+    ).hexdigest()
     status = existing.get("status") or SOURCE_FINDING_STATUS_OPEN
     return {
         "id": finding_id,
@@ -80,6 +83,9 @@ def _finding_payload(
         "review_note": existing.get("review_note"),
         "resolved_by_user_id": existing.get("resolved_by_user_id"),
         "resolved_at": existing.get("resolved_at"),
+        "finding_identity": identity,
+        "resolved_source_batch_id": existing.get("resolved_source_batch_id"),
+        "resolved_finding_identity": existing.get("resolved_finding_identity"),
     }
 
 
@@ -144,7 +150,6 @@ def _derive_source_findings(raw: dict[str, Any], summary: dict[str, Any]) -> lis
             finding_id="source-low-confidence-lines",
             finding_type="low_confidence_lines",
             message=f"{summary['low_confidence_line_count']} extracted charge line(s) were low-confidence.",
-            blocking=False,
         ))
     if summary["pdf_fallback_used"]:
         findings.append(_finding_payload(
@@ -157,12 +162,27 @@ def _derive_source_findings(raw: dict[str, Any], summary: dict[str, Any]) -> lis
     return findings
 
 
-def unresolved_source_findings(value: Any) -> list[dict[str, Any]]:
+def unresolved_source_findings(
+    value: Any,
+    *,
+    source_batch_id: str | None = None,
+) -> list[dict[str, Any]]:
     summary = normalize_source_analysis_summary(value)
-    return [
-        item for item in summary.get("source_findings", [])
-        if item.get("blocking") and item.get("status") != SOURCE_FINDING_STATUS_RESOLVED
-    ]
+    unresolved = []
+    for item in summary.get("source_findings", []):
+        if not item.get("blocking"):
+            continue
+        stale_resolution = (
+            item.get("status") == SOURCE_FINDING_STATUS_RESOLVED
+            and source_batch_id
+            and (
+                item.get("resolved_source_batch_id") != source_batch_id
+                or item.get("resolved_finding_identity") != item.get("finding_identity")
+            )
+        )
+        if item.get("status") != SOURCE_FINDING_STATUS_RESOLVED or stale_resolution:
+            unresolved.append({**item, "stale_resolution": bool(stale_resolution)})
+    return unresolved
 
 
 def _derive_blocking_reasons(summary: dict[str, Any]) -> tuple[list[str], list[str], str, bool]:
@@ -268,10 +288,8 @@ def normalize_source_analysis_summary(value: Any) -> dict[str, Any]:
         "pdf_fallback_used": bool(raw.get("pdf_fallback_used", False)),
     }
     risk_flags, blocking_reasons, risk_level, requires_review_note = _derive_blocking_reasons(summary)
-    # Only high-risk extraction findings require explicit source review before
-    # acknowledgement/final quote creation. Medium-risk audit signals such as
-    # low-confidence lines or scanned-PDF fallback stay visible as warnings, but
-    # they must not turn a proceedable SPOT envelope into a dead final button.
+    # High-risk summaries require a review note. Individual blocking findings,
+    # including low-confidence extraction, must also be resolved explicitly.
     review_required = bool(requires_review_note)
     reviewed_safe_to_quote = bool(raw.get("reviewed_safe_to_quote", False)) if review_required else False
     raw_review_status = str(raw.get("review_status") or "").strip().upper()
@@ -295,7 +313,10 @@ def normalize_source_analysis_summary(value: Any) -> dict[str, Any]:
         reviewed_safe_to_quote = review_status == REVIEW_STATUS_APPROVED
     else:
         review_status = REVIEW_STATUS_NOT_REQUIRED
-        reviewed_safe_to_quote = False
+        reviewed_safe_to_quote = bool(
+            raw.get("reviewed_safe_to_quote")
+            and str(raw.get("review_note") or "").strip()
+        )
 
     summary["review_required"] = review_required
     summary["review_status"] = review_status
@@ -356,6 +377,7 @@ def mark_source_analysis_review(
     source_finding_id: str | None = None,
     resolution_action: str | None = None,
     charge_line_id: str | None = None,
+    source_batch_id: str | None = None,
 ) -> dict[str, Any]:
     raw = dict(value) if isinstance(value, dict) else {}
     summary = normalize_source_analysis_summary(raw)
@@ -371,6 +393,8 @@ def mark_source_analysis_review(
             item["review_note"] = note
             item["resolved_by_user_id"] = str(reviewed_by_user_id or "").strip() or None
             item["resolved_at"] = reviewed_at or None
+            item["resolved_source_batch_id"] = source_batch_id
+            item["resolved_finding_identity"] = item.get("finding_identity")
             if charge_line_id:
                 item["charge_line_id"] = str(charge_line_id)
         updated_findings.append(item)
@@ -379,6 +403,7 @@ def mark_source_analysis_review(
     raw["reviewed_by_user_id"] = str(reviewed_by_user_id or "").strip() or None
     raw["reviewed_at"] = reviewed_at or None
     raw["review_note"] = note
+    raw["reviewed_safe_to_quote"] = bool(reviewed_safe_to_quote)
     return normalize_source_analysis_summary(raw)
 
 

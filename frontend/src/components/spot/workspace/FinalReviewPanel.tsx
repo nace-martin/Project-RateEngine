@@ -3,6 +3,7 @@ interface FinalReviewPanelProps {
   checklistNoUnknown: boolean;
   checklistProductCodesVerified: boolean;
   unresolvedCount: number;
+  blockerDetails: Array<{ code: string; message: string }>;
   canFinishReview: boolean;
   canUsePrototypeOverride: boolean;
   isLive: boolean;
@@ -20,6 +21,7 @@ export function FinalReviewPanel({
   checklistNoUnknown,
   checklistProductCodesVerified,
   unresolvedCount,
+  blockerDetails,
   canFinishReview,
   canUsePrototypeOverride,
   isLive,
@@ -114,6 +116,16 @@ export function FinalReviewPanel({
             Resolve all pending issues and verify ProductCode mappings to
             complete review.
           </span>
+          {blockerDetails.length > 0 && (
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              {blockerDetails.map((blocker, index) => (
+                <li key={`${blocker.code}-${index}`}>
+                  <span className="font-semibold">{blocker.code}:</span>{" "}
+                  {blocker.message}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
