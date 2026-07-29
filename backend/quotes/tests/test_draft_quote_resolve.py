@@ -477,6 +477,14 @@ class DraftQuoteResolveHighValueTests(TestCase):
 
     def test_conditional_acknowledgement_excludes_charge_and_clears_only_its_blocker(self):
         self._resolve_all_blockers()
+        self.batch.analysis_summary_json = {
+            **self.batch.analysis_summary_json,
+            "ai_used": True,
+            "can_proceed": True,
+            "imported_charge_count": 1,
+            "low_confidence_line_count": 1,
+        }
+        self.batch.save(update_fields=["analysis_summary_json"])
         self.charge.conditional = True
         self.charge.exclude_from_totals = False
         self.charge.note = "Export License: USD 50 (if application)"
@@ -484,10 +492,9 @@ class DraftQuoteResolveHighValueTests(TestCase):
 
         blocked = self._finalize()
         self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn(
-            "CONDITIONAL_ACKNOWLEDGEMENT_REQUIRED",
-            {item["code"] for item in blocked.data["blockers"]},
-        )
+        initial_codes = {item["code"] for item in blocked.data["blockers"]}
+        self.assertIn("CONDITIONAL_ACKNOWLEDGEMENT_REQUIRED", initial_codes)
+        self.assertIn("SOURCE_REVIEW_NOT_SAFE", initial_codes)
 
         self.client.force_authenticate(user=self.sales)
         acknowledged = self.client.patch(
@@ -500,7 +507,48 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self.assertTrue(self.charge.conditional)
         self.assertTrue(self.charge.conditional_acknowledged)
         self.assertTrue(self.charge.exclude_from_totals)
+        self.assertIn("Export License: USD 50 (if application)", self.charge.note)
         self.assertIn("excluded from the current firm total", self.charge.note)
+
+        read = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        conditional = next(item for item in read.data["suggested_charges"] if item["id"] == str(self.charge.id))
+        finding = next(item for item in read.data["review_queue"] if item["type"] == "source_finding")
+        self.assertFalse(conditional["include_in_totals"])
+        self.assertTrue(
+            any(
+                "Export License: USD 50 (if application)" in note
+                for note in conditional["conditions"]
+            )
+        )
+        self.batch.refresh_from_db()
+        self.assertFalse(self.batch.analysis_summary_json["reviewed_safe_to_quote"])
+
+        still_blocked = self._finalize()
+        remaining_codes = {item["code"] for item in still_blocked.data["blockers"]}
+        self.assertEqual(still_blocked.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertNotIn("CONDITIONAL_ACKNOWLEDGEMENT_REQUIRED", remaining_codes)
+        self.assertIn("SOURCE_REVIEW_NOT_SAFE", remaining_codes)
+
+        create_quote = self.client.post(
+            f"/api/v3/spot/envelopes/{self.envelope.id}/create-quote/",
+            {"quote_request": {}},
+            format="json",
+        )
+        self.assertEqual(create_quote.status_code, status.HTTP_400_BAD_REQUEST)
+
+        resolved = self._post([self._decision(
+            "resolve_source_finding",
+            target_id=finding["id"],
+            details={
+                "source_batch_id": finding["source_batch_id"],
+                "source_finding_id": finding["source_finding_id"],
+                "action": "resolved_in_workspace",
+                "review_note": "Verified the low-confidence charge against the supplier source.",
+                "charge_line_id": str(self.charge.id),
+            },
+            decision_id="resolve-low-confidence-after-conditional",
+        )])
+        self.assertEqual(resolved.status_code, status.HTTP_200_OK)
         self.assertEqual(self._finalize().status_code, status.HTTP_200_OK)
 
     def test_stale_source_finding_resolution_requires_reconfirmation(self):

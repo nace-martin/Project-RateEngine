@@ -962,7 +962,7 @@ def test_spot_create_quote_blocks_risky_source_batch_until_reviewed(monkeypatch)
     assert response.json()["intake_safety"]["is_safe_to_quote"] is False
 
 
-def test_spot_create_quote_allows_low_confidence_source_warning(monkeypatch):
+def test_spot_create_quote_requires_low_confidence_source_resolution(monkeypatch):
     user, origin, destination = _setup_user_and_locations()
     spe = _create_ready_spe(
         user=user,
@@ -971,8 +971,11 @@ def test_spot_create_quote_allows_low_confidence_source_warning(monkeypatch):
         origin_country="AU",
         dest_country="PG",
         service_scope="A2D",
+        finalized_review=False,
     )
-    SPESourceBatchDB.objects.create(
+    spe.status = SpotPricingEnvelopeDB.Status.DRAFT
+    spe.save(update_fields=["status"])
+    batch = SPESourceBatchDB.objects.create(
         envelope=spe,
         source_kind=SPESourceBatchDB.SourceKind.AGENT,
         source_type=SPESourceBatchDB.SourceType.TEXT,
@@ -988,7 +991,18 @@ def test_spot_create_quote_allows_low_confidence_source_warning(monkeypatch):
         },
         created_by=user,
     )
-    SPEChargeLineDB.objects.create(
+    product_code = ProductCode.objects.create(
+        id=2998,
+        code="IMP-LOW-CONFIDENCE-DEST",
+        description="Low-confidence destination fee",
+        domain=ProductCode.DOMAIN_IMPORT,
+        category=ProductCode.CATEGORY_HANDLING,
+        is_gst_applicable=False,
+        gl_revenue_code="4000",
+        gl_cost_code="5000",
+        default_unit=ProductCode.UNIT_SHIPMENT,
+    )
+    charge_line = SPEChargeLineDB.objects.create(
         envelope=spe,
         code="DESTINATION_LOCAL",
         description="Destination fee",
@@ -999,6 +1013,7 @@ def test_spot_create_quote_allows_low_confidence_source_warning(monkeypatch):
         source_reference="Uploaded rates",
         normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
         normalization_method=SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS,
+        resolved_product_code=product_code,
         entered_at=timezone.now(),
     )
     monkeypatch.setattr(
@@ -1012,15 +1027,71 @@ def test_spot_create_quote_allows_low_confidence_source_warning(monkeypatch):
 
     detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
     assert detail_response.status_code == 200
-    assert detail_response.json()["intake_safety"]["is_safe_to_quote"] is True
-    assert detail_response.json()["sources"][0]["review_status"] == "NOT_REQUIRED"
+    assert detail_response.json()["intake_safety"]["is_safe_to_quote"] is False
+    assert detail_response.json()["sources"][0]["review_status"] == "PENDING"
 
+    draft_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/draft-quote/")
+    assert draft_response.status_code == 200
+    finding = next(
+        item
+        for item in draft_response.json()["review_queue"]
+        if item["type"] == "source_finding"
+    )
+    assert finding["source_finding_type"] == "low_confidence_lines"
+
+    finalize_blocked = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/draft-quote/finalize/",
+        {"idempotency_key": str(uuid.uuid4()), "audit_metadata": {}},
+        format="json",
+    )
+    assert finalize_blocked.status_code == 400
+    assert finalize_blocked.json()["error_code"] == "DRAFT_QUOTE_FINALIZATION_BLOCKED"
+    source_blocker = next(
+        item
+        for item in finalize_blocked.json()["blockers"]
+        if item["code"] == "SOURCE_REVIEW_NOT_SAFE"
+    )
+    assert source_blocker["source_batch_id"] == str(batch.id)
+    assert source_blocker["message"]
+
+    create_blocked = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
+        {"quote_request": {"service_scope": "A2D", "payment_term": "PREPAID", "customer_id": str(customer.id)}},
+        format="json",
+    )
+    assert create_blocked.status_code == 400
+    assert create_blocked.json()["intake_safety"]["is_safe_to_quote"] is False
+
+    resolved = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/sources/{batch.id}/review/",
+        {
+            "reviewed_safe_to_quote": True,
+            "source_finding_id": finding["source_finding_id"],
+            "resolution_action": "resolved_in_workspace",
+            "review_note": "Verified the destination fee against the uploaded supplier rate evidence.",
+            "charge_line_id": str(charge_line.id),
+        },
+        format="json",
+    )
+    assert resolved.status_code == 200
+    batch.refresh_from_db()
+    assert batch.analysis_summary_json["reviewed_safe_to_quote"] is True
+
+    finalized = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/draft-quote/finalize/",
+        {"idempotency_key": str(uuid.uuid4()), "audit_metadata": {}},
+        format="json",
+    )
+    assert finalized.status_code == 200
+    assert finalized.json()["remaining_blockers"] == 0
+
+    spe.status = SpotPricingEnvelopeDB.Status.READY
+    spe.save(update_fields=["status"])
     response = client.post(
         f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
         {"quote_request": {"service_scope": "A2D", "payment_term": "PREPAID", "customer_id": str(customer.id)}},
         format="json",
     )
-
     assert response.status_code == 200
     assert response.json()["success"] is True
 

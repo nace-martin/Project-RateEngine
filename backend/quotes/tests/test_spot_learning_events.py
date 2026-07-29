@@ -380,7 +380,7 @@ class ConditionalResolutionLearningEventTest(SpotLearningEventCaptureBaseTest):
         self.assertEqual(event.resolved_by, self.sales_user)
 
     def test_conditional_remove_creates_learning_event(self):
-        """Conditional charge → REMOVE → CONDITIONAL_REMOVE learning event."""
+        """Only manager removal records one CONDITIONAL_REMOVE learning event."""
         spe, batch, charge_line = self._create_spe_with_charge(
             self.sales_user,
             normalization_status='MATCHED',
@@ -397,9 +397,21 @@ class ConditionalResolutionLearningEventTest(SpotLearningEventCaptureBaseTest):
             'action': 'REMOVE',
         }, format='json')
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['error_code'], 'MANAGER_OVERRIDE_REQUIRED')
+        self.assertTrue(SPEChargeLineDB.objects.filter(id=charge_line_id).exists())
+        self.assertFalse(
+            SpotResolutionLearningEvent.objects.filter(
+                envelope=spe,
+                resolution_type='CONDITIONAL_REMOVE',
+            ).exists()
+        )
 
-        # Charge line was deleted, but learning event was recorded BEFORE delete
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.patch(url, {'action': 'REMOVE'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(SPEChargeLineDB.objects.filter(id=charge_line_id).exists())
+
         events = SpotResolutionLearningEvent.objects.filter(
             envelope=spe,
             resolution_type='CONDITIONAL_REMOVE',
@@ -409,7 +421,7 @@ class ConditionalResolutionLearningEventTest(SpotLearningEventCaptureBaseTest):
         event = events.first()
         self.assertEqual(event.normalized_label, 'optional storage fee')
         self.assertIsNone(event.resolved_product_code)  # REMOVE has no product code
-        self.assertEqual(event.resolved_by, self.sales_user)
+        self.assertEqual(event.resolved_by, self.admin_user)
 
     def test_conditional_keep_captures_shipment_context(self):
         """Verify conditional resolution captures full shipment context."""
@@ -502,7 +514,7 @@ class LearningEventDoesNotAffectResolutionTest(SpotLearningEventCaptureBaseTest)
         self.assertEqual(charge_line.conditional_acknowledged_by, self.sales_user)
 
     def test_conditional_remove_still_deletes_charge(self):
-        """Conditional REMOVE still deletes the charge line."""
+        """Denied sales removal is inert; manager removal deletes exactly once."""
         spe, batch, charge_line = self._create_spe_with_charge(
             self.sales_user,
             conditional=True,
@@ -513,8 +525,23 @@ class LearningEventDoesNotAffectResolutionTest(SpotLearningEventCaptureBaseTest)
 
         self.client.force_authenticate(user=self.sales_user)
         url = f'/api/v3/spot/envelopes/{spe.id}/charges/{charge_line_id}/conditional-resolution/'
-        self.client.patch(url, {'action': 'REMOVE'}, format='json')
-
+        denied = self.client.patch(url, {'action': 'REMOVE'}, format='json')
+        self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(denied.data['error_code'], 'MANAGER_OVERRIDE_REQUIRED')
+        self.assertTrue(SPEChargeLineDB.objects.filter(id=charge_line_id).exists())
         self.assertFalse(
-            SPEChargeLineDB.objects.filter(id=charge_line_id).exists()
+            SpotResolutionLearningEvent.objects.filter(
+                envelope=spe,
+                resolution_type='CONDITIONAL_REMOVE',
+            ).exists()
         )
+
+        self.client.force_authenticate(user=self.admin_user)
+        removed = self.client.patch(url, {'action': 'REMOVE'}, format='json')
+        self.assertEqual(removed.status_code, status.HTTP_200_OK)
+        self.assertFalse(SPEChargeLineDB.objects.filter(id=charge_line_id).exists())
+        event = SpotResolutionLearningEvent.objects.get(
+            envelope=spe,
+            resolution_type='CONDITIONAL_REMOVE',
+        )
+        self.assertEqual(event.resolved_by, self.admin_user)
