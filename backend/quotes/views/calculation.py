@@ -38,7 +38,6 @@ from pricing_v4.services.rate_selector import (
     build_rate_selection_error_payload,
 )
 
-from crm.services import create_auto_quote_opportunity_interaction, resolve_quote_opportunity
 from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
 from core.commodity import DEFAULT_COMMODITY_CODE
@@ -502,41 +501,12 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             request_payload['resolved_dimensions'] = serialize_resolved_rate_dimensions(resolved_dimensions)
 
         is_new_quote = quote is None
-        origin_location = Location.objects.filter(id=validated_data.origin_location_id).first()
-        destination_location = Location.objects.filter(id=validated_data.destination_location_id).first()
-        opportunity = None
-        opportunity_was_auto_created = False
-        try:
-            opportunity, opportunity_was_auto_created = resolve_quote_opportunity(
-                customer=customer,
-                opportunity_id=validated_data.opportunity_id,
-                existing_quote=quote,
-                mode=validated_data.mode,
-                shipment_type=shipment_type,
-                service_scope=validated_data.service_scope,
-                origin_location=origin_location,
-                destination_location=destination_location,
-                actor=request.user,
-                quote_status=initial_status,
-                persist=True,
-            )
-        except Http404:
-            raise
-        except Exception as exc:
-            logger.exception(
-                "CRM opportunity resolution failed during quote creation. Proceeding without opportunity link. Customer ID: %s, Shipment Type: %s, Error: %s",
-                validated_data.customer_id,
-                shipment_type,
-                exc,
-            )
-
         if is_new_quote:
             create_scope = resolve_create_scope_for_user(request.user)
             # --- Create the Quote object ---
             quote = Quote.objects.create(
                 customer=customer,
                 contact=contact,
-                opportunity=opportunity,
                 mode=validated_data.mode,
                 shipment_type=shipment_type, # <-- Save calculated type
                 incoterm=validated_data.incoterm,
@@ -562,7 +532,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             # Update the existing quote details and append a new version
             quote.customer = customer
             quote.contact = contact
-            quote.opportunity = opportunity
             quote.mode = validated_data.mode
             quote.shipment_type = shipment_type
             quote.incoterm = validated_data.incoterm
@@ -589,7 +558,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             quote.save(update_fields=[
                 'customer',
                 'contact',
-                'opportunity',
                 'mode',
                 'shipment_type',
                 'incoterm',
@@ -612,17 +580,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
 
             latest_version = quote.versions.order_by('-version_number').first()
             version_number = 1 if latest_version is None else latest_version.version_number + 1
-
-        if opportunity and opportunity_was_auto_created:
-            try:
-                create_auto_quote_opportunity_interaction(opportunity, quote, request.user)
-            except Exception as exc:
-                logger.exception(
-                    "CRM opportunity interaction auto-creation failed. Quote ID: %s, Opportunity ID: %s, Error: %s",
-                    getattr(quote, "id", None),
-                    opportunity.id,
-                    exc,
-                )
 
         # Create the QuoteVersion
         version = QuoteVersion.objects.create(

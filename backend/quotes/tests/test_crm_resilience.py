@@ -10,6 +10,7 @@ from rest_framework.test import APITestCase
 
 from core.models import Country, Currency
 from core.tests.helpers import create_location
+from crm.models import Interaction, Opportunity
 from parties.models import Company, Contact
 from pricing_v4.models import Carrier, DomesticCOGS, DomesticSellRate, ProductCode
 from services.models import ServiceComponent
@@ -120,54 +121,67 @@ class CRMResilienceTests(APITestCase):
             "commodity_code": "GCR",
         }
 
-    @patch("quotes.views.calculation.resolve_quote_opportunity")
-    @patch("quotes.views.calculation.logger")
-    def test_quote_creation_succeeds_when_crm_opportunity_resolution_fails(self, mock_logger, mock_resolve):
-        # Mock opportunity resolution to raise an exception
-        mock_resolve.side_effect = RuntimeError("Simulated Opportunity DB Failure")
-
+    def test_standard_quote_creation_has_no_crm_side_effects(self):
         response = self.client.post("/api/v3/quotes/compute/", self._payload(), format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["status"], "DRAFT")
         self.assertIsNone(response.data["opportunity"])
+        self.assertEqual(Opportunity.objects.count(), 0)
+        self.assertEqual(Interaction.objects.count(), 0)
 
-        # Assert the exception was logged
-        mock_logger.exception.assert_called()
-        log_msg = mock_logger.exception.call_args[0][0]
-        self.assertIn("CRM opportunity resolution failed during quote creation", log_msg)
+        quote = Quote.objects.get(id=response.data["id"])
+        self.assertEqual(quote.customer, self.customer)
+        self.assertEqual(quote.contact, self.contact)
+        self.assertEqual(quote.versions.get(version_number=1).lines.count(), 1)
+        totals = response.data["latest_version"]["totals"]
+        self.assertEqual(totals["total_cost_pgk"], "150.00")
+        self.assertEqual(totals["total_sell_pgk"], "225.00")
+        self.assertEqual(totals["total_sell_pgk_incl_gst"], "247.50")
 
-    @patch("quotes.views.calculation.create_auto_quote_opportunity_interaction")
-    @patch("quotes.views.calculation.logger")
-    def test_quote_creation_succeeds_when_crm_interaction_auto_creation_fails(self, mock_logger, mock_create):
-        # Mock auto interaction creation to raise an exception
-        mock_create.side_effect = ValueError("Simulated Interaction Validation Error")
-
-        # Mock resolve_quote_opportunity to return a dummy opportunity and opportunity_was_auto_created = True
-        from crm.models import Opportunity
-        dummy_opportunity = Opportunity.objects.create(
-            company=self.customer,
-            title="POM to LAE CRM opportunity",
-            service_type="AIR",
-            direction="DOMESTIC",
-            scope="A2A",
+    def test_standard_quote_recalculation_has_no_crm_side_effects_or_total_changes(self):
+        payload = self._payload()
+        created = self.client.post("/api/v3/quotes/compute/", payload, format="json")
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED)
+        quote = Quote.objects.get(id=created.data["id"])
+        first_version = quote.versions.get(version_number=1)
+        first_totals = (
+            first_version.totals.total_cost_pgk,
+            first_version.totals.total_sell_pgk,
+            first_version.totals.total_sell_pgk_incl_gst,
+            first_version.totals.total_sell_fcy,
+            first_version.totals.total_sell_fcy_incl_gst,
+            first_version.totals.total_sell_fcy_currency,
         )
+        first_line_count = first_version.lines.count()
 
-        with patch("quotes.views.calculation.resolve_quote_opportunity", return_value=(dummy_opportunity, True)):
-            response = self.client.post("/api/v3/quotes/compute/", self._payload(), format="json")
+        payload["quote_id"] = str(quote.id)
+        recalculated = self.client.post("/api/v3/quotes/compute/", payload, format="json")
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["status"], "DRAFT")
-        self.assertEqual(str(response.data["opportunity"]), str(dummy_opportunity.id))
-
-        # Assert the exception was logged
-        mock_logger.exception.assert_called()
-        log_msg = mock_logger.exception.call_args[0][0]
-        self.assertIn("CRM opportunity interaction auto-creation failed", log_msg)
+        self.assertEqual(recalculated.status_code, status.HTTP_201_CREATED)
+        quote.refresh_from_db()
+        self.assertEqual(quote.versions.count(), 2)
+        self.assertEqual(quote.customer, self.customer)
+        self.assertEqual(quote.contact, self.contact)
+        self.assertIsNone(quote.opportunity_id)
+        second_version = quote.versions.get(version_number=2)
+        self.assertEqual(second_version.lines.count(), first_line_count)
+        self.assertEqual(
+            (
+                second_version.totals.total_cost_pgk,
+                second_version.totals.total_sell_pgk,
+                second_version.totals.total_sell_pgk_incl_gst,
+                second_version.totals.total_sell_fcy,
+                second_version.totals.total_sell_fcy_incl_gst,
+                second_version.totals.total_sell_fcy_currency,
+            ),
+            first_totals,
+        )
+        self.assertEqual(Opportunity.objects.count(), 0)
+        self.assertEqual(Interaction.objects.count(), 0)
 
     @patch("quotes.signals.logger")
     def test_quote_status_transition_succeeds_when_crm_sync_fails(self, mock_logger):
-        from crm.models import Opportunity
         opportunity = Opportunity.objects.create(
             company=self.customer,
             title="Transition opportunity",
