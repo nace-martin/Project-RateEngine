@@ -2,7 +2,6 @@
 
 from datetime import date, timedelta
 from decimal import Decimal
-from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 from rest_framework import status
@@ -14,7 +13,7 @@ from crm.models import Interaction, Opportunity
 from parties.models import Company, Contact
 from pricing_v4.models import Carrier, DomesticCOGS, DomesticSellRate, ProductCode
 from services.models import ServiceComponent
-from quotes.models import Quote
+from quotes.models import Quote, QuoteEvent
 
 
 @override_settings(RBAC_ALLOW_LEGACY_SCOPE_FALLBACK_FOR_TESTS=True)
@@ -180,16 +179,14 @@ class CRMResilienceTests(APITestCase):
         self.assertEqual(Opportunity.objects.count(), 0)
         self.assertEqual(Interaction.objects.count(), 0)
 
-    @patch("quotes.signals.logger")
-    def test_quote_status_transition_succeeds_when_crm_sync_fails(self, mock_logger):
+    def _create_linked_quote(self, title):
         opportunity = Opportunity.objects.create(
             company=self.customer,
-            title="Transition opportunity",
+            title=title,
             service_type="AIR",
             direction="DOMESTIC",
             scope="A2A",
         )
-        # Create a Quote in DRAFT status
         quote = Quote.objects.create(
             customer=self.customer,
             contact=self.contact,
@@ -202,37 +199,75 @@ class CRMResilienceTests(APITestCase):
             created_by=self.user,
             opportunity=opportunity,
         )
+        return quote, opportunity
 
-        # Transition status to FINALIZED while post-save CRM sync raises an exception
-        with patch("quotes.signals._sync_crm_for_quote_event", side_effect=RuntimeError("Simulated Post-Save CRM Event Sync Failure")) as mock_sync:
-            transition_payload = {
-                "action": "finalize",
-            }
-            response = self.client.post(
-                f"/api/v3/quotes/{quote.id}/transition/",
-                transition_payload,
-                format="json",
-            )
-
+    def _transition(self, quote, action, expected_status):
+        response = self.client.post(
+            f"/api/v3/quotes/{quote.id}/transition/",
+            {"action": action},
+            format="json",
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["status"], "FINALIZED")
+        self.assertEqual(response.data["status"], expected_status)
+        quote.refresh_from_db()
 
-        # Now test that the internal post-save signal try-except catch works when NOT mocked from the outside
-        with patch("crm.services.create_quote_system_interaction", side_effect=ValueError("Sync Database Down")):
-            # Reset transition to SENT
-            sent_payload = {
-                "action": "send",
-            }
-            res_sent = self.client.post(
-                f"/api/v3/quotes/{quote.id}/transition/",
-                sent_payload,
-                format="json",
-            )
-            # Should transition successfully despite CRM post-save interaction logging raising ValueError
-            self.assertEqual(res_sent.status_code, status.HTTP_200_OK)
-            self.assertEqual(res_sent.data["status"], "SENT")
-            
-            # Assert the exception was cleanly logged
-            mock_logger.exception.assert_called()
-            log_msg = mock_logger.exception.call_args[0][0]
-            self.assertIn("CRM event synchronization failed", log_msg)
+    def _assert_event(self, quote, event_type, previous_status, new_status):
+        event = quote.events.get(event_type=event_type)
+        self.assertEqual(event.quote, quote)
+        self.assertEqual(event.user, self.user)
+        self.assertEqual(event.metadata["previous_status"], previous_status)
+        self.assertEqual(event.metadata["new_status"], new_status)
+
+    def _assert_crm_unchanged(self, quote, opportunity, opportunity_count):
+        quote.refresh_from_db()
+        opportunity.refresh_from_db()
+        self.assertEqual(quote.opportunity_id, opportunity.id)
+        self.assertEqual(opportunity.status, Opportunity.Status.NEW)
+        self.assertEqual(Opportunity.objects.count(), opportunity_count)
+        self.assertEqual(Interaction.objects.count(), 0)
+
+    def test_quote_creation_preserves_native_event_without_crm_sync(self):
+        quote, opportunity = self._create_linked_quote("Created event opportunity")
+
+        event = quote.events.get(event_type=QuoteEvent.EventType.CREATED)
+        self.assertEqual(event.quote, quote)
+        self.assertEqual(event.user, self.user)
+        self.assertEqual(event.metadata, {"initial_status": Quote.Status.DRAFT})
+        self._assert_crm_unchanged(quote, opportunity, opportunity_count=1)
+
+    def test_finalized_sent_and_accepted_events_do_not_sync_crm(self):
+        quote, opportunity = self._create_linked_quote("Accepted path opportunity")
+        opportunity_count = Opportunity.objects.count()
+
+        self._transition(quote, "finalize", Quote.Status.FINALIZED)
+        self._assert_event(quote, QuoteEvent.EventType.FINALIZED, Quote.Status.DRAFT, Quote.Status.FINALIZED)
+        self._assert_crm_unchanged(quote, opportunity, opportunity_count)
+
+        self._transition(quote, "send", Quote.Status.SENT)
+        self._assert_event(quote, QuoteEvent.EventType.SENT, Quote.Status.FINALIZED, Quote.Status.SENT)
+        self._assert_crm_unchanged(quote, opportunity, opportunity_count)
+
+        self._transition(quote, "mark_won", Quote.Status.ACCEPTED)
+        self._assert_event(quote, QuoteEvent.EventType.ACCEPTED, Quote.Status.SENT, Quote.Status.ACCEPTED)
+        self._assert_crm_unchanged(quote, opportunity, opportunity_count)
+
+    def test_lost_event_does_not_sync_crm(self):
+        quote, opportunity = self._create_linked_quote("Lost path opportunity")
+        opportunity_count = Opportunity.objects.count()
+
+        self._transition(quote, "finalize", Quote.Status.FINALIZED)
+        self._transition(quote, "send", Quote.Status.SENT)
+        self._transition(quote, "mark_lost", Quote.Status.LOST)
+
+        self._assert_event(quote, QuoteEvent.EventType.LOST, Quote.Status.SENT, Quote.Status.LOST)
+        self._assert_crm_unchanged(quote, opportunity, opportunity_count)
+
+    def test_expired_event_does_not_sync_crm(self):
+        quote, opportunity = self._create_linked_quote("Expired path opportunity")
+        opportunity_count = Opportunity.objects.count()
+
+        self._transition(quote, "finalize", Quote.Status.FINALIZED)
+        self._transition(quote, "mark_expired", Quote.Status.EXPIRED)
+
+        self._assert_event(quote, QuoteEvent.EventType.EXPIRED, Quote.Status.FINALIZED, Quote.Status.EXPIRED)
+        self._assert_crm_unchanged(quote, opportunity, opportunity_count)
