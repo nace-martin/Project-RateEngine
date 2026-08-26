@@ -683,7 +683,7 @@ def test_spot_create_quote_rejects_contact_from_another_customer(monkeypatch):
     assert response.json()["error"] == "Selected contact is not available for this customer/user."
 
 
-def test_spot_create_quote_auto_creates_and_links_opportunity(monkeypatch):
+def test_spot_create_quote_does_not_create_crm_records(monkeypatch):
     user, origin, destination = _setup_user_and_locations()
     spe = _create_ready_spe(
         user=user,
@@ -698,7 +698,7 @@ def test_spot_create_quote_auto_creates_and_links_opportunity(monkeypatch):
         "calculate_charges",
         lambda self: _quote_charges_for_buckets(["origin_charges", "airfreight", "destination_charges"]),
     )
-    customer = Company.objects.create(name="Spot Opportunity Customer", is_customer=True, company_type="CUSTOMER")
+    customer = Company.objects.create(name="CRM Independent Spot Customer", is_customer=True, company_type="CUSTOMER")
     client = APIClient()
     client.force_authenticate(user=user)
 
@@ -710,18 +710,70 @@ def test_spot_create_quote_auto_creates_and_links_opportunity(monkeypatch):
 
     assert response.status_code == 200
     quote = Quote.objects.get(id=response.json()["quote_id"])
-    opportunity = quote.opportunity
-    assert opportunity is not None
-    assert opportunity.company == customer
-    assert opportunity.service_type == "AIR"
-    assert opportunity.direction == Quote.ShipmentType.IMPORT
-    assert opportunity.scope == "D2D"
-    assert opportunity.interactions.filter(
-        interaction_type=Interaction.InteractionType.SYSTEM,
-        system_event_type="QUOTE_OPPORTUNITY_CREATED",
-        outcomes__contains=f"quote_id={quote.id}",
-    ).exists()
-    assert not Opportunity.objects.filter(service_type="DOMESTIC").exists()
+    version = quote.versions.get(version_number=1)
+    totals = version.totals
+
+    assert quote.opportunity_id is None
+    assert Opportunity.objects.count() == 0
+    assert Interaction.objects.count() == 0
+    assert version.lines.count() == 3
+    assert totals.total_cost_pgk == Decimal("0.00")
+    assert totals.total_sell_pgk == Decimal("30.00")
+    assert totals.total_sell_pgk_incl_gst == Decimal("30.00")
+    assert totals.total_sell_fcy == Decimal("30.00")
+    assert totals.total_sell_fcy_incl_gst == Decimal("30.00")
+
+
+def test_spot_create_quote_preserves_existing_opportunity_link(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    customer = Company.objects.create(name="Linked Spot Customer", is_customer=True, company_type="CUSTOMER")
+    opportunity = Opportunity.objects.create(
+        company=customer,
+        title="Existing SPOT opportunity",
+        service_type="AIR",
+    )
+    quote = Quote.objects.create(
+        customer=customer,
+        origin_location=origin,
+        destination_location=destination,
+        shipment_type=Quote.ShipmentType.IMPORT,
+        mode="AIR",
+        opportunity=opportunity,
+        status=Quote.Status.INCOMPLETE,
+        created_by=user,
+    )
+    spe = _create_ready_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+    )
+    spe.quote = quote
+    spe.save(update_fields=["quote"])
+    monkeypatch.setattr(
+        PricingServiceV4Adapter,
+        "calculate_charges",
+        lambda self: _quote_charges_for_buckets(["origin_charges", "airfreight", "destination_charges"]),
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+    initial_opportunity_count = Opportunity.objects.count()
+    initial_interaction_count = Interaction.objects.count()
+
+    response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
+        {"quote_request": {"service_scope": "D2D", "payment_term": "PREPAID"}},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    quote.refresh_from_db()
+    assert quote.opportunity_id == opportunity.id
+    assert Opportunity.objects.count() == initial_opportunity_count
+    assert Interaction.objects.count() == initial_interaction_count
+    assert quote.versions.get(version_number=1).lines.count() == 3
 
 
 def test_spot_create_quote_allows_matched_exact_alias_line(monkeypatch):

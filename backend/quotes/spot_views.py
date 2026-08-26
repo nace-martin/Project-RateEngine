@@ -2748,7 +2748,6 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         from core.models import Location
         from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal, ServiceComponent
         from parties.models import Company, Contact
-        from crm.services import create_auto_quote_opportunity_interaction, resolve_quote_opportunity
         from uuid import UUID
         from datetime import date
         
@@ -3002,36 +3001,6 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        customer = get_object_or_404(scoped_customers, id=cust_id)
-        raw_opportunity_id = (
-            request.data.get('opportunity_id')
-            or quote_data.get('opportunity_id')
-        )
-        if raw_opportunity_id:
-            try:
-                opportunity_id = UUID(str(raw_opportunity_id))
-            except (TypeError, ValueError):
-                return Response(
-                    {'error': f'Invalid opportunity_id: {raw_opportunity_id}'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-        else:
-            opportunity_id = None
-
-        opportunity, opportunity_was_auto_created = resolve_quote_opportunity(
-            customer=customer,
-            opportunity_id=opportunity_id,
-            existing_quote=spe_db.quote,
-            mode='AIR',
-            shipment_type=shipment_type,
-            service_scope=shipment.service_scope,
-            origin_location=origin_loc,
-            destination_location=dest_loc,
-            actor=request.user,
-            quote_status=Quote.Status.DRAFT,
-            persist=True,
-        )
-
         # --- 2. Create/Update Quote ---
         if spe_db.quote:
             quote = spe_db.quote
@@ -3042,7 +3011,6 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             quote.payment_term = shipment.payment_term
             quote.service_scope = shipment.service_scope
             quote.shipment_type = shipment_type
-            quote.opportunity = opportunity
             quote.origin_location = origin_loc
             quote.destination_location = dest_loc
             quote.request_details_json = quote_request_payload
@@ -3054,7 +3022,6 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 'payment_term',
                 'service_scope',
                 'shipment_type',
-                'opportunity',
                 'origin_location',
                 'destination_location',
                 'request_details_json',
@@ -3067,7 +3034,6 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 destination_location=dest_loc,
                 shipment_type=shipment_type,
                 mode='AIR',
-                opportunity=opportunity,
                 incoterm=shipment.incoterm,
                 payment_term=shipment.payment_term,
                 service_scope=shipment.service_scope,
@@ -3080,9 +3046,6 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             )
             spe_db.quote = quote
             spe_db.save()
-
-        if opportunity_was_auto_created:
-            create_auto_quote_opportunity_interaction(opportunity, quote, request.user)
 
         # --- 3. Create Version ---
         # Determine version number
