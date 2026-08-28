@@ -138,7 +138,15 @@ backend/shipments/efm/
 
 # Tool-specific metadata
 .agents/
-.codex/
+.codex/*
+!.codex/skills/
+.codex/skills/*
+!.codex/skills/structural-audit/
+!.codex/skills/seed-data-change/
+.codex/skills/structural-audit/*
+.codex/skills/seed-data-change/*
+!.codex/skills/structural-audit/SKILL.md
+!.codex/skills/seed-data-change/SKILL.md
 graphify-out/
 .fallow/
 frontend/fallow-*.json
