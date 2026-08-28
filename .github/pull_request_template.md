@@ -2,7 +2,7 @@
 
 -
 
-## Root Cause
+## Root Cause / Rationale
 
 -
 
@@ -10,44 +10,63 @@
 
 -
 
-## What Was Intentionally NOT Changed
+## Changed Files
+
+- `path`: reason
+
+## What Was Intentionally Not Changed
 
 -
 
-## Legacy / Dead Code Removed
+## Verification
 
--
+Automated:
 
-## Risk Areas
+- Command and exact result
 
--
+Manual:
 
-## Manual Verification Steps
+- Action and observed result, or why manual verification was not possible
 
--
+## Risk
 
-## Tests Run
+- Known risks and residual uncertainty
 
--
+## Rollback
+
+- Safe revert or recovery approach
 
 ## Screenshots / Recordings
 
-Required if UI changed.
+Required when the UI changed; otherwise write `Not applicable`.
 
 -
 
+## Conditional Impact
+
+Complete these when the PR affects the corresponding area; otherwise write `Not applicable`.
+
+### Commercial Impact
+
+- Effect on totals, tax/GST, FX/CAF, margin, ProductCode mapping, inclusion, grouping, public output, or operator decisions
+
+### Data Impact
+
+- Data created, updated, deleted, migrated, seeded, or backfilled; include dry-run/apply controls
+
+### Audit Impact
+
+- Effect on who/what/when/why evidence and review history
+
 ## Documentation Consolidation Check
 
-- [ ] Existing docs were updated instead of duplicated.
-- [ ] No duplicate PR templates, governance files, or overlapping architecture docs were added.
-- [ ] `AGENTS.md`, `CODEX.md`, `GEMINI.md`, README links, or architecture docs were updated when relevant.
+- [ ] Existing authority was updated instead of duplicated.
+- [ ] Implemented behavior, planned work, and open questions remain distinct.
+- [ ] Governance, architecture, commands, and links reference current files.
 
 ## Reviewer Checklist
 
-- [ ] Does this PR solve one concern only?
-- [ ] Does it duplicate existing logic?
-- [ ] Does it revive legacy code?
-- [ ] Does it create another source of truth?
-- [ ] Does it affect quote creation, pricing, FX/CAF, GST, margin, SPOT, public quote display, charge grouping, or CRM quote logging?
-- [ ] Was the real user workflow manually tested?
-- [ ] Were existing docs updated instead of duplicated?
+- [ ] This PR addresses one isolated concern.
+- [ ] It does not revive deprecated paths or hide unresolved commercial gaps.
+- [ ] Relevant automated checks and real user workflows were verified.
+- [ ] Rollback and residual risk are clear.
