@@ -410,7 +410,7 @@ export default function CrmOverviewPage() {
                             <div className="flex items-center justify-end gap-1">
                               {canEditQuotes ? (
                                 <Button variant="ghost" size="sm" asChild title="Create Quote">
-                                  <Link href={`/quotes/new?company=${opportunity.company}&opportunity=${opportunity.id}&service_type=${opportunity.service_type}&origin=${opportunity.origin}&destination=${opportunity.destination}`}>
+                                  <Link href={`/quotes/new?company=${opportunity.company}&service_type=${opportunity.service_type}&origin=${opportunity.origin}&destination=${opportunity.destination}`}>
                                     <PlusCircle className="h-4 w-4" />
                                   </Link>
                                 </Button>

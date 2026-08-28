@@ -1199,27 +1199,13 @@ class ScopeCompletenessReportTests(TestCase):
         self.assertEqual(membership["users_with_no_memberships"], 1)
         self.assertEqual(membership["branch_populated"], 1)
 
-    def test_quote_coverage_counts_linked_quote_scope(self):
-        organization, branch, department = self._scope("quote")
-        company = Company.objects.create(name="Quoted Customer")
-        opportunity = Opportunity.objects.create(company=company, title="Quoted", service_type="AIR")
-        Quote.objects.create(customer=company, opportunity=opportunity, mode="AIR", organization=organization)
-        Quote.objects.create(
-            customer=company,
-            opportunity=opportunity,
-            mode="SEA",
-            organization=organization,
-            branch=branch,
-            department=department,
-        )
-
+    def test_quote_coverage_is_empty_after_quote_crm_detachment(self):
         payload = json.loads(self._call_report("--format", "json"))
 
         quote = payload["quote_coverage"]
-        self.assertEqual(quote["linked_quotes"], 2)
-        self.assertEqual(quote["organization_only"], 1)
-        self.assertEqual(quote["organization_branch_department"], 1)
-        self.assertGreaterEqual(payload["branch_discovery"]["quote_scope"]["complete_count"], 1)
+        self.assertEqual(quote["linked_quotes"], 0)
+        self.assertEqual(quote["organization_only"], 0)
+        self.assertEqual(quote["organization_branch_department"], 0)
 
     def test_show_details_omits_sensitive_crm_content(self):
         company = Company.objects.create(name="Completeness Sensitive Customer")

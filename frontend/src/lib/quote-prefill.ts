@@ -2,7 +2,6 @@ import type { QuoteFormSchemaV3 } from "@/lib/schemas/quoteSchema";
 
 export type QuotePrefillParams = {
   companyId?: string | null;
-  opportunityId?: string | null;
   serviceType?: string | null;
   originLocationId?: string;
   destinationLocationId?: string;
@@ -27,7 +26,6 @@ export const quoteModeFromServiceType = (
 
 export const buildQuotePrefillDefaults = ({
   companyId,
-  opportunityId,
   serviceType,
   originLocationId,
   destinationLocationId,
@@ -36,10 +34,8 @@ export const buildQuotePrefillDefaults = ({
 }: QuotePrefillParams): QuotePrefillResult => {
   const mode = quoteModeFromServiceType(serviceType);
   const serviceTypeKey = normalizedServiceType(serviceType);
-  const shouldLinkOpportunity = Boolean(opportunityId) && (!serviceTypeKey || Boolean(mode));
   const defaultValues: Partial<QuoteFormSchemaV3> = {
     customer_id: companyId || "",
-    opportunity_id: shouldLinkOpportunity ? opportunityId || undefined : undefined,
     service_scope: undefined,
     origin_location_id: originLocationId || "",
     destination_location_id: destinationLocationId || "",
@@ -47,9 +43,7 @@ export const buildQuotePrefillDefaults = ({
     destination_airport: destinationCode || "",
   };
 
-  if (mode) {
-    defaultValues.mode = mode;
-  }
+  if (mode) defaultValues.mode = mode;
 
   return {
     defaultValues,

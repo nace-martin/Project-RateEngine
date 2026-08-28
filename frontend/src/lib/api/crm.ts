@@ -5,7 +5,6 @@ import type {
   OpportunityPayload,
   PaginatedResponse,
   Task,
-  V3QuoteComputeResponse,
 } from "../types";
 
 import {
@@ -207,20 +206,5 @@ export async function completeTask(taskId: string): Promise<Task> {
     return await sendJson<Task>(API_BASE_URL + `/api/v3/crm/tasks/${taskId}/complete/`, "POST");
   } catch (error) {
     throw new Error(`Failed to complete task: ${(error as Error).message}`);
-  }
-}
-
-export async function listQuotesByOpportunity(opportunityId: string): Promise<V3QuoteComputeResponse[]> {
-  const url = new URL(API_BASE_URL + "/api/v3/quotes/");
-  url.searchParams.set("opportunity", opportunityId);
-  url.searchParams.set("is_archived", "false");
-
-  try {
-    const payload = await getJson<V3QuoteComputeResponse[] | PaginatedResponse<V3QuoteComputeResponse>>(
-      url.toString(),
-    );
-    return normalizeListResponse(payload);
-  } catch (error) {
-    throw new Error(`Failed to load linked quotes: ${(error as Error).message}`);
   }
 }

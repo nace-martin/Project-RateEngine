@@ -1,12 +1,11 @@
 import json
-from collections import Counter, defaultdict
+from collections import Counter
 
 from django.core.management.base import BaseCommand, CommandError
 
 from accounts.scope import SCOPE_FIELD_NAMES, get_active_memberships
 from crm.models import Interaction, Opportunity, Task
-from parties.models import Branch, Company, Contact, Department, Organization
-from quotes.models import Quote
+from parties.models import Company, Contact, Organization
 
 
 COVERAGE_KEYS = (
@@ -159,7 +158,7 @@ def build_report(*, show_details=False, limit=50):
             "organization",
             "branch",
             "department",
-        ).prefetch_related("quotes").order_by("created_at", "id"),
+        ).order_by("created_at", "id"),
         "interaction": Interaction.objects.select_related(
             "company",
             "opportunity",
@@ -167,7 +166,7 @@ def build_report(*, show_details=False, limit=50):
             "organization",
             "branch",
             "department",
-        ).prefetch_related("opportunity__quotes").order_by("created_at", "id"),
+        ).order_by("created_at", "id"),
         "task": Task.objects.select_related(
             "company",
             "opportunity",
@@ -176,7 +175,7 @@ def build_report(*, show_details=False, limit=50):
             "organization",
             "branch",
             "department",
-        ).prefetch_related("opportunity__quotes").order_by("created_at", "id"),
+        ).order_by("created_at", "id"),
     }
 
     branch_coverage = {}
@@ -300,12 +299,8 @@ def membership_coverage():
 
 
 def quote_coverage():
-    quote_ids = linked_quote_ids()
     coverage = empty_coverage()
     coverage["linked_quotes"] = 0
-    for quote in Quote.objects.filter(pk__in=quote_ids).select_related("organization", "branch", "department").order_by("id"):
-        coverage["linked_quotes"] += 1
-        coverage[scope_coverage_key(quote)] += 1
     return coverage
 
 
@@ -319,10 +314,7 @@ def source_scope_values(model_name, record):
 
 
 def quote_scope_values(model_name, record):
-    if model_name not in {"opportunity", "interaction", "task"}:
-        return empty_scope_bools()
-    quotes = linked_quotes_for_record(record)
-    return agreed_scope_bools(quotes)
+    return empty_scope_bools()
 
 
 def membership_scope_values(model_name, record):
@@ -343,8 +335,7 @@ def company_scope_values(model_name, record):
 def customer_scope_values(model_name, record):
     if model_name not in {"opportunity", "interaction", "task"}:
         return empty_scope_bools()
-    customers = [quote.customer for quote in linked_quotes_for_record(record) if getattr(quote, "customer_id", None)]
-    return agreed_scope_bools(customers)
+    return scope_bools(getattr(record, "company", None))
 
 
 def derivable_fields(record, source_values):
@@ -355,25 +346,6 @@ def derivable_fields(record, source_values):
             continue
         derivable[field] = any(values[field] for values in source_values.values())
     return derivable
-
-
-def linked_quotes_for_record(record):
-    if isinstance(record, Opportunity):
-        return list(record.quotes.all())
-    opportunity = getattr(record, "opportunity", None)
-    if opportunity is None:
-        return []
-    return list(opportunity.quotes.all())
-
-
-def linked_quote_ids():
-    opportunity_ids = set(Opportunity.objects.values_list("id", flat=True))
-    interaction_opportunity_ids = set(
-        Interaction.objects.exclude(opportunity_id__isnull=True).values_list("opportunity_id", flat=True)
-    )
-    return set(
-        Quote.objects.filter(opportunity_id__in=opportunity_ids.union(interaction_opportunity_ids)).values_list("id", flat=True)
-    )
 
 
 def owner_users(model_name, record):

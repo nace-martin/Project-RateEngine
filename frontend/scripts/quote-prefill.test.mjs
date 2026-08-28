@@ -5,20 +5,16 @@ import path from "node:path";
 import ts from "typescript";
 
 const frontendRoot = path.resolve(process.cwd());
-const sourcePath = path.join(frontendRoot, "src", "lib", "crm-quote-prefill.ts");
+const sourcePath = path.join(frontendRoot, "src", "lib", "quote-prefill.ts");
 
 async function loadPrefillModule() {
   const source = await readFile(sourcePath, "utf8");
   const transpiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ESNext,
-      target: ts.ScriptTarget.ES2020,
-    },
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
     fileName: sourcePath,
   }).outputText;
-
-  const tempDir = await mkdtemp(path.join(tmpdir(), "crm-quote-prefill-test-"));
-  const modulePath = path.join(tempDir, "crm-quote-prefill.mjs");
+  const tempDir = await mkdtemp(path.join(tmpdir(), "quote-prefill-test-"));
+  const modulePath = path.join(tempDir, "quote-prefill.mjs");
 
   try {
     await writeFile(modulePath, transpiled, "utf8");
@@ -34,34 +30,16 @@ assert.equal(quoteModeFromServiceType("AIR"), "AIR");
 assert.equal(quoteModeFromServiceType("air"), "AIR");
 
 for (const serviceType of ["SEA", "CUSTOMS", "TRANSPORT", "DOMESTIC", "MULTIMODAL"]) {
-  const prefill = buildQuotePrefillDefaults({
-    companyId: "company-1",
-    opportunityId: "opportunity-1",
-    serviceType,
-  });
-
-  assert.equal(
-    Object.hasOwn(prefill.defaultValues, "mode"),
-    false,
-    `${serviceType} should not prefill quote mode`,
-  );
-  assert.equal(
-    prefill.defaultValues.opportunity_id,
-    undefined,
-    `${serviceType} should not carry opportunity_id into quote defaults`,
-  );
+  const prefill = buildQuotePrefillDefaults({ companyId: "company-1", serviceType });
+  assert.equal(Object.hasOwn(prefill.defaultValues, "mode"), false);
+  assert.equal(prefill.defaultValues.customer_id, "company-1");
   assert.equal(prefill.unsupportedServiceType, serviceType);
 }
 
-const airPrefill = buildQuotePrefillDefaults({
-  companyId: "company-1",
-  opportunityId: "opportunity-1",
-  serviceType: "AIR",
-});
-
+const airPrefill = buildQuotePrefillDefaults({ companyId: "company-1", serviceType: "AIR" });
 assert.equal(airPrefill.defaultValues.mode, "AIR");
-assert.equal(airPrefill.defaultValues.opportunity_id, "opportunity-1");
+assert.equal(airPrefill.defaultValues.customer_id, "company-1");
 assert.equal(airPrefill.defaultValues.service_scope, undefined);
 assert.equal(airPrefill.unsupportedServiceType, undefined);
 
-console.log("crm quote prefill safety checks passed");
+console.log("quote prefill safety checks passed");

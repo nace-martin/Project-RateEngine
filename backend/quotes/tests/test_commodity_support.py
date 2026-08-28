@@ -265,7 +265,7 @@ class QuoteCommodityPersistenceTests(TestCase):
             initial_status=Quote.Status.DRAFT,
         )
 
-        self.assertIsNone(quote.opportunity_id)
+        self.assertFalse(hasattr(quote, "opportunity_id"))
         self.assertEqual(quote.customer, self.customer)
         self.assertEqual(quote.contact, self.contact)
         self.assertEqual(Opportunity.objects.count(), 0)
@@ -301,11 +301,11 @@ class QuoteCommodityPersistenceTests(TestCase):
         )
 
         updated.refresh_from_db()
-        self.assertIsNone(updated.opportunity_id)
+        self.assertFalse(hasattr(updated, "opportunity_id"))
         self.assertEqual(Opportunity.objects.count(), before_count)
 
-    def test_save_quote_update_preserves_opportunity_when_opportunity_id_omitted(self):
-        opportunity = Opportunity.objects.create(
+    def test_save_quote_update_remains_independent_from_existing_opportunities(self):
+        Opportunity.objects.create(
             company=self.customer,
             title="Existing CRM link",
             service_type="AIR",
@@ -314,7 +314,6 @@ class QuoteCommodityPersistenceTests(TestCase):
         quote = Quote.objects.create(
             customer=self.customer,
             contact=self.contact,
-            opportunity=opportunity,
             mode="AIR",
             shipment_type=Quote.ShipmentType.IMPORT,
             status=Quote.Status.DRAFT,
@@ -336,7 +335,7 @@ class QuoteCommodityPersistenceTests(TestCase):
         )
 
         updated.refresh_from_db()
-        self.assertEqual(updated.opportunity, opportunity)
+        self.assertFalse(hasattr(updated, "opportunity_id"))
         self.assertEqual(Opportunity.objects.count(), before_count)
 
 @override_settings(RBAC_ALLOW_LEGACY_SCOPE_FALLBACK_FOR_TESTS=True)

@@ -125,7 +125,7 @@ class CRMResilienceTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["status"], "DRAFT")
-        self.assertIsNone(response.data["opportunity"])
+        self.assertNotIn("opportunity", response.data)
         self.assertEqual(Opportunity.objects.count(), 0)
         self.assertEqual(Interaction.objects.count(), 0)
 
@@ -162,7 +162,7 @@ class CRMResilienceTests(APITestCase):
         self.assertEqual(quote.versions.count(), 2)
         self.assertEqual(quote.customer, self.customer)
         self.assertEqual(quote.contact, self.contact)
-        self.assertIsNone(quote.opportunity_id)
+        self.assertFalse(hasattr(quote, "opportunity_id"))
         second_version = quote.versions.get(version_number=2)
         self.assertEqual(second_version.lines.count(), first_line_count)
         self.assertEqual(
@@ -197,7 +197,6 @@ class CRMResilienceTests(APITestCase):
             service_scope="A2A",
             status="DRAFT",
             created_by=self.user,
-            opportunity=opportunity,
         )
         return quote, opportunity
 
@@ -221,7 +220,7 @@ class CRMResilienceTests(APITestCase):
     def _assert_crm_unchanged(self, quote, opportunity, opportunity_count):
         quote.refresh_from_db()
         opportunity.refresh_from_db()
-        self.assertEqual(quote.opportunity_id, opportunity.id)
+        self.assertFalse(hasattr(quote, "opportunity_id"))
         self.assertEqual(opportunity.status, Opportunity.Status.NEW)
         self.assertEqual(Opportunity.objects.count(), opportunity_count)
         self.assertEqual(Interaction.objects.count(), 0)

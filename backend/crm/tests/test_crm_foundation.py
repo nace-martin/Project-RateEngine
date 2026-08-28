@@ -9,14 +9,11 @@ from rest_framework.test import APIClient
 from accounts.models import Role, UserMembership
 from crm.models import Interaction, Opportunity, Task
 from crm.services import (
-    resolve_quote_opportunity,
     mark_opportunity_lost,
     mark_opportunity_quoted,
     mark_opportunity_won,
 )
 from parties.models import Branch, Company, Department, Organization
-from quotes.models import Quote
-from quotes.state_machine import QuoteStateMachine
 
 
 @pytest.fixture
@@ -45,17 +42,6 @@ def opportunity(company, user):
         estimated_revenue=Decimal("2500.00"),
         estimated_currency="PGK",
         owner=user,
-    )
-
-
-def create_quote(company, opportunity, user, *, status=Quote.Status.DRAFT, shipment_type=Quote.ShipmentType.IMPORT):
-    return Quote.objects.create(
-        customer=company,
-        opportunity=opportunity,
-        created_by=user,
-        mode="AIR",
-        shipment_type=shipment_type,
-        status=status,
     )
 
 
@@ -333,79 +319,6 @@ def test_mark_quoted_does_not_override_terminal_status(opportunity, user):
 
 
 @pytest.mark.django_db
-def test_quote_opportunity_helper_creates_quoted_status_for_finalized_quote(company, user):
-    opportunity, was_created = resolve_quote_opportunity(
-        customer=company,
-        mode="AIR",
-        shipment_type="EXPORT",
-        service_scope="A2A",
-        actor=user,
-        quote_status=Quote.Status.FINALIZED,
-    )
-
-    assert was_created is True
-    assert opportunity.status == Opportunity.Status.QUOTED
-    assert opportunity.service_type == "AIR"
-    assert opportunity.direction == "EXPORT"
-    assert opportunity.scope == "A2A"
-
-
-@pytest.mark.django_db
-def test_quote_opportunity_helper_maps_land_to_transport_without_domestic_service_type(company, user):
-    opportunity, was_created = resolve_quote_opportunity(
-        customer=company,
-        mode="LAND",
-        shipment_type="DOMESTIC",
-        service_scope="D2D",
-        actor=user,
-        quote_status=Quote.Status.DRAFT,
-    )
-
-    assert was_created is True
-    assert opportunity.status == Opportunity.Status.NEW
-    assert opportunity.service_type == "TRANSPORT"
-    assert opportunity.direction == "DOMESTIC"
-    assert not Opportunity.objects.filter(service_type="DOMESTIC").exists()
-
-
-@pytest.mark.django_db
-def test_quote_can_link_to_opportunity(company, opportunity, user):
-    quote = Quote.objects.create(
-        customer=company,
-        opportunity=opportunity,
-        created_by=user,
-        mode="AIR",
-        shipment_type=Quote.ShipmentType.IMPORT,
-    )
-
-    assert quote.opportunity == opportunity
-    assert opportunity.quotes.get() == quote
-
-
-@pytest.mark.django_db
-def test_quote_api_filters_by_opportunity(company, opportunity, user):
-    other_opportunity = Opportunity.objects.create(
-        company=company,
-        title="Unrelated lane",
-        service_type="SEA",
-        origin="LAE",
-        destination="POM",
-        owner=user,
-    )
-    matching_quote = create_quote(company, opportunity, user)
-    create_quote(company, other_opportunity, user)
-
-    client = APIClient()
-    client.force_authenticate(user=user)
-    response = client.get(f"/api/v3/quotes/?opportunity={opportunity.id}")
-
-    assert response.status_code == 200
-    payload = response.json()
-    results = payload["results"] if isinstance(payload, dict) and "results" in payload else payload
-    assert [row["id"] for row in results] == [str(matching_quote.id)]
-
-
-@pytest.mark.django_db
 def test_opportunity_workflow_actions_use_lifecycle_helpers(opportunity, user):
     client = APIClient()
     client.force_authenticate(user=user)
@@ -556,110 +469,3 @@ def test_import_opportunity_can_be_won_without_shipment(opportunity, user):
     assert won.direction == "IMPORT"
     assert won.status == Opportunity.Status.WON
     assert won.interactions.filter(system_event_type="OPPORTUNITY_WON").exists()
-
-
-@pytest.mark.django_db
-def test_linked_quote_finalize_marks_new_opportunity_quoted(company, opportunity, user):
-    quote = create_quote(company, opportunity, user)
-
-    success, error = QuoteStateMachine(quote).finalize(user=user)
-
-    assert success, error
-    opportunity.refresh_from_db()
-    assert opportunity.status == Opportunity.Status.QUOTED
-    assert opportunity.interactions.filter(system_event_type="QUOTE_FINALIZED").count() == 1
-    assert opportunity.interactions.filter(system_event_type="OPPORTUNITY_QUOTED").count() == 1
-
-
-@pytest.mark.django_db
-def test_linked_quote_sent_marks_qualified_opportunity_quoted_without_duplicate(company, opportunity, user):
-    opportunity.status = Opportunity.Status.QUALIFIED
-    opportunity.save(update_fields=["status", "updated_at"])
-    quote = create_quote(company, opportunity, user)
-    machine = QuoteStateMachine(quote)
-    success, error = machine.finalize(user=user)
-    assert success, error
-
-    success, error = machine.mark_sent(user=user)
-
-    assert success, error
-    opportunity.refresh_from_db()
-    assert opportunity.status == Opportunity.Status.QUOTED
-    assert opportunity.interactions.filter(system_event_type="QUOTE_SENT").count() == 1
-    assert opportunity.interactions.filter(system_event_type="OPPORTUNITY_QUOTED").count() == 1
-
-
-@pytest.mark.django_db
-def test_quoted_event_does_not_overwrite_won_or_lost_opportunity(company, opportunity, user):
-    for terminal_status in (Opportunity.Status.WON, Opportunity.Status.LOST):
-        opportunity.status = terminal_status
-        opportunity.save(update_fields=["status", "updated_at"])
-        quote = create_quote(company, opportunity, user)
-
-        success, error = QuoteStateMachine(quote).finalize(user=user)
-
-        assert success, error
-        opportunity.refresh_from_db()
-        assert opportunity.status == terminal_status
-
-
-@pytest.mark.django_db
-def test_quote_accepted_marks_linked_opportunity_won(company, opportunity, user):
-    quote = create_quote(company, opportunity, user)
-    machine = QuoteStateMachine(quote)
-    assert machine.finalize(user=user)[0]
-    assert machine.mark_sent(user=user)[0]
-
-    success, error = machine.mark_won(user=user)
-
-    assert success, error
-    opportunity.refresh_from_db()
-    assert opportunity.status == Opportunity.Status.WON
-    assert opportunity.won_by == user
-    assert "accepted" in opportunity.won_reason.lower()
-    assert opportunity.interactions.filter(system_event_type="QUOTE_ACCEPTED").count() == 1
-    assert opportunity.interactions.filter(system_event_type="OPPORTUNITY_WON").count() == 1
-
-
-@pytest.mark.django_db
-def test_import_quote_opportunity_can_be_won_without_shipment(company, opportunity, user):
-    opportunity.direction = "IMPORT"
-    opportunity.save(update_fields=["direction", "updated_at"])
-    quote = create_quote(company, opportunity, user, shipment_type=Quote.ShipmentType.IMPORT)
-    machine = QuoteStateMachine(quote)
-    assert machine.finalize(user=user)[0]
-    assert machine.mark_sent(user=user)[0]
-
-    success, error = machine.mark_won(user=user)
-
-    assert success, error
-    opportunity.refresh_from_db()
-    assert opportunity.status == Opportunity.Status.WON
-
-
-@pytest.mark.django_db
-def test_quote_lifecycle_does_not_duplicate_system_interactions(company, opportunity, user):
-    quote = create_quote(company, opportunity, user)
-    machine = QuoteStateMachine(quote)
-    assert machine.finalize(user=user)[0]
-    assert machine.mark_sent(user=user)[0]
-
-    second_success, _ = machine.mark_sent(user=user)
-
-    assert second_success is False
-    assert opportunity.interactions.filter(system_event_type="QUOTE_SENT").count() == 1
-    assert opportunity.interactions.filter(system_event_type="OPPORTUNITY_QUOTED").count() == 1
-
-
-@pytest.mark.django_db
-def test_lost_quote_does_not_mark_opportunity_lost_when_other_quote_active(company, opportunity, user):
-    lost_quote = create_quote(company, opportunity, user, status=Quote.Status.SENT)
-    create_quote(company, opportunity, user, status=Quote.Status.DRAFT)
-
-    success, error = QuoteStateMachine(lost_quote).mark_lost(user=user)
-
-    assert success, error
-    opportunity.refresh_from_db()
-    assert opportunity.status == Opportunity.Status.NEW
-    assert opportunity.interactions.filter(system_event_type="QUOTE_LOST").count() == 1
-    assert opportunity.interactions.filter(system_event_type="OPPORTUNITY_LOST").count() == 0

@@ -54,7 +54,7 @@ def test_rbac_crm_report_counts_scope_candidates():
     assert payload["summary"]["linked_to_customer_company"] == 3
     assert payload["summary"]["with_org_branch_department_scope"] == 0
     assert payload["summary"]["likely_globally_accessible_today"] == 4
-    assert payload["models"]["opportunity"]["future_scope_fields"] == ["owner", "company", "quotes"]
+    assert payload["models"]["opportunity"]["future_scope_fields"] == ["owner", "company"]
 
     details_json = json.dumps(payload["models"])
     assert "Sensitive call notes" not in details_json

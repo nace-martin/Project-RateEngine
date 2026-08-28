@@ -35,13 +35,12 @@ import {
   completeTask,
   getOpportunity,
   listInteractionsByOpportunity,
-  listQuotesByOpportunity,
   listTasksByOpportunity,
   markOpportunityQualified,
   markOpportunityLost,
   markOpportunityWon,
 } from '@/lib/api/crm';
-import type { CompanySearchResult, Interaction, Opportunity, Task, V3QuoteComputeResponse } from '@/lib/types';
+import type { CompanySearchResult, Interaction, Opportunity, Task } from '@/lib/types';
 import { useToast } from '@/context/toast-context';
 import { usePermissions } from '@/hooks/usePermissions';
 
@@ -139,7 +138,6 @@ export default function OpportunityDetailPage() {
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [quotes, setQuotes] = useState<V3QuoteComputeResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<'qualified' | 'won' | 'lost' | null>(null);
   const [completingTaskIds, setCompletingTaskIds] = useState<Set<string>>(() => new Set());
@@ -156,22 +154,19 @@ export default function OpportunityDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const [opportunityRow, interactionRows, taskRows, quoteRows] = await Promise.all([
+      const [opportunityRow, interactionRows, taskRows] = await Promise.all([
         getOpportunity(params.id),
         listInteractionsByOpportunity(params.id),
         listTasksByOpportunity(params.id).catch(() => []),
-        listQuotesByOpportunity(params.id).catch(() => []),
       ]);
       setOpportunity(opportunityRow);
       setInteractions(interactionRows);
       setTasks(taskRows);
-      setQuotes(quoteRows);
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to load opportunity.');
       setOpportunity(null);
       setInteractions([]);
       setTasks([]);
-      setQuotes([]);
     } finally {
       setLoading(false);
     }
@@ -278,19 +273,11 @@ export default function OpportunityDetailPage() {
     }
     : null;
 
-  const formatQuoteTotal = (quote: V3QuoteComputeResponse): string => {
-    const totals = quote.latest_version?.totals;
-    const amount = totals?.total_sell_fcy_incl_gst || totals?.total_sell_fcy || totals?.total_sell_pgk;
-    const currency = totals?.total_sell_fcy_currency || totals?.currency || quote.output_currency || 'PGK';
-    return formatCurrency(amount, currency);
-  };
-
   const isClosed = opportunity?.status === 'WON' || opportunity?.status === 'LOST';
   const createQuoteHref = useMemo(() => {
     if (!opportunity) return '/quotes/new';
     const params = new URLSearchParams({
       company: opportunity.company,
-      opportunity: opportunity.id,
       service_type: opportunity.service_type || '',
       origin: opportunity.origin || '',
       destination: opportunity.destination || '',
@@ -411,7 +398,6 @@ export default function OpportunityDetailPage() {
             <Tabs defaultValue="timeline" className="mt-6 space-y-4">
               <TabsList>
                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
-                <TabsTrigger value="quotes">Quotes</TabsTrigger>
                 <TabsTrigger value="tasks">Tasks</TabsTrigger>
               </TabsList>
 
@@ -430,51 +416,6 @@ export default function OpportunityDetailPage() {
                       sortedInteractions.map((interaction) => (
                         <TimelineItem key={interaction.id} interaction={interaction} />
                       ))
-                    )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="quotes">
-                <Card className="border-slate-200 shadow-sm">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-lg">Quotes</CardTitle>
-                    <CardDescription>Quotes linked to this CRM opportunity.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="px-6 pb-6 pt-2">
-                    {quotes.length === 0 ? (
-                      <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                        No quotes linked to this opportunity.
-                      </p>
-                    ) : (
-                      <div className="overflow-hidden rounded-md border border-slate-200">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Quote</TableHead>
-                              <TableHead>Status</TableHead>
-                              <TableHead>Created</TableHead>
-                              <TableHead className="text-right">Total Sell</TableHead>
-                              <TableHead className="text-right">Action</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {quotes.map((quote) => (
-                              <TableRow key={quote.id}>
-                                <TableCell className="font-medium">{quote.quote_number || quote.id}</TableCell>
-                                <TableCell>{quote.status}</TableCell>
-                                <TableCell>{formatDateTime(quote.created_at)}</TableCell>
-                                <TableCell className="text-right tabular-nums">{formatQuoteTotal(quote)}</TableCell>
-                                <TableCell className="text-right">
-                                  <Button variant="ghost" size="sm" asChild>
-                                    <Link href={`/quotes/${quote.id}`}>View</Link>
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
                     )}
                   </CardContent>
                 </Card>

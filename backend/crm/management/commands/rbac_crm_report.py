@@ -2,7 +2,6 @@ import json
 
 from django.core.management.base import BaseCommand
 from django.core.management.base import CommandError
-from django.db.models import Count
 
 from crm.models import Interaction, Opportunity, Task
 
@@ -59,7 +58,7 @@ class Command(BaseCommand):
         )
         self.stdout.write("")
         self.stdout.write("Current access: authenticated users can read CRM list/detail endpoints globally.")
-        self.stdout.write("Future scoping fields available: owner/author, company, opportunity, quote via opportunity.")
+        self.stdout.write("Future scoping fields available: owner/author, company, opportunity.")
         self.stdout.write("Missing durable scope fields: organization, branch, department.")
 
         for model_name, payload in report["models"].items():
@@ -109,20 +108,19 @@ def build_report(*, show_details=False, limit=25):
 
 
 def inspect_opportunities(*, show_details, limit):
-    queryset = Opportunity.objects.select_related("company", "owner").annotate(quote_count=Count("quotes"))
+    queryset = Opportunity.objects.select_related("company", "owner")
     summary = base_summary(queryset.count())
     summary.update(
         with_owner_or_author=queryset.filter(owner__isnull=False).count(),
         missing_owner_or_author=queryset.filter(owner__isnull=True).count(),
         linked_to_company=queryset.filter(company__isnull=False).count(),
         linked_to_customer_company=queryset.filter(company__is_customer=True).count(),
-        linked_to_quote=queryset.filter(quote_count__gt=0).count(),
     )
     finalize_global(summary)
     payload = model_payload(
         summary,
         ownership_fields=["owner", "won_by"],
-        future_scope_fields=["owner", "company", "quotes"],
+        future_scope_fields=["owner", "company"],
     )
     if show_details:
         payload["details"] = [
@@ -132,7 +130,6 @@ def inspect_opportunities(*, show_details, limit):
                 "status": row.status,
                 "user": getattr(row.owner, "username", None),
                 "company": company_label(row.company),
-                "quote": quote_label(row.quotes.first()),
                 "created_at": datetime_or_none(row.created_at),
             }
             for row in queryset.order_by("created_at", "id")[:limit]
@@ -141,22 +138,19 @@ def inspect_opportunities(*, show_details, limit):
 
 
 def inspect_interactions(*, show_details, limit):
-    queryset = Interaction.objects.select_related("company", "opportunity", "author").annotate(
-        quote_count=Count("opportunity__quotes")
-    )
+    queryset = Interaction.objects.select_related("company", "opportunity", "author")
     summary = base_summary(queryset.count())
     summary.update(
         with_owner_or_author=queryset.filter(author__isnull=False).count(),
         missing_owner_or_author=queryset.filter(author__isnull=True).count(),
         linked_to_company=queryset.filter(company__isnull=False).count(),
         linked_to_customer_company=queryset.filter(company__is_customer=True).count(),
-        linked_to_quote=queryset.filter(quote_count__gt=0).count(),
     )
     finalize_global(summary)
     payload = model_payload(
         summary,
         ownership_fields=["author"],
-        future_scope_fields=["author", "company", "opportunity", "opportunity.quotes"],
+        future_scope_fields=["author", "company", "opportunity"],
     )
     if show_details:
         payload["details"] = [
@@ -166,7 +160,6 @@ def inspect_interactions(*, show_details, limit):
                 "type": row.interaction_type,
                 "user": getattr(row.author, "username", None),
                 "company": company_label(row.company),
-                "quote": quote_label(row.opportunity.quotes.first()) if row.opportunity_id else None,
                 "created_at": datetime_or_none(row.created_at),
             }
             for row in queryset.order_by("created_at", "id")[:limit]
@@ -175,22 +168,19 @@ def inspect_interactions(*, show_details, limit):
 
 
 def inspect_tasks(*, show_details, limit):
-    queryset = Task.objects.select_related("company", "opportunity", "owner").annotate(
-        quote_count=Count("opportunity__quotes")
-    )
+    queryset = Task.objects.select_related("company", "opportunity", "owner")
     summary = base_summary(queryset.count())
     summary.update(
         with_owner_or_author=queryset.filter(owner__isnull=False).count(),
         missing_owner_or_author=queryset.filter(owner__isnull=True).count(),
         linked_to_company=queryset.filter(company__isnull=False).count(),
         linked_to_customer_company=queryset.filter(company__is_customer=True).count(),
-        linked_to_quote=queryset.filter(quote_count__gt=0).count(),
     )
     finalize_global(summary)
     payload = model_payload(
         summary,
         ownership_fields=["owner", "completed_by"],
-        future_scope_fields=["owner", "company", "opportunity", "opportunity.quotes"],
+        future_scope_fields=["owner", "company", "opportunity"],
     )
     if show_details:
         payload["details"] = [
@@ -200,7 +190,6 @@ def inspect_tasks(*, show_details, limit):
                 "status": row.status,
                 "user": getattr(row.owner, "username", None),
                 "company": company_label(row.company),
-                "quote": quote_label(row.opportunity.quotes.first()) if row.opportunity_id else None,
                 "created_at": datetime_or_none(row.created_at),
             }
             for row in queryset.order_by("created_at", "id")[:limit]
@@ -246,12 +235,6 @@ def company_label(company):
     if company is None:
         return None
     return f"{company.id}:{company.name}"
-
-
-def quote_label(quote):
-    if quote is None:
-        return None
-    return getattr(quote, "quote_number", None) or str(quote.id)
 
 
 def datetime_or_none(value):

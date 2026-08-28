@@ -713,7 +713,7 @@ def test_spot_create_quote_does_not_create_crm_records(monkeypatch):
     version = quote.versions.get(version_number=1)
     totals = version.totals
 
-    assert quote.opportunity_id is None
+    assert not hasattr(quote, "opportunity_id")
     assert Opportunity.objects.count() == 0
     assert Interaction.objects.count() == 0
     assert version.lines.count() == 3
@@ -724,10 +724,10 @@ def test_spot_create_quote_does_not_create_crm_records(monkeypatch):
     assert totals.total_sell_fcy_incl_gst == Decimal("30.00")
 
 
-def test_spot_create_quote_preserves_existing_opportunity_link(monkeypatch):
+def test_spot_create_quote_remains_independent_from_existing_opportunities(monkeypatch):
     user, origin, destination = _setup_user_and_locations()
     customer = Company.objects.create(name="Linked Spot Customer", is_customer=True, company_type="CUSTOMER")
-    opportunity = Opportunity.objects.create(
+    Opportunity.objects.create(
         company=customer,
         title="Existing SPOT opportunity",
         service_type="AIR",
@@ -738,7 +738,6 @@ def test_spot_create_quote_preserves_existing_opportunity_link(monkeypatch):
         destination_location=destination,
         shipment_type=Quote.ShipmentType.IMPORT,
         mode="AIR",
-        opportunity=opportunity,
         status=Quote.Status.INCOMPLETE,
         created_by=user,
     )
@@ -770,7 +769,7 @@ def test_spot_create_quote_preserves_existing_opportunity_link(monkeypatch):
 
     assert response.status_code == 200
     quote.refresh_from_db()
-    assert quote.opportunity_id == opportunity.id
+    assert not hasattr(quote, "opportunity_id")
     assert Opportunity.objects.count() == initial_opportunity_count
     assert Interaction.objects.count() == initial_interaction_count
     assert quote.versions.get(version_number=1).lines.count() == 3

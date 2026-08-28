@@ -1,6 +1,5 @@
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import Link from "next/link";
-import { ArrowRight, ExternalLink } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { getCustomerName } from "@/lib/quote-helpers";
 import type { V3QuoteComputeResponse } from "@/lib/types";
 
@@ -64,24 +63,6 @@ export default function InternalInspectionAlert({
               <ArrowRight className="h-3 w-3" />
               <span>{quote.destination_location?.split('-')[0] || quote.destination_location}</span>
             </div>
-          </div>
-
-          {/* Opportunity Link */}
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase">Opportunity</p>
-            <p className="font-medium text-slate-900">
-              {quote.opportunity ? (
-                <Link
-                  href={`/crm/opportunities/${quote.opportunity}`}
-                  className="text-primary hover:underline flex items-center gap-1"
-                >
-                  View CRM
-                  <ExternalLink className="h-3 w-3" />
-                </Link>
-              ) : (
-                <span className="text-slate-400 italic">None</span>
-              )}
-            </p>
           </div>
 
           {isDomesticQuote ? (

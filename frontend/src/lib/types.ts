@@ -315,7 +315,6 @@ export interface V3ManualOverride {
 
 export interface V3QuoteComputeRequest {
   quote_id?: string;
-  opportunity_id?: string;
   customer_id: string;
   contact_id: string;
   mode: string;
@@ -534,7 +533,6 @@ export interface V3QuoteComputeResponse {
   quote_number: string;
   customer: string | QuoteCustomerRef;
   contact: string | QuoteContactRef;
-  opportunity?: string | null;
   branding?: QuoteBrandingRef | null;
   mode: string;
   shipment_type: string; // The backend calculates and returns this

@@ -11,14 +11,12 @@ from parties.models import Company, Contact
 
 SOURCE_ALREADY_SCOPED = "already_scoped"
 SOURCE_PARENT = "parent_scope"
-SOURCE_LINKED_QUOTE = "linked_quote_scope"
 SOURCE_SINGLE_MEMBERSHIP = "single_membership"
 SOURCE_SHARED_MEMBERSHIPS = "shared_memberships"
 SOURCE_UNRESOLVED = "unresolved"
 
 REASON_ALREADY_SCOPED = "already_scoped"
 REASON_PARENT_SCOPE = "parent_scope"
-REASON_LINKED_QUOTE_SCOPE = "linked_quote_scope"
 REASON_SINGLE_MEMBERSHIP = "single_active_membership"
 REASON_SHARED_MEMBERSHIPS = "multiple_memberships_shared_values_only"
 REASON_MULTIPLE_MEMBERSHIPS = "multiple_memberships_ambiguous"
@@ -129,7 +127,7 @@ def build_report(*, show_details=False, limit=50):
                 "organization",
                 "branch",
                 "department",
-            ).prefetch_related("quotes").order_by("created_at", "id"),
+            ).order_by("created_at", "id"),
             show_details=show_details,
             limit=limit,
         ),
@@ -142,7 +140,7 @@ def build_report(*, show_details=False, limit=50):
                 "organization",
                 "branch",
                 "department",
-            ).prefetch_related("opportunity__quotes").order_by("created_at", "id"),
+            ).order_by("created_at", "id"),
             show_details=show_details,
             limit=limit,
         ),
@@ -155,7 +153,7 @@ def build_report(*, show_details=False, limit=50):
                 "organization",
                 "branch",
                 "department",
-            ).prefetch_related("opportunity__quotes").order_by("created_at", "id"),
+            ).order_by("created_at", "id"),
             show_details=show_details,
             limit=limit,
         ),
@@ -232,10 +230,6 @@ def candidate_for_record(model_name, record):
     if parent_candidate:
         return parent_candidate
 
-    quote_candidate = candidate_from_quote(record, values)
-    if quote_candidate:
-        return quote_candidate
-
     user = owner_user(model_name, record)
     membership_candidate = candidate_from_memberships(user, values)
     if membership_candidate:
@@ -256,20 +250,6 @@ def candidate_from_parents(model_name, record, values):
     merged = merge_from_sources(values, parents)
     if merged != values:
         return Candidate(merged, SOURCE_PARENT, REASON_PARENT_SCOPE)
-    return None
-
-
-def candidate_from_quote(record, values):
-    quotes = []
-    if isinstance(record, Opportunity):
-        quotes = list(record.quotes.all())
-    elif isinstance(record, (Interaction, Task)) and getattr(record, "opportunity_id", None):
-        quotes = list(record.opportunity.quotes.all())
-
-    scoped_quotes = [quote for quote in quotes if any(getattr(quote, f"{field}_id", None) for field in SCOPE_FIELD_NAMES)]
-    merged = merge_from_sources(values, scoped_quotes)
-    if merged != values:
-        return Candidate(merged, SOURCE_LINKED_QUOTE, REASON_LINKED_QUOTE_SCOPE)
     return None
 
 
