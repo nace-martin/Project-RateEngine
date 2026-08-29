@@ -12,7 +12,8 @@ from core.tests.helpers import create_location
 from parties.models import Company, Contact
 from quotes.models import Quote
 from quotes.quote_result_contract import shipment_metrics_from_quote
-from quotes.spot_models import SpotPricingEnvelopeDB
+from quotes.services.draft_quote_adapter import get_validated_draft_quote
+from quotes.spot_models import SPESourceBatchDB, SpotPricingEnvelopeDB
 
 
 @override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
@@ -117,6 +118,34 @@ class TrustedQuoteSpotContextTests(APITestCase):
         self.assertEqual(
             set(context["missing_components"]),
             {"FREIGHT", "ORIGIN_LOCAL", "DESTINATION_LOCAL"},
+        )
+
+    def test_quote_linked_envelope_draft_quote_uses_source_batch_supplier(self):
+        envelope = SpotPricingEnvelopeDB.objects.create(
+            quote=self.quote,
+            status=SpotPricingEnvelopeDB.Status.DRAFT,
+            shipment_context_json={
+                "origin_code": "CAN",
+                "destination_code": "POM",
+                "origin_country": "CN",
+                "destination_country": "PG",
+                "mode": "AIR",
+            },
+            shipment_context_hash="quote-linked-draft-regression",
+            expires_at=timezone.now() + timezone.timedelta(days=7),
+            created_by=self.sales,
+        )
+        SPESourceBatchDB.objects.create(
+            envelope=envelope,
+            source_kind=SPESourceBatchDB.SourceKind.AGENT,
+            source_type=SPESourceBatchDB.SourceType.TEXT,
+            label="Uploaded rates",
+        )
+
+        draft_quote = get_validated_draft_quote(envelope)
+        self.assertEqual(
+            draft_quote.supplier_context["supplier_name"],
+            "Uploaded rates",
         )
 
     def test_conflicting_client_context_is_rejected(self):
