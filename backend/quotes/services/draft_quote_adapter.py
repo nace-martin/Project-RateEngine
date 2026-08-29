@@ -24,8 +24,6 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
     
     # Resolve supplier name
     supplier_name = shipment_ctx.get('supplier_name')
-    if not supplier_name and spe_db.quote and spe_db.quote.carrier:
-        supplier_name = spe_db.quote.carrier.name
     if not supplier_name:
         first_batch = spe_db.source_batches.first()
         if first_batch:
