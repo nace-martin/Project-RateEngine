@@ -1,0 +1,180 @@
+---
+name: spot-workflow-verification
+description: Verify RateEngine SPE/SPOT workflow changes across intake, raw evidence, normalization, unresolved findings, operator resolution, ProductCode requests, finalization/reopen controls, V4 computation, quote creation, and SPOT freight replacement. Use after changing or reviewing SPOT workflow behavior; do not use for unrelated standard-quote work.
+---
+
+# SPOT Workflow Verification
+
+## Purpose
+
+Verify that a SPOT workflow change preserves evidence, operator control, auditability, state integrity, RBAC, and correct commercial calculation from intake through final quote output.
+
+## Trigger
+
+Use when work changes or could affect:
+
+- supplier response intake or parsing;
+- raw evidence persistence or retrieval;
+- normalized SPOT charge lines;
+- Draft Quote / Exception Workspace findings;
+- mapping, ignore, edit, classify, request, resolve, finalize, or reopen actions;
+- ProductCode request lifecycle;
+- review locks or idempotency;
+- SPE envelope persistence;
+- V4 computation using `spot_envelope_id`;
+- SPOT-to-standard freight replacement; or
+- quote creation/public output derived from SPOT.
+
+Do not use for unrelated standard quote changes that do not touch SPE/SPOT behavior.
+
+## Required Context
+
+Before verification:
+
+1. Read root `AGENTS.md` and `backend/quotes/AGENTS.md`.
+2. Read the applicable maintained SPOT contracts, especially `docs/spot-draft-quote-contract.md` and `docs/spot-draft-quote-resolve-contract.md`.
+3. Inspect the current source and tests for the exact workflow path being changed.
+4. Identify the operator role(s), expected state transition, and intended commercial effect.
+
+Treat proposal/history documents as supporting context only unless current source confirms the behavior.
+
+## Workflow
+
+### 1. Define the exercised SPOT scenario
+
+Describe one realistic scenario, including as applicable:
+
+- supplier/source input;
+- quote lane/mode/direction;
+- relevant raw charge text;
+- normalized charge values;
+- unresolved findings;
+- operator role;
+- expected resolution action;
+- expected final state; and
+- pricing bucket expected to be replaced.
+
+Prefer existing fixtures and known workflow tests.
+
+### 2. Verify evidence preservation
+
+Confirm that:
+
+- original supplier/source evidence remains available and unchanged;
+- normalization does not rewrite raw evidence;
+- parser uncertainty remains visible rather than being silently cleaned up;
+- mapping, currency, unit, rate, and coverage uncertainty is surfaced to the operator; and
+- ignored or rejected information remains auditable where the workflow contract requires it.
+
+### 3. Verify AI versus operator authority
+
+Confirm AI is limited to extraction, structuring, and suggestion. Prove that unresolved commercial decisions are not silently:
+
+- auto-mapped;
+- auto-approved;
+- auto-ignored;
+- auto-resolved; or
+- auto-finalized.
+
+Where ProductCode requests are involved, verify that request creation is not treated as approval and that pending/rejected requests remain unresolved mappings.
+
+### 4. Verify state transitions
+
+Exercise the affected transition and assert exact before/after state. Depending on scope, check:
+
+```text
+intake
+→ normalized
+→ unresolved/reviewable
+→ operator decision
+→ resolved
+→ finalized
+→ reopened (if authorized)
+```
+
+Verify finalized-review mutation locks and idempotent retries where applicable. Reopen behavior must remain manager/admin controlled according to the active contract.
+
+### 5. Verify RBAC and object scope
+
+For changed mutation or read paths, test the relevant permitted and denied roles. Record exact request/action and result. Do not treat frontend button visibility as authorization evidence.
+
+### 6. Verify SPE persistence
+
+Confirm the intended active persistence path is used and deprecated quote-scoped SPOT CRUD is not revived. Where applicable verify the correct envelope, source batch, charge line, acknowledgement, audit, or resolution records are linked to the workflow.
+
+### 7. Verify V4 computation
+
+Confirm quote calculation uses the intended SPE envelope through `PricingServiceV4Adapter` and `spot_envelope_id`. Check that resolved operator decisions are represented correctly in the calculation input.
+
+### 8. Prove SPOT replacement
+
+For any SPOT freight charge:
+
+- identify the matching standard freight bucket;
+- prove the standard freight in that bucket is replaced;
+- prove no duplicate freight line survives in persisted output; and
+- prove customer-facing totals do not contain both standard and SPOT freight for the same bucket.
+
+Include Domestic freight when it belongs to the matching bucket.
+
+### 9. Verify quote creation and output
+
+When the workflow reaches quote creation, inspect the resulting quote lines and customer-facing/public output. Verify the commercial result, not just HTTP success or a non-403 response.
+
+### 10. Run targeted checks
+
+Use the narrowest relevant quote/SPOT tests first, then expand only when required by scope. Include exact status/error assertions and state transition assertions rather than generic smoke tests.
+
+## Stop Conditions
+
+Stop the affected verification and report the unresolved issue when:
+
+- raw evidence has been lost or mutated;
+- a commercial decision lacks operator authority;
+- unresolved information is being silently accepted;
+- ProductCode approval state is ambiguous;
+- finalized mutation controls or RBAC cannot be proven;
+- the workflow uses a deprecated SPOT persistence/API path;
+- the envelope used for calculation cannot be identified; or
+- standard and SPOT freight appear to stack for the same bucket.
+
+Do not weaken safety or audit controls merely to complete the scenario.
+
+## Output
+
+Report the verification as a workflow record. Example:
+
+```text
+Scenario: supplier air-freight reply → SPOT Draft Quote → operator resolution → final quote
+Operator role: Commercial Manager
+
+Evidence
+- raw source preserved: yes
+- parser uncertainty surfaced: yes
+- unresolved mapping auto-resolved: no
+
+State
+- initial: REVIEW_REQUIRED
+- action: operator mapped charge + finalized review
+- final: FINALIZED
+- retry idempotent: yes
+
+Authority
+- permitted role: exact action returned expected success
+- denied role: exact action returned expected denial
+
+Pricing
+- SPE envelope used by V4: yes
+- matching standard freight replaced: yes
+- duplicate freight lines: none
+- unrelated quote totals changed: none
+
+Checks
+- focused SPOT tests: passed
+- exact endpoint/state assertions: passed
+- end-to-end quote output: passed
+
+Residual risk: none identified in the exercised path
+```
+
+Never summarize SPOT verification only as `endpoint works`, `not 403`, `smoke test passed`, or `quote generated`.
