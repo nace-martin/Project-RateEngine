@@ -36,7 +36,6 @@ jobs:
               '## Rollback',
               '## Definition of Done',
             ];
-
             const missingSections = requiredSections.filter((section) => !body.includes(section));
             if (missingSections.length) {
               core.setFailed(`Missing required PR sections: ${missingSections.join(', ')}`);
@@ -60,29 +59,43 @@ jobs:
               return;
             }
 
-            const placeholderPatterns = [
-              /Final head SHA:\s*(pending|tbd|todo)/i,
-              /Required CI gates on that SHA:\s*(pending|tbd|todo)/i,
-              /Command and exact result\s*$/im,
-              /Action and observed result, or why manual verification was not possible\s*$/im,
-            ];
-            const unresolved = placeholderPatterns.filter((pattern) => pattern.test(body));
-            if (unresolved.length) {
-              core.setFailed('Replace pending/template verification placeholders with concrete evidence before merge.');
+            const finalHeadMatch = body.match(/Final head SHA:\s*`?([0-9a-f]{40})`?/i);
+            if (!finalHeadMatch) {
+              core.setFailed('Record the 40-character Final head SHA in the PR body.');
+              return;
+            }
+            if (finalHeadMatch[1].toLowerCase() !== pr.head.sha.toLowerCase()) {
+              core.setFailed(`Final head SHA in PR body (${finalHeadMatch[1]}) does not match current PR head (${pr.head.sha}).`);
               return;
             }
 
-            const dodChecks = [
-              'Intended behavior is implemented and proven with concrete evidence.',
-              'High-risk adjacent behavior was explicitly verified unchanged.',
-              'Applicable commercial/safety invariants were verified at the correct layer.',
-              'Required targeted checks and broader CI gates are green on the final head SHA.',
-              'No unresolved review findings or unexplained blockers remain.',
-              'Scope, residual risk, and rollback are accurately recorded.',
+            const ciMatch = body.match(/Required CI gates on that SHA:\s*(.+)/i);
+            if (!ciMatch || !ciMatch[1].trim() || /pending|tbd|todo/i.test(ciMatch[1])) {
+              core.setFailed('Record concrete required-CI evidence for the final head SHA.');
+              return;
+            }
+
+            const templatePlaceholders = [
+              'Command/check and exact result',
+              'Action and observed result, or why manual verification was not possible',
             ];
-            const unchecked = dodChecks.filter((label) => {
-              const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              return !new RegExp(`- \\[x\\] ${escaped}`, 'i').test(body);
+            const unresolved = templatePlaceholders.filter((placeholder) => body.includes(placeholder));
+            if (unresolved.length) {
+              core.setFailed(`Replace verification template placeholders: ${unresolved.join(' | ')}`);
+              return;
+            }
+
+            const requiredDodFragments = [
+              'Intended behavior is proven',
+              'High-risk adjacent behavior is protected by evidence',
+              'Applicable commercial/safety invariants were checked at the correct layer',
+              'Required CI gates are green on the final head SHA',
+              'No unresolved review findings or unexplained blockers remain',
+              'Scope, residual risk, and rollback are accurately recorded',
+            ];
+            const unchecked = requiredDodFragments.filter((fragment) => {
+              const escaped = fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              return !new RegExp(`- \\[x\\].*${escaped}`, 'i').test(body);
             });
             if (unchecked.length) {
               core.setFailed(`Definition of Done is incomplete: ${unchecked.join(' | ')}`);
