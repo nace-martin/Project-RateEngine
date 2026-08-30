@@ -1,13 +1,14 @@
 # backend/quotes/signals.py
 """
-Django signals for Quote lifecycle event tracking.
-Auto-creates QuoteEvent entries when quote status changes.
+Django signals for Quote lifecycle event tracking and Quote-linked SPOT journey snapshots.
 """
 
+from django.db import connection, transaction
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
 from .models import Quote, QuoteEvent
+from .spot_models import SpotPricingEnvelopeDB
 
 # Store original status before save
 _original_statuses = {}
@@ -74,3 +75,38 @@ def create_quote_event(sender, instance, created, **kwargs):
                     'new_status': instance.status
                 }
             )
+
+
+@receiver(post_save, sender=SpotPricingEnvelopeDB)
+def persist_quote_linked_spot_journey(sender, instance, created, **kwargs):
+    """Persist the deterministic dark-mode journey for a newly created live Quote-linked SPE.
+
+    Only server-owned Quote snapshots carry a matching ``quote_id`` inside the
+    immutable shipment context. Historical/manual fixtures without that marker
+    are deliberately left untouched rather than guessed or backfilled.
+    """
+    if not created or not instance.quote_id:
+        return
+
+    context = instance.shipment_context_json if isinstance(instance.shipment_context_json, dict) else {}
+    if str(context.get("quote_id") or "") != str(instance.quote_id):
+        return
+
+    from quotes.services.air_journey_planner import AirJourneyPlanner
+    from quotes.services.journey_persistence import ShipmentJourneyPersistenceService
+
+    try:
+        plan = AirJourneyPlanner().plan(context)
+        ShipmentJourneyPersistenceService().persist_plan(
+            plan=plan,
+            quote=instance.quote,
+            spot_envelope=instance,
+            created_by=instance.created_by,
+        )
+    except Exception:
+        # Quote-linked SPE creation is atomic in the live API. If journey
+        # persistence fails, mark that transaction for rollback so we do not
+        # commit a new live SPE without its required journey snapshot.
+        if connection.in_atomic_block:
+            transaction.set_rollback(True)
+        raise
