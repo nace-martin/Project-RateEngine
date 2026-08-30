@@ -488,6 +488,8 @@ class ExportMissingSellRateTest(TestCase):
         self.assertEqual(result.total_cost_pgk, Decimal('123.45'))
         self.assertEqual(result.total_sell_pgk, Decimal('0.00'))
         self.assertFalse(result.line_items[0].included_in_total)
+        self.assertEqual(result.line_items[0].cost_source, 'FALLBACK_RULE')
+        self.assertEqual(result.line_items[0].rate_source, 'FALLBACK_RULE')
 
 
 class ExportPercentRateSelectionTest(ExportEngineTestCase):
@@ -717,4 +719,3 @@ class ExportProductCodeDecouplingTests(TestCase):
             )
         self.assertIn("Configuration Error", str(context.exception))
         self.assertIn("EXP-FRT-AIR", str(context.exception))
-
