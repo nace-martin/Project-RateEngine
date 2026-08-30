@@ -1,6 +1,10 @@
 name: CI Diagnosis
 
 on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - '.github/workflows/ci-diagnosis.yml'
   workflow_run:
     workflows:
       - CI
@@ -15,9 +19,25 @@ permissions:
   pull-requests: write
 
 jobs:
+  self-check:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm diagnosis workflow loads
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # ratchet:actions/github-script@v7
+        with:
+          script: |
+            const authoritativeGates = ['CI', 'Container Integrity', 'PR Readiness'];
+            if (authoritativeGates.length !== 3) {
+              core.setFailed('Authoritative gate configuration is incomplete.');
+              return;
+            }
+            core.info(`CI Diagnosis is configured for: ${authoritativeGates.join(', ')}`);
+
   diagnose:
     if: >-
-      ${{ github.event.workflow_run.event == 'pull_request' &&
+      ${{ github.event_name == 'workflow_run' &&
+          github.event.workflow_run.event == 'pull_request' &&
           github.event.workflow_run.conclusion != 'success' &&
           github.event.workflow_run.conclusion != 'skipped' &&
           github.event.workflow_run.conclusion != 'neutral' }}
