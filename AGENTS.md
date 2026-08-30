@@ -22,8 +22,9 @@ Then:
 1. Understand the requested outcome and boundaries.
 2. Inspect the relevant files and applicable nested `AGENTS.md`.
 3. Consult canonical documentation for facts the change depends on.
-4. Choose the narrowest useful validation.
-5. Proceed unless a hard boundary below is reached.
+4. Route the task to any matching verification skill in Section 6.
+5. Choose the narrowest useful validation.
+6. Proceed unless a hard boundary below is reached.
 
 Technical uncertainty is a reason to investigate, trace, and test. It is not by itself a reason to stop.
 
@@ -47,7 +48,7 @@ RateEngine/
 │   └── e2e/            Playwright workflows
 ├── docs/               architecture, operations, audits, and validation
 ├── scripts/            repository utilities
-├── .codex/skills/      reusable Codex procedures
+├── .codex/skills/      reusable task procedures
 ├── .github/workflows/  CI and deployment workflows
 └── .github/pull_request_template.md
 ```
@@ -87,9 +88,49 @@ AI may extract, structure, and suggest SPOT intake data. It does not approve Pro
 
 For hosting, storage, migrations, secrets, runtime behavior, static/media handling, or background jobs, inspect `docs/cloud_run_deployment.md`, `docs/github_actions_deployment.md`, and the active workflows before acting. Do not commit secrets or assume local production persistence.
 
-## 6. Validation & Verification
+## 6. Task Routing & Definition of Done
 
-Default to the narrowest validation that can catch a regression:
+Before implementing or reviewing a change, classify its credible impact and load every matching task procedure. Routing is based on what the change **can affect**, not only the directory being edited.
+
+```text
+Rates / COGS / SELL / FX / CAF / margin / GST / inclusion / commercial totals
+→ .codex/skills/pricing-change-verification/SKILL.md
+
+SPE/SPOT intake / evidence / resolution / ProductCode requests / SPOT replacement
+→ .codex/skills/spot-workflow-verification/SKILL.md
+
+Quote creation / persistence / lifecycle / approval / public output / PDF / export
+→ .codex/skills/quote-regression-check/SKILL.md
+
+Seed / remediation / ProductCode / ChargeAlias / backfill / controlled data writes
+→ .codex/skills/seed-data-change/SKILL.md
+
+Module boundaries / large refactors / dead code / structural cleanup
+→ .codex/skills/structural-audit/SKILL.md
+```
+
+Skills may compose. A SPOT pricing change can require SPOT, pricing, and quote regression verification. Do not skip a matching skill because another skill already ran; reuse its evidence instead of duplicating work.
+
+For a non-matching task, explicitly record `No verification skill triggered` rather than forcing an irrelevant procedure.
+
+Historical green CI on an old branch is not current verification. Verify the final change against a branch based on current intended `main`/base and use the final head SHA as the evidence boundary.
+
+A task is **done** only when all applicable items are true:
+
+1. the intended behavior is implemented and proven with concrete evidence;
+2. high-risk adjacent behavior is explicitly verified unchanged;
+3. commercial values are checked at the correct layer when applicable;
+4. safety-critical summaries/flags are cross-checked against their underlying persisted truth where applicable;
+5. targeted checks pass, and required broader CI gates are green on the final head;
+6. unresolved review findings and known blockers are cleared or explicitly accepted by the user;
+7. the PR accurately records scope, verification, residual risk, and rollback; and
+8. when the user requested end-to-end completion, the approved change is merged to the intended base.
+
+Do not call work done merely because code was written, one test passed, or a PR was opened.
+
+## 7. Validation & Verification
+
+Default to the narrowest validation that can catch a regression, then expand according to the routed skill and change surface:
 
 ```text
 Backend file           → targeted Ruff check + affected Django/pytest tests
@@ -125,7 +166,7 @@ Smoke tested. Looks good. Manual testing passed.
 
 If manual verification is not possible, state why, what was verified instead, and the residual risk. Use `.github/pull_request_template.md` for PR reporting.
 
-## 7. Hard Boundaries
+## 8. Hard Boundaries
 
 Require an explicit decision before proceeding when the work would:
 
@@ -140,7 +181,7 @@ Require an explicit decision before proceeding when the work would:
 
 For ProductCode, ChargeAlias, remediation, backfill, or comparable data writes, follow `.codex/skills/seed-data-change/SKILL.md`. Dry-run approval does not authorize apply mode.
 
-## 8. Deeper Instructions
+## 9. Deeper Instructions
 
 - `backend/pricing_v4/AGENTS.md`: pricing selection, missing rates, commodity handling, and pricing verification.
 - `backend/quotes/AGENTS.md`: quote lifecycle, SPE/SPOT intake, evidence, operator control, and deprecated paths.
