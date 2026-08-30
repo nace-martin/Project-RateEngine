@@ -211,6 +211,17 @@ class QuoteStateMachine:
             )
             logger.warning(f"Invalid quote transition attempt: {error}")
             return False, error
+
+        # Finalization must trust the persisted charge lines as well as the
+        # aggregate totals flag. A stale/incorrect QuoteTotal summary must not
+        # allow a quote with a missing-rate line to become customer-final.
+        latest_version = self.quote.versions.order_by('-version_number').first()
+        if latest_version:
+            totals = getattr(latest_version, 'totals', None)
+            totals_missing = bool(totals and totals.has_missing_rates)
+            lines_missing = latest_version.lines.filter(is_rate_missing=True).exists()
+            if totals_missing or lines_missing:
+                return False, 'Cannot finalize quote with missing rates. Complete all required rates first.'
         
         try:
             # Delegate to the model's finalize() which handles:
