@@ -33,6 +33,7 @@ Before verification:
 2. Identify the exact pricing path changed and the affected quote scenario.
 3. Inspect current selector, engine, adapter, persistence, and output code relevant to the change.
 4. Identify the commercial baseline that should remain unchanged unless the task explicitly changes it.
+5. Identify which layer owns each expected field: raw engine result, adapter/canonical quote result, persisted `QuoteLine`, or customer-facing output. Do not compare differently normalized layers as if their metadata vocabulary must be identical.
 
 Do not invent a missing rate, rule, ProductCode, ChargeAlias, currency assumption, or expected total in order to complete verification.
 
@@ -81,7 +82,20 @@ Where rate selection is involved, prove:
 - missing coverage remains explicit rather than silently replaced; and
 - commodity or ProductCode behavior comes from canonical definitions rather than name matching or guesswork.
 
-### 4. Verify commercial arithmetic
+### 4. Verify source semantics by layer
+
+When source metadata is asserted, distinguish commercial truth from normalized representation. A known COGS may remain commercially authoritative even when a canonical quote line intentionally uses a different `rate_source` to describe missing SELL coverage.
+
+For each affected layer, record the expected meaning of fields such as:
+
+- `cost_source` / `canonical_cost_source`;
+- `rate_source`;
+- `is_rate_missing`;
+- `included_in_total`.
+
+If a test disagrees with current canonical normalization but the commercial values and documented contract are correct, fix the stale expectation rather than changing runtime pricing logic to satisfy the test.
+
+### 5. Verify commercial arithmetic
 
 Check affected values individually rather than validating only the final total. As applicable, capture before/after or expected/actual values for:
 
@@ -101,11 +115,11 @@ quote total
 
 If an item is unchanged, say so explicitly when it is commercially relevant to the change.
 
-### 5. Verify SPOT replacement when applicable
+### 6. Verify SPOT replacement when applicable
 
 For hybrid/SPOT scenarios, prove that the matching standard freight bucket is replaced rather than stacked. Check both persisted quote lines and customer-facing totals. Domestic freight must not be double-counted when it is part of the replaced bucket.
 
-### 6. Run targeted automated checks
+### 7. Run targeted automated checks
 
 Start with the narrowest relevant checks:
 
@@ -114,9 +128,9 @@ Start with the narrowest relevant checks:
 - exact selector tests where selection changed;
 - focused API or end-to-end quote tests when adapter/persistence/output changed.
 
-Run broader suites only when the scope justifies them. Do not report unrun checks as passed.
+Run broader suites only when the scope justifies them. Do not report unrun checks as passed. Before merge, use CI from the current branch head as the authoritative broader regression result.
 
-### 7. Perform an end-to-end commercial check
+### 8. Perform an end-to-end commercial check
 
 When the change can reach a generated quote, execute one realistic end-to-end scenario through the affected path. Confirm the resulting quote lines and total, not merely the HTTP status or absence of an exception.
 
@@ -128,7 +142,8 @@ Stop the affected commercial verification and report the gap when:
 - a required ProductCode or ChargeAlias decision is unresolved;
 - mixed-currency behavior cannot be proven;
 - a missing rate is being hidden by fallback behavior;
-- the result depends on production-only data that cannot be safely inspected; or
+- the result depends on production-only data that cannot be safely inspected;
+- source metadata expectations mix raw-engine and canonical/persisted semantics without an identified contract; or
 - unrelated commercial totals move and the cause is not understood.
 
 Do not change commercial rules merely to make a test pass.
@@ -152,11 +167,17 @@ Commercial result
 - Quote total delta: K0.00
 - Unrelated buckets changed: none
 
+Contract result
+- raw engine source semantics: verified
+- canonical/persisted source semantics: verified
+- missing/inclusion flags: verified
+
 Verification
 - targeted Ruff: passed
 - selector tests: passed
 - affected pricing tests: passed
 - end-to-end quote scenario: passed
+- current-head CI: passed
 
 Residual risk: none identified in the exercised path
 ```
