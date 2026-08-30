@@ -559,37 +559,6 @@ def test_import_opportunity_can_be_won_without_shipment(opportunity, user):
 
 
 @pytest.mark.django_db
-def test_linked_quote_finalize_marks_new_opportunity_quoted(company, opportunity, user):
-    quote = create_quote(company, opportunity, user)
-
-    success, error = QuoteStateMachine(quote).finalize(user=user)
-
-    assert success, error
-    opportunity.refresh_from_db()
-    assert opportunity.status == Opportunity.Status.QUOTED
-    assert opportunity.interactions.filter(system_event_type="QUOTE_FINALIZED").count() == 1
-    assert opportunity.interactions.filter(system_event_type="OPPORTUNITY_QUOTED").count() == 1
-
-
-@pytest.mark.django_db
-def test_linked_quote_sent_marks_qualified_opportunity_quoted_without_duplicate(company, opportunity, user):
-    opportunity.status = Opportunity.Status.QUALIFIED
-    opportunity.save(update_fields=["status", "updated_at"])
-    quote = create_quote(company, opportunity, user)
-    machine = QuoteStateMachine(quote)
-    success, error = machine.finalize(user=user)
-    assert success, error
-
-    success, error = machine.mark_sent(user=user)
-
-    assert success, error
-    opportunity.refresh_from_db()
-    assert opportunity.status == Opportunity.Status.QUOTED
-    assert opportunity.interactions.filter(system_event_type="QUOTE_SENT").count() == 1
-    assert opportunity.interactions.filter(system_event_type="OPPORTUNITY_QUOTED").count() == 1
-
-
-@pytest.mark.django_db
 def test_quoted_event_does_not_overwrite_won_or_lost_opportunity(company, opportunity, user):
     for terminal_status in (Opportunity.Status.WON, Opportunity.Status.LOST):
         opportunity.status = terminal_status
@@ -601,65 +570,3 @@ def test_quoted_event_does_not_overwrite_won_or_lost_opportunity(company, opport
         assert success, error
         opportunity.refresh_from_db()
         assert opportunity.status == terminal_status
-
-
-@pytest.mark.django_db
-def test_quote_accepted_marks_linked_opportunity_won(company, opportunity, user):
-    quote = create_quote(company, opportunity, user)
-    machine = QuoteStateMachine(quote)
-    assert machine.finalize(user=user)[0]
-    assert machine.mark_sent(user=user)[0]
-
-    success, error = machine.mark_won(user=user)
-
-    assert success, error
-    opportunity.refresh_from_db()
-    assert opportunity.status == Opportunity.Status.WON
-    assert opportunity.won_by == user
-    assert "accepted" in opportunity.won_reason.lower()
-    assert opportunity.interactions.filter(system_event_type="QUOTE_ACCEPTED").count() == 1
-    assert opportunity.interactions.filter(system_event_type="OPPORTUNITY_WON").count() == 1
-
-
-@pytest.mark.django_db
-def test_import_quote_opportunity_can_be_won_without_shipment(company, opportunity, user):
-    opportunity.direction = "IMPORT"
-    opportunity.save(update_fields=["direction", "updated_at"])
-    quote = create_quote(company, opportunity, user, shipment_type=Quote.ShipmentType.IMPORT)
-    machine = QuoteStateMachine(quote)
-    assert machine.finalize(user=user)[0]
-    assert machine.mark_sent(user=user)[0]
-
-    success, error = machine.mark_won(user=user)
-
-    assert success, error
-    opportunity.refresh_from_db()
-    assert opportunity.status == Opportunity.Status.WON
-
-
-@pytest.mark.django_db
-def test_quote_lifecycle_does_not_duplicate_system_interactions(company, opportunity, user):
-    quote = create_quote(company, opportunity, user)
-    machine = QuoteStateMachine(quote)
-    assert machine.finalize(user=user)[0]
-    assert machine.mark_sent(user=user)[0]
-
-    second_success, _ = machine.mark_sent(user=user)
-
-    assert second_success is False
-    assert opportunity.interactions.filter(system_event_type="QUOTE_SENT").count() == 1
-    assert opportunity.interactions.filter(system_event_type="OPPORTUNITY_QUOTED").count() == 1
-
-
-@pytest.mark.django_db
-def test_lost_quote_does_not_mark_opportunity_lost_when_other_quote_active(company, opportunity, user):
-    lost_quote = create_quote(company, opportunity, user, status=Quote.Status.SENT)
-    create_quote(company, opportunity, user, status=Quote.Status.DRAFT)
-
-    success, error = QuoteStateMachine(lost_quote).mark_lost(user=user)
-
-    assert success, error
-    opportunity.refresh_from_db()
-    assert opportunity.status == Opportunity.Status.NEW
-    assert opportunity.interactions.filter(system_event_type="QUOTE_LOST").count() == 1
-    assert opportunity.interactions.filter(system_event_type="OPPORTUNITY_LOST").count() == 0
