@@ -1,0 +1,117 @@
+name: CI Diagnosis
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - Container Integrity
+      - PR Readiness
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  diagnose:
+    if: >-
+      ${{ github.event.workflow_run.event == 'pull_request' &&
+          github.event.workflow_run.conclusion != 'success' &&
+          github.event.workflow_run.conclusion != 'skipped' &&
+          github.event.workflow_run.conclusion != 'neutral' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diagnose failed authoritative gate
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # ratchet:actions/github-script@v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            if (!run.pull_requests || run.pull_requests.length === 0) {
+              core.info('No pull request is associated with this workflow run; nothing to diagnose.');
+              return;
+            }
+
+            const prNumber = run.pull_requests[0].number;
+            const { data: jobsData } = await github.rest.actions.listJobsForWorkflowRun({
+              owner,
+              repo,
+              run_id: run.id,
+              filter: 'latest',
+              per_page: 100,
+            });
+
+            const badConclusions = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
+            const failedJobs = jobsData.jobs.filter((job) => badConclusions.has(job.conclusion));
+
+            const gateType = {
+              'CI': 'application verification gate',
+              'Container Integrity': 'container/infrastructure integrity gate',
+              'PR Readiness': 'PR evidence/readiness gate',
+            }[run.name] || 'authoritative repository gate';
+
+            const nextAction = {
+              'CI': 'Inspect the failing job log before changing code. Fix the root cause, then rerun the affected checks on the new final head.',
+              'Container Integrity': 'Inspect the integrity job log for container, dependency, migration, or startup evidence before changing application code.',
+              'PR Readiness': 'Correct the PR evidence contract first: routing, final-head SHA, CI evidence, placeholders, or Definition of Done.',
+            }[run.name] || 'Inspect the failing job log before making changes.';
+
+            const jobLines = failedJobs.length
+              ? failedJobs.map((job) => {
+                  const failingSteps = (job.steps || [])
+                    .filter((step) => badConclusions.has(step.conclusion))
+                    .map((step) => `\`${step.name}\``);
+                  const stepText = failingSteps.length ? ` — failing step(s): ${failingSteps.join(', ')}` : '';
+                  return `- **${job.name}** (${job.conclusion})${stepText} — [open job log](${job.html_url})`;
+                }).join('\n')
+              : '- The workflow failed, but GitHub did not expose a failed job in the latest job list. Open the workflow run directly.';
+
+            const marker = `<!-- rateengine-ci-diagnosis:${run.id} -->`;
+            const body = `${marker}
+            ## 🔎 Automated CI diagnosis
+
+            **Gate:** ${run.name}  
+            **Classification:** ${gateType}  
+            **Conclusion:** ${run.conclusion}  
+            **Head SHA:** \`${run.head_sha}\`
+
+            ### Failed job evidence
+            ${jobLines}
+
+            ### Next action
+            ${nextAction}
+
+            [Open full workflow run](${run.html_url})
+
+            > This is evidence triage, not a guessed root cause. Read the failing log before weakening tests, changing commercial logic, or rerunning blindly.
+            `;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.info(`Updated CI diagnosis comment on PR #${prNumber}.`);
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: prNumber,
+                body,
+              });
+              core.info(`Posted CI diagnosis comment on PR #${prNumber}.`);
+            }
