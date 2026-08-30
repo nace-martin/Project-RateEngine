@@ -483,7 +483,7 @@ class ExportMissingSellRateTest(TestCase):
         self.assertEqual(line.sell_amount, Decimal('0'))
         self.assertEqual(line.cost_amount, Decimal('123.45'))
         self.assertEqual(line.cost_currency, 'PGK')
-        self.assertEqual(line.cost_source, 'COGS')
+        self.assertEqual(line.cost_source, 'FALLBACK_RULE')
         self.assertEqual(line.agent_name, self.agent.name)
         self.assertEqual(result.total_cost_pgk, Decimal('123.45'))
         self.assertEqual(result.total_sell_pgk, Decimal('0.00'))
