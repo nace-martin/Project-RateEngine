@@ -35,6 +35,7 @@ Before regression checking:
 3. Identify one primary scenario that must work and adjacent scenarios most likely to regress.
 4. Inspect existing tests, fixtures, scripts, and Playwright flows before inventing new verification steps.
 5. Record whether the requested change is supposed to alter commercial outputs.
+6. Identify any lifecycle decision that depends on aggregate/summary fields and the underlying persisted records that should agree with them.
 
 ## Workflow
 
@@ -96,6 +97,10 @@ draft
 
 Include reopen, rejection, expiry, or other states only when the change touches them.
 
+For safety-critical lifecycle gates, do not trust only a denormalized summary flag. Cross-check the underlying latest-version records that represent the same truth. Examples include missing-rate totals versus persisted `QuoteLine.is_rate_missing` values. A stale aggregate must not permit a transition that the underlying records should block.
+
+When the same lifecycle rule can be reached through multiple entry points, prefer enforcing the invariant in the shared state/service layer and keep API/UI checks as additional guardrails rather than the sole protection.
+
 ### 6. Verify permissions when applicable
 
 For changes involving approvals, mutations, customer visibility, or object scope, test at least the relevant allowed and denied roles. Record the exact action and outcome.
@@ -121,6 +126,7 @@ Choose a small number of high-risk neighbors based on the change. Examples:
 - import versus export;
 - standard versus SPOT;
 - missing-rate versus fully rated;
+- stale aggregate versus consistent persisted records;
 - General Cargo versus affected special cargo;
 - permitted versus denied role;
 - quote with versus without optional charge/service.
@@ -137,7 +143,7 @@ Use existing focused tests/scripts first. Depending on scope, run:
 - focused Playwright flow;
 - exact API request verification.
 
-Run broader suites only when the changed surface is broad enough to justify them.
+Run broader suites only when the changed surface is broad enough to justify them. Before merge, treat CI from the current branch head as the authoritative broad regression result.
 
 ### 10. Compare intended versus unintended change
 
@@ -161,6 +167,7 @@ Stop and report the affected regression check when:
 - the expected commercial result is not authoritative;
 - required fixture/test data is misleading or conflicts with active rules;
 - quote creation succeeds but persisted/commercial output is inconsistent;
+- a lifecycle summary flag conflicts with the underlying persisted records and the safe interpretation is unclear;
 - unrelated quote totals change without explanation;
 - permission behavior conflicts with the active RBAC contract; or
 - customer-facing output differs from persisted quote data and the reason is unknown.
@@ -179,6 +186,11 @@ Primary scenario
 - finalization: passed
 - public quote output: passed
 
+Lifecycle consistency
+- aggregate completeness flag: consistent
+- persisted missing-rate lines: none
+- shared finalization invariant: enforced
+
 Adjacent checks
 - SPOT quote path: unchanged / passed
 - missing-rate behavior: unchanged / passed
@@ -191,6 +203,7 @@ Commercial impact
 Automation
 - targeted backend tests: passed
 - focused frontend workflow: passed
+- current-head CI: passed
 
 Unverified
 - PDF export not affected by changed path; not run
