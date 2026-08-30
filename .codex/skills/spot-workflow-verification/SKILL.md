@@ -35,6 +35,7 @@ Before verification:
 2. Read the applicable maintained SPOT contracts, especially `docs/spot-draft-quote-contract.md` and `docs/spot-draft-quote-resolve-contract.md`.
 3. Inspect the current source and tests for the exact workflow path being changed.
 4. Identify the operator role(s), expected state transition, and intended commercial effect.
+5. Confirm the branch is based on current `main` or explicitly account for branch age. Historical green CI on a stale branch is not sufficient evidence for merge.
 
 Treat proposal/history documents as supporting context only unless current source confirms the behavior.
 
@@ -66,7 +67,11 @@ Confirm that:
 - mapping, currency, unit, rate, and coverage uncertainty is surfaced to the operator; and
 - ignored or rejected information remains auditable where the workflow contract requires it.
 
-### 3. Verify AI versus operator authority
+### 3. Verify model and fallback assumptions
+
+For changed lookup or fallback paths, confirm every referenced relationship/field exists on the active model before relying on it. Exercise the fallback order with the exact missing-data condition that triggers it; do not assume an earlier fallback is harmless merely because a later fallback is valid.
+
+### 4. Verify AI versus operator authority
 
 Confirm AI is limited to extraction, structuring, and suggestion. Prove that unresolved commercial decisions are not silently:
 
@@ -78,7 +83,7 @@ Confirm AI is limited to extraction, structuring, and suggestion. Prove that unr
 
 Where ProductCode requests are involved, verify that request creation is not treated as approval and that pending/rejected requests remain unresolved mappings.
 
-### 4. Verify state transitions
+### 5. Verify state transitions
 
 Exercise the affected transition and assert exact before/after state. Depending on scope, check:
 
@@ -94,19 +99,19 @@ intake
 
 Verify finalized-review mutation locks and idempotent retries where applicable. Reopen behavior must remain manager/admin controlled according to the active contract.
 
-### 5. Verify RBAC and object scope
+### 6. Verify RBAC and object scope
 
 For changed mutation or read paths, test the relevant permitted and denied roles. Record exact request/action and result. Do not treat frontend button visibility as authorization evidence.
 
-### 6. Verify SPE persistence
+### 7. Verify SPE persistence
 
 Confirm the intended active persistence path is used and deprecated quote-scoped SPOT CRUD is not revived. Where applicable verify the correct envelope, source batch, charge line, acknowledgement, audit, or resolution records are linked to the workflow.
 
-### 7. Verify V4 computation
+### 8. Verify V4 computation
 
 Confirm quote calculation uses the intended SPE envelope through `PricingServiceV4Adapter` and `spot_envelope_id`. Check that resolved operator decisions are represented correctly in the calculation input.
 
-### 8. Prove SPOT replacement
+### 9. Prove SPOT replacement
 
 For any SPOT freight charge:
 
@@ -117,13 +122,13 @@ For any SPOT freight charge:
 
 Include Domestic freight when it belongs to the matching bucket.
 
-### 9. Verify quote creation and output
+### 10. Verify quote creation and output
 
 When the workflow reaches quote creation, inspect the resulting quote lines and customer-facing/public output. Verify the commercial result, not just HTTP success or a non-403 response.
 
-### 10. Run targeted checks
+### 11. Run targeted checks
 
-Use the narrowest relevant quote/SPOT tests first, then expand only when required by scope. Include exact status/error assertions and state transition assertions rather than generic smoke tests.
+Use the narrowest relevant quote/SPOT tests first, then expand only when required by scope. Include exact status/error assertions and state transition assertions rather than generic smoke tests. Before merge, rely on CI from the current branch head rather than historical results from an older base.
 
 ## Stop Conditions
 
@@ -135,7 +140,8 @@ Stop the affected verification and report the unresolved issue when:
 - ProductCode approval state is ambiguous;
 - finalized mutation controls or RBAC cannot be proven;
 - the workflow uses a deprecated SPOT persistence/API path;
-- the envelope used for calculation cannot be identified; or
+- the envelope used for calculation cannot be identified;
+- a fallback path dereferences a model field/relationship that is not part of the active model; or
 - standard and SPOT freight appear to stack for the same bucket.
 
 Do not weaken safety or audit controls merely to complete the scenario.
@@ -173,6 +179,7 @@ Checks
 - focused SPOT tests: passed
 - exact endpoint/state assertions: passed
 - end-to-end quote output: passed
+- branch freshness/current-head CI: passed
 
 Residual risk: none identified in the exercised path
 ```
