@@ -15,11 +15,7 @@ AMENDMENTS:
   - COLLECT quotes in PGK
 - PNG GST: Proper classification using get_png_gst_category()
 - Global Surcharges: Support for Surcharge table fallbacks
-- Customs Brokerage: Default PGK 300.00 if rate missing
-- Airline Fuel Surcharge: Default PGK 0.80/kg
-- Security Surcharge: Default PGK 0.20/kg + PGK 45.00 flat
-- Terminal Fee: Default PGK 150.00 if rate missing
-- Handling Fee: Default PGK 50.00 if rate missing
+- Missing SELL coverage is explicit; no hardcoded commercial fallback amounts
 """
 
 import logging
@@ -159,19 +155,8 @@ class ExportPricingEngine:
     Rule 9: Focused on POM→BNE corridor first.
     """
     
-    # Default rates
     DEFAULT_MARGIN = Decimal('0.20')  # 20%
     DEFAULT_CAF = Decimal('0.05')     # 5%
-    DEFAULT_BROKERAGE_FEE = Decimal('300.00')
-    DEFAULT_AIR_FUEL_SURCHARGE = Decimal('0.80') # K0.80 per kg
-    
-    # Security Surcharge: K0.20/kg + K45.00 flat
-    DEFAULT_SECURITY_SCREEN_RATE = Decimal('0.20')
-    DEFAULT_SECURITY_SCREEN_FLAT = Decimal('45.00')
-    
-    # Terminal and Handling
-    DEFAULT_TERMINAL_FEE = Decimal('150.00')
-    DEFAULT_HANDLING_FEE = Decimal('50.00')
     
     def __init__(
         self,
@@ -533,35 +518,23 @@ class ExportPricingEngine:
         sell_rate = self._get_sell_rate(product_code_id)
         
         if not sell_rate:
-            # 1. Customs Clearance Default (PGK 300.00)
-            if pc.code == 'EXP-CLEAR':
-                return self._create_default_line(pc, self.DEFAULT_BROKERAGE_FEE, "Default Customs Brokerage Fee")
-            
-            # 2. Airline Fuel Surcharge Default (PGK 0.80/kg)
-            if pc.code == 'EXP-FSC-AIR':
-                sell_amount = (self.chargeable_weight_kg * self.DEFAULT_AIR_FUEL_SURCHARGE).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                return self._create_default_line(pc, sell_amount, f"Default Airline Fuel Surcharge (K{self.DEFAULT_AIR_FUEL_SURCHARGE}/kg)")
-
-            # 3. Security Surcharge Default (PGK 0.20/kg + PGK 45.00 flat)
-            if pc.code == 'EXP-SCREEN':
-                sell_amount = (self.chargeable_weight_kg * self.DEFAULT_SECURITY_SCREEN_RATE) + self.DEFAULT_SECURITY_SCREEN_FLAT
-                sell_amount = sell_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                return self._create_default_line(pc, sell_amount, f"Default Security Surcharge (K{self.DEFAULT_SECURITY_SCREEN_RATE}/kg + K{self.DEFAULT_SECURITY_SCREEN_FLAT} flat)")
-
-            # 4. Terminal and Handling Defaults
-            if pc.code == 'EXP-TERM': # Terminal
-                return self._create_default_line(pc, self.DEFAULT_TERMINAL_FEE, "Default Terminal Fee")
-            if pc.code == 'EXP-HANDLE': # Handling
-                return self._create_default_line(pc, self.DEFAULT_HANDLING_FEE, "Default Handling Fee")
-
             if requested_product_code_ids and product_code_id in requested_product_code_ids:
+                agent_name = getattr(cogs, 'agent', None)
+                if agent_name:
+                    agent_name = agent_name.name
+                cost_eval = self._calculate_amount(cogs) if cogs else RuleEvaluation(CALCULATION_FLAT, Decimal('0.00'))
+                gst_category, gst_rate = get_png_gst_category(product_code=pc, shipment_type='EXPORT', leg='ORIGIN')
                 return ChargeLineResult(
                     product_code_id=pc.id, product_code=pc.code, description=pc.description,
-                    category=pc.category, cost_amount=Decimal('0'), cost_currency='PGK',
-                    cost_source='N/A', agent_name=None, sell_amount=Decimal('0'),
-                    sell_currency=self.quote_currency, margin_amount=Decimal('0'),
-                    margin_percent=Decimal('0'), gst_amount=Decimal('0'), sell_incl_gst=Decimal('0'),
+                    category=pc.category, cost_amount=cost_eval.amount,
+                    cost_currency=getattr(cogs, 'currency', 'PGK'),
+                    cost_source='COGS' if cogs else 'N/A', agent_name=agent_name,
+                    sell_amount=Decimal('0'), sell_currency=self.quote_currency,
+                    margin_amount=Decimal('0'), margin_percent=Decimal('0'),
+                    gst_category=gst_category, gst_rate=gst_rate,
+                    gst_amount=Decimal('0'), sell_incl_gst=Decimal('0'),
                     is_rate_missing=True, notes=f"Requested sell rate missing for {pc.code}",
+                    rule_family=cost_eval.rule_family,
                 )
             return None
         
@@ -604,22 +577,6 @@ class ExportPricingEngine:
             gst_category=gst_category, gst_rate=gst_rate, gst_amount=gst_amount, sell_incl_gst=sell_incl_gst,
             is_rate_missing=False, notes='', fx_applied=fx_applied, caf_applied=caf_applied, margin_applied=margin_applied,
             rule_family=sell_eval.rule_family if sell_eval.amount > 0 else cost_eval.rule_family,
-        )
-
-    def _create_default_line(self, pc: ProductCode, sell_amount: Decimal, notes: str) -> ChargeLineResult:
-        sell_currency = 'PGK'
-        if self.quote_currency != 'PGK':
-            sell_amount = self._convert_pgk_to_fcy(sell_amount)
-            sell_currency = self.quote_currency
-        gst_category, gst_rate = get_png_gst_category(product_code=pc, shipment_type='EXPORT', leg='ORIGIN')
-        gst_amount = (sell_amount * gst_rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        return ChargeLineResult(
-            product_code_id=pc.id, product_code=pc.code, description=pc.description,
-            category=pc.category, cost_amount=Decimal('0'), cost_currency='PGK',
-            cost_source='Default', agent_name=None, sell_amount=sell_amount,
-            sell_currency=sell_currency, margin_amount=sell_amount,
-            margin_percent=Decimal('100.00'), gst_amount=gst_amount, sell_incl_gst=sell_amount+gst_amount,
-            is_rate_missing=False, notes=notes, rule_family=CALCULATION_FLAT,
         )
     
     def _calculate_percentage_charge(self, product_code_id: int) -> Optional[ChargeLineResult]:

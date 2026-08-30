@@ -408,12 +408,20 @@ class ExportFxAndCollectCurrencyTest(ExportEngineTestCase):
         self.assertFalse(line.caf_applied)
 
 
-class ExportFallbackDefaultTest(TestCase):
-    """Document the current hardcoded export defaults when sell rates are absent."""
+class ExportMissingSellRateTest(TestCase):
+    """Missing export SELL coverage must remain explicit and excluded from customer totals."""
 
     @classmethod
     def setUpTestData(cls):
         seed_all_export_product_codes()
+        cls.agent = Agent.objects.create(
+            code='MISSING-SELL-AGENT',
+            name='Missing Sell Test Agent',
+            country_code='PG',
+            agent_type='ORIGIN',
+        )
+        cls.valid_from = date.today() - timedelta(days=1)
+        cls.valid_until = date.today() + timedelta(days=365)
 
     def setUp(self):
         product_code_ids = resolve_export_codes_to_ids([
@@ -423,7 +431,7 @@ class ExportFallbackDefaultTest(TestCase):
         LocalSellRate.objects.filter(product_code_id__in=product_code_ids).delete()
         Surcharge.objects.filter(product_code_id__in=product_code_ids).delete()
 
-    def test_missing_export_sell_rates_use_current_hardcoded_defaults(self):
+    def test_missing_export_sell_rates_are_explicit_and_excluded(self):
         codes = ['EXP-FSC-AIR', 'EXP-CLEAR', 'EXP-TERM', 'EXP-HANDLE', 'EXP-SCREEN']
         product_code_ids = resolve_export_codes_to_ids(codes)
 
@@ -434,16 +442,54 @@ class ExportFallbackDefaultTest(TestCase):
             chargeable_weight_kg=Decimal('50'),
             payment_term=PaymentTerm.PREPAID,
             destination_currency='AUD',
-        ).calculate_quote(product_code_ids)
+        ).calculate_quote(product_code_ids, service_scope='D2A')
 
         by_code = {line.product_code: line for line in result.lines}
-        self.assertEqual(by_code['EXP-CLEAR'].sell_amount, Decimal('300.00'))
-        self.assertEqual(by_code['EXP-FSC-AIR'].sell_amount, Decimal('40.00'))
-        self.assertEqual(by_code['EXP-SCREEN'].sell_amount, Decimal('55.00'))
-        self.assertEqual(by_code['EXP-TERM'].sell_amount, Decimal('150.00'))
-        self.assertEqual(by_code['EXP-HANDLE'].sell_amount, Decimal('50.00'))
-        self.assertEqual({line.sell_currency for line in result.lines}, {'PGK'})
-        self.assertTrue(all('Default' in line.notes for line in result.lines))
+        self.assertEqual(set(by_code), set(codes))
+        self.assertTrue(all(line.is_rate_missing for line in result.lines))
+        self.assertTrue(all(line.sell_amount == Decimal('0') for line in result.lines))
+        self.assertTrue(all(line.sell_currency == 'PGK' for line in result.lines))
+        self.assertTrue(all('Requested sell rate missing' in line.notes for line in result.lines))
+        self.assertEqual(result.total_sell_pgk, Decimal('0.00'))
+        self.assertTrue(all(not item.included_in_total for item in result.line_items))
+        self.assertTrue(all(item.is_rate_missing for item in result.line_items))
+
+    def test_missing_sell_preserves_known_cogs(self):
+        clearance = ProductCode.objects.get(code='EXP-CLEAR')
+        LocalCOGSRate.objects.create(
+            product_code=clearance,
+            location='POM',
+            direction='EXPORT',
+            agent=self.agent,
+            currency='PGK',
+            rate_type='FIXED',
+            amount=Decimal('123.45'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        result = ExportPricingEngine(
+            quote_date=date.today(),
+            origin='POM',
+            destination='BNE',
+            chargeable_weight_kg=Decimal('50'),
+            payment_term=PaymentTerm.PREPAID,
+            destination_currency='AUD',
+        ).calculate_quote([clearance.id], service_scope='D2A')
+
+        self.assertEqual(len(result.lines), 1)
+        line = result.lines[0]
+        self.assertTrue(line.is_rate_missing)
+        self.assertEqual(line.sell_amount, Decimal('0'))
+        self.assertEqual(line.cost_amount, Decimal('123.45'))
+        self.assertEqual(line.cost_currency, 'PGK')
+        self.assertEqual(line.cost_source, 'FALLBACK_RULE')
+        self.assertEqual(line.agent_name, self.agent.name)
+        self.assertEqual(result.total_cost_pgk, Decimal('123.45'))
+        self.assertEqual(result.total_sell_pgk, Decimal('0.00'))
+        self.assertFalse(result.line_items[0].included_in_total)
+        self.assertEqual(result.line_items[0].cost_source, 'FALLBACK_RULE')
+        self.assertEqual(result.line_items[0].rate_source, 'FALLBACK_RULE')
 
 
 class ExportPercentRateSelectionTest(ExportEngineTestCase):
@@ -673,4 +719,3 @@ class ExportProductCodeDecouplingTests(TestCase):
             )
         self.assertIn("Configuration Error", str(context.exception))
         self.assertIn("EXP-FRT-AIR", str(context.exception))
-
