@@ -126,6 +126,8 @@ A task is **done** only when all applicable items are true:
 7. the PR accurately records scope, verification, residual risk, and rollback; and
 8. when the user requested end-to-end completion, the approved change is merged to the intended base.
 
+The `PR Readiness` workflow enforces the PR evidence contract on every PR to `main` or `develop`. It checks that verification routing is selected, the recorded final-head SHA matches the actual PR head, required-CI evidence is concrete, template placeholders are cleared, and every Definition of Done item is checked. Treat a failing readiness gate as incomplete evidence, not as permission to weaken the contract.
+
 Do not call work done merely because code was written, one test passed, or a PR was opened.
 
 ## 7. Validation & Verification
@@ -191,3 +193,4 @@ For ProductCode, ChargeAlias, remediation, backfill, or comparable data writes, 
 - `docs/spot-canonical-charge-architecture.md`: mixed proposal/history document; verify implementation in current source before relying on a section.
 - `docs/tenant-model-beta.md` and current `backend/parties/` / `backend/accounts/` source: tenant and hierarchy behavior.
 - `.github/workflows/ci.yml`: CI command authority.
+- `.github/workflows/pr-readiness.yml`: automated PR evidence/Definition-of-Done gate.
