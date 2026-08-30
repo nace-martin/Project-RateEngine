@@ -442,7 +442,7 @@ class ExportMissingSellRateTest(TestCase):
             chargeable_weight_kg=Decimal('50'),
             payment_term=PaymentTerm.PREPAID,
             destination_currency='AUD',
-        ).calculate_quote(product_code_ids)
+        ).calculate_quote(product_code_ids, service_scope='D2A')
 
         by_code = {line.product_code: line for line in result.lines}
         self.assertEqual(set(by_code), set(codes))
@@ -475,7 +475,7 @@ class ExportMissingSellRateTest(TestCase):
             chargeable_weight_kg=Decimal('50'),
             payment_term=PaymentTerm.PREPAID,
             destination_currency='AUD',
-        ).calculate_quote([clearance.id])
+        ).calculate_quote([clearance.id], service_scope='D2A')
 
         self.assertEqual(len(result.lines), 1)
         line = result.lines[0]
