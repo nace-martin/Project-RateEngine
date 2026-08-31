@@ -8,7 +8,7 @@ from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
 from .models import Quote, QuoteEvent
-from .spot_models import SpotPricingEnvelopeDB
+from .spot_models import SPEChargeLineDB, SpotPricingEnvelopeDB
 
 # Store original status before save
 _original_statuses = {}
@@ -110,3 +110,24 @@ def persist_quote_linked_spot_journey(sender, instance, created, **kwargs):
         if connection.in_atomic_block:
             transaction.set_rollback(True)
         raise
+
+
+@receiver(post_save, sender=SPEChargeLineDB)
+def resolve_live_spot_charge_leg_context(sender, instance, update_fields=None, **kwargs):
+    """Bind live Quote-linked SPOT charges to trusted journey context.
+
+    Saves performed by the context service itself are ignored to prevent signal
+    recursion. Historical/manual SPE charge lines remain untouched.
+    """
+    audit_fields = {
+        "journey_leg",
+        "charge_context_json",
+        "product_code_resolution_audit_json",
+        "resolved_product_code",
+    }
+    if update_fields and set(update_fields).issubset(audit_fields):
+        return
+
+    from quotes.services.spot_journey_charge_context import apply_live_spot_leg_context
+
+    apply_live_spot_leg_context(instance)
