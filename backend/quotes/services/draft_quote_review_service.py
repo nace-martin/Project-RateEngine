@@ -103,6 +103,27 @@ def unresolved_blockers(
                 **context,
             })
 
+    from quotes.services.spot_journey_charge_context import phase_16_resolution_blockers
+
+    for line in envelope.charge_lines.select_related("journey_leg").all():
+        for message in phase_16_resolution_blockers(line):
+            audit = line.product_code_resolution_audit_json or {}
+            code = (
+                "CHARGE_LEG_UNASSIGNED"
+                if not line.journey_leg_id
+                else "PRODUCTCODE_LEG_CONTEXT_UNRESOLVED"
+            )
+            blockers.append({
+                "code": code,
+                "message": message,
+                "charge_line_id": str(line.id),
+                "charge_label": line.description or line.source_label or "SPOT charge",
+                "journey_leg_id": str(line.journey_leg_id) if line.journey_leg_id else None,
+                "journey_leg_key": line.journey_leg.leg_key if line.journey_leg_id else None,
+                "resolution_status": audit.get("status"),
+                "resolution_blocker_codes": audit.get("blocker_codes") or [],
+            })
+
     deduplicated: list[dict[str, Any]] = []
     seen: set[tuple[Any, ...]] = set()
     for blocker in blockers:
