@@ -76,9 +76,11 @@ class SpotBusinessMovementAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Lock only the charge-line row. journey_leg is nullable, so joining it
+        # into a SELECT ... FOR UPDATE query causes PostgreSQL to reject the
+        # outer join with "FOR UPDATE cannot be applied to the nullable side".
         line = (
             SPEChargeLineDB.objects.select_for_update()
-            .select_related("envelope", "journey_leg", "canonical_charge_type")
             .filter(envelope=envelope, id=charge_line_id)
             .first()
         )
