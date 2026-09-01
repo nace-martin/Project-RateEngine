@@ -297,6 +297,7 @@ class ExportPricingEngine:
             
         if is_dg:
             base_codes.append('EXP-DG')
+
         resolved_ids = resolve_export_codes_to_ids(base_codes)
 
         resolved_ids.extend(get_auto_product_code_ids(
