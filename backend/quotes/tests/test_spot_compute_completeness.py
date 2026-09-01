@@ -261,7 +261,7 @@ def test_spot_create_quote_requires_finalized_exception_workspace_review(monkeyp
     assert "review must be finalized" in response.json()["error"]
 
 
-def test_spot_create_quote_preserves_persisted_spe_context(monkeypatch):
+def test_spot_create_quote_preserves_context_but_canonicalizes_import_collect_currency(monkeypatch):
     user, origin, destination = _setup_user_and_locations()
     customer = Company.objects.create(
         name="Persisted Context Customer",
@@ -319,11 +319,11 @@ def test_spot_create_quote_preserves_persisted_spe_context(monkeypatch):
     assert quote.incoterm == "FOB"
     assert quote.service_scope == "P2P"
     assert quote.payment_term == "COLLECT"
-    assert quote.output_currency == "USD"
+    assert quote.output_currency == "PGK"
     assert captured == {
         "payment_term": "COLLECT",
         "service_scope": "P2P",
-        "output_currency": "USD",
+        "output_currency": "PGK",
     }
 
 

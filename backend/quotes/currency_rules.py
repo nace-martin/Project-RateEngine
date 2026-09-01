@@ -1,6 +1,19 @@
 from typing import Optional
 
 
+PARTNER_QUOTE_CURRENCY_BY_COUNTRY = {
+    "AU": "AUD",
+    "NZ": "AUD",
+    "SB": "PGK",
+    "FJ": "PGK",
+}
+
+
+def _partner_quote_currency(country_code: str) -> str:
+    """Return the agreed customer quote currency for a foreign partner country."""
+    return PARTNER_QUOTE_CURRENCY_BY_COUNTRY.get(country_code, "USD")
+
+
 def determine_quote_currency(
     shipment_type: Optional[str],
     payment_term: Optional[str],
@@ -11,14 +24,16 @@ def determine_quote_currency(
     Resolve quote output currency using global business rules.
 
     EXPORT:
-    - PREPAID to AU => AUD
-    - PREPAID non-AU => USD
-    - COLLECT => PGK
+    - Prepaid => PGK
+    - Collect to AU/NZ => AUD
+    - Collect to SB/FJ => PGK
+    - Collect to other countries => USD
 
     IMPORT:
     - Collect => PGK
-    - Prepaid from AU => AUD
-    - Prepaid non-AU => USD
+    - Prepaid from AU/NZ => AUD
+    - Prepaid from SB/FJ => PGK
+    - Prepaid from other countries => USD
 
     DOMESTIC:
     - Always PGK
@@ -31,11 +46,11 @@ def determine_quote_currency(
     if shipment == "IMPORT":
         if term == "COLLECT":
             return "PGK"
-        return "AUD" if origin == "AU" else "USD"
+        return _partner_quote_currency(origin)
 
     if shipment == "EXPORT":
         if term == "PREPAID":
             return "PGK"
-        return "AUD" if destination == "AU" else "USD"
+        return _partner_quote_currency(destination)
 
     return "PGK"
