@@ -19,6 +19,12 @@ _COMPONENT_BY_BUCKET = {
     SPEChargeLineDB.Bucket.DESTINATION_CHARGES: "DESTINATION_LOCAL",
 }
 
+_COMMERCIAL_POSITION_BY_BUCKET = {
+    SPEChargeLineDB.Bucket.AIRFREIGHT: "FREIGHT",
+    SPEChargeLineDB.Bucket.ORIGIN_CHARGES: "ORIGIN",
+    SPEChargeLineDB.Bucket.DESTINATION_CHARGES: "DESTINATION",
+}
+
 
 @dataclass(frozen=True)
 class SpotPricingIdentity:
@@ -105,11 +111,14 @@ def resolve_spot_pricing_identity(line: SPEChargeLineDB) -> SpotPricingIdentityR
         blockers.append("PRODUCTCODE_LEG_CONTEXT_UNRESOLVED")
 
     component = _COMPONENT_BY_BUCKET.get(line.bucket)
+    expected_commercial_position = _COMMERCIAL_POSITION_BY_BUCKET.get(line.bucket)
     raw_revision = context.get("journey_revision")
+    context_leg_id = str(context.get("leg_id") or "").strip()
     leg_key = str(context.get("leg_key") or "").strip()
     product_code_value = str(getattr(product_code, "code", "") or "").strip().upper()
     commercial_position = str(context.get("commercial_position") or "").strip().upper()
     context_domain = str(context.get("product_code_domain") or "").strip().upper()
+    context_currency = str(context.get("currency") or "").strip().upper()
     currency = str(line.currency or "").strip().upper()
 
     try:
@@ -120,21 +129,35 @@ def resolve_spot_pricing_identity(line: SPEChargeLineDB) -> SpotPricingIdentityR
     if not all(
         (
             journey_revision,
+            context_leg_id,
             leg_key,
             product_code_value,
             commercial_position,
+            expected_commercial_position,
             component,
+            context_currency,
             currency,
             context_domain,
         )
     ):
         blockers.append(SPOT_PRICING_IDENTITY_CONTEXT_INCOMPLETE)
 
+    if (
+        expected_commercial_position
+        and commercial_position
+        and commercial_position != expected_commercial_position
+    ):
+        blockers.append(SPOT_PRICING_IDENTITY_STALE_CONTEXT)
+
+    if context_currency and currency and context_currency != currency:
+        blockers.append(SPOT_PRICING_IDENTITY_STALE_CONTEXT)
+
     if leg is not None:
         leg_revision = int(leg.journey.revision)
         leg_domain = str(leg.product_code_domain or "").strip().upper()
         if (
             journey_revision != leg_revision
+            or context_leg_id != str(leg.id)
             or leg_key != str(leg.leg_key or "").strip()
             or (context_domain and context_domain != leg_domain)
         ):
@@ -233,7 +256,7 @@ def _identity_blocker_message(code: str) -> str:
             "SPOT pricing identity is incomplete for the trusted journey leg."
         ),
         SPOT_PRICING_IDENTITY_STALE_CONTEXT: (
-            "SPOT pricing identity context no longer matches the persisted journey leg."
+            "SPOT pricing identity context no longer matches the persisted journey leg or charge."
         ),
         PRODUCTCODE_DOMAIN_MISMATCH: (
             "Resolved ProductCode domain does not match the trusted journey leg domain."
