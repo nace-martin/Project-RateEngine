@@ -10,7 +10,7 @@ data during a calculation, separating it from the Django models.
 from decimal import Decimal
 from typing import List, Optional, Dict, Any
 import uuid
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 from core.commodity import DEFAULT_COMMODITY_CODE
 
@@ -80,6 +80,57 @@ class QuoteInput(BaseModel):
     shipment: ShipmentDetails
     overrides: List[ManualOverride] = Field(default_factory=list)
     spot_rates: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def enforce_canonical_output_currency(cls, data):
+        """Keep customer quote currency aligned with shipment/payment policy.
+
+        `output_currency` may arrive from a client or persisted draft context, but
+        it is not authoritative when the full international shipment context is
+        available. Native BUY/cost currencies remain separate from this value.
+        """
+        if not isinstance(data, dict) or "output_currency" not in data:
+            return data
+
+        shipment = data.get("shipment")
+        if shipment is None:
+            return data
+
+        def _get(value, field):
+            if isinstance(value, dict):
+                return value.get(field)
+            return getattr(value, field, None)
+
+        shipment_type = str(_get(shipment, "shipment_type") or "").upper()
+        payment_term = str(_get(shipment, "payment_term") or "").upper()
+        if shipment_type not in {"IMPORT", "EXPORT", "DOMESTIC"}:
+            return data
+        if payment_term not in {"PREPAID", "COLLECT"}:
+            return data
+
+        origin_location = _get(shipment, "origin_location")
+        destination_location = _get(shipment, "destination_location")
+        origin_country = str(_get(origin_location, "country_code") or "").upper()
+        destination_country = str(_get(destination_location, "country_code") or "").upper()
+        if not origin_country or not destination_country:
+            return data
+
+        # Local import avoids making core module import order depend on quotes.
+        from quotes.currency_rules import determine_quote_currency
+
+        canonical_currency = determine_quote_currency(
+            shipment_type=shipment_type,
+            payment_term=payment_term,
+            origin_country_code=origin_country,
+            destination_country_code=destination_country,
+        )
+        if str(data.get("output_currency") or "").upper() == canonical_currency:
+            return data
+
+        normalized = dict(data)
+        normalized["output_currency"] = canonical_currency
+        return normalized
 
 # --- Calculation & Output Dataclasses ---
 
