@@ -11,9 +11,9 @@ def determine_quote_currency(
     Resolve quote output currency using global business rules.
 
     EXPORT:
-    - PREPAID to AU => AUD
-    - PREPAID non-AU => USD
-    - COLLECT => PGK
+    - Prepaid => PGK
+    - Collect to AU => AUD
+    - Collect non-AU => USD
 
     IMPORT:
     - Collect => PGK
