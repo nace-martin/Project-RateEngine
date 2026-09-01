@@ -21,7 +21,7 @@ Quick reference for RateEngine pricing logic.
 | Export Prepaid D2D | EXPORT | PREPAID | D2D | PGK | 10% |
 | Export Collect D2A | EXPORT | COLLECT | D2A | FCY | 10% |
 
-*AU origin → AUD, else → USD
+*AU origin → AUD, else → USD for Import Prepaid. Export Collect uses the destination FCY (AUD for AU, otherwise USD under the current policy).
 
 ## FX Pipeline
 
@@ -29,9 +29,6 @@ Quick reference for RateEngine pricing logic.
 FCY Cost → × FX_BUY → × (1 + CAF) → × (1 + Margin) → PGK Sell
 ```
 
-## Currency Decision
+## Quote Currency Authority
 
-- **COLLECT** (local payer) → Quote in **PGK**
-- **PREPAID** by overseas party:
-  - Import A2D → **AUD** (AU) or **USD** (else)
-  - Export D2A → **FCY** (destination currency)
+Quote output currency is determined by `backend/quotes/currency_rules.py::determine_quote_currency()` and verified by `backend/quotes/tests/test_currency_rules.py`. Do not define a separate payment-term/currency matrix here or in downstream schemas.
