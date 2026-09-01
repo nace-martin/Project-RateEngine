@@ -1,7 +1,9 @@
+import uuid
 from types import SimpleNamespace
 
 from django.test import SimpleTestCase
 
+from core.dataclasses import QuoteInput
 from pricing_v4.adapter import PricingServiceV4Adapter
 from quotes.currency_rules import determine_quote_currency
 
@@ -38,6 +40,79 @@ class DetermineQuoteCurrencyTests(SimpleTestCase):
     def test_domestic_is_pgk(self):
         currency = determine_quote_currency("DOMESTIC", "PREPAID", "PG", "PG")
         self.assertEqual(currency, "PGK")
+
+
+class QuoteInputCurrencyBoundaryTests(SimpleTestCase):
+    def _quote_input(self, *, shipment_type, payment_term, origin_country, destination_country, output_currency):
+        return QuoteInput(
+            customer_id=uuid.uuid4(),
+            contact_id=uuid.uuid4(),
+            output_currency=output_currency,
+            shipment={
+                "mode": "AIR",
+                "shipment_type": shipment_type,
+                "incoterm": "DAP",
+                "payment_term": payment_term,
+                "commodity_code": "GCR",
+                "is_dangerous_goods": False,
+                "pieces": [],
+                "service_scope": "P2P",
+                "origin_location": {
+                    "id": uuid.uuid4(),
+                    "code": "ORG",
+                    "name": "Origin",
+                    "country_code": origin_country,
+                    "currency_code": None,
+                },
+                "destination_location": {
+                    "id": uuid.uuid4(),
+                    "code": "DST",
+                    "name": "Destination",
+                    "country_code": destination_country,
+                    "currency_code": None,
+                },
+            },
+        )
+
+    def test_import_collect_rejects_stale_fcy_output_currency(self):
+        quote_input = self._quote_input(
+            shipment_type="IMPORT",
+            payment_term="COLLECT",
+            origin_country="AU",
+            destination_country="PG",
+            output_currency="USD",
+        )
+        self.assertEqual(quote_input.output_currency, "PGK")
+
+    def test_export_collect_to_australia_rejects_stale_pgk_output_currency(self):
+        quote_input = self._quote_input(
+            shipment_type="EXPORT",
+            payment_term="COLLECT",
+            origin_country="PG",
+            destination_country="AU",
+            output_currency="PGK",
+        )
+        self.assertEqual(quote_input.output_currency, "AUD")
+
+    def test_incomplete_country_context_does_not_guess_output_currency(self):
+        quote_input = QuoteInput(
+            customer_id=uuid.uuid4(),
+            contact_id=uuid.uuid4(),
+            output_currency="USD",
+            shipment={
+                "mode": "AIR",
+                "shipment_type": "IMPORT",
+                "incoterm": "DAP",
+                "payment_term": "COLLECT",
+                "commodity_code": "GCR",
+                "is_dangerous_goods": False,
+                "pieces": [],
+                "service_scope": "P2P",
+                "origin_location": None,
+                "destination_location": None,
+            },
+        )
+        self.assertEqual(quote_input.output_currency, "USD")
 
 
 class PricingServiceV4AdapterCurrencyTests(SimpleTestCase):
