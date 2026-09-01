@@ -182,6 +182,22 @@ class SpotPricingIdentityTests(TestCase):
             any(item["code"] == "PRODUCTCODE_LEG_CONTEXT_UNRESOLVED" for item in blockers)
         )
 
+    def test_separate_duplicate_identity_groups_remain_separate_review_blockers(self):
+        self._create_resolved_line(currency="USD", description="USD line 1")
+        self._create_resolved_line(currency="USD", description="USD line 2")
+        self._create_resolved_line(currency="AUD", description="AUD line 1")
+        self._create_resolved_line(currency="AUD", description="AUD line 2")
+
+        blockers = unresolved_blockers(self.envelope, SimpleNamespace(review_queue=[]))
+        duplicates = [item for item in blockers if item["code"] == SPOT_PRICING_IDENTITY_DUPLICATE]
+
+        self.assertEqual(len(duplicates), 2)
+        self.assertEqual(
+            {item["pricing_identity"]["currency"] for item in duplicates},
+            {"USD", "AUD"},
+        )
+        self.assertEqual(len({item["id"] for item in duplicates}), 2)
+
     def test_currency_is_part_of_identity_so_distinct_supplier_currencies_do_not_collide(self):
         self._create_resolved_line(currency="USD", description="USD Air Freight")
         self._create_resolved_line(currency="AUD", description="AUD Air Freight")
