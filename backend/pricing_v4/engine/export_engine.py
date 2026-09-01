@@ -11,8 +11,8 @@ AMENDMENTS:
 - Security Screening: is_additive=True means rate_per_kg + rate_per_shipment are ADDED
 - FSC: percent_rate field for percentage-based surcharges
 - Payment Terms:
-  - PREPAID quotes in destination FCY (AUD for AU, otherwise USD)
-  - COLLECT quotes in PGK
+  - PREPAID quotes in PGK
+  - COLLECT quotes in destination FCY (AUD for AU, otherwise destination currency policy)
 - PNG GST: Proper classification using get_png_gst_category()
 - Global Surcharges: Support for Surcharge table fallbacks
 - Missing SELL coverage is explicit; no hardcoded commercial fallback amounts
@@ -186,7 +186,7 @@ class ExportPricingEngine:
         self.caf_rate = caf_rate if caf_rate is not None else self.DEFAULT_CAF
         self.margin_rate = margin_rate if margin_rate is not None else self.DEFAULT_MARGIN
         
-        # Destination currency for PREPAID quotes
+        # Destination currency used when COLLECT quotes resolve to FCY
         self.destination_currency = destination_currency
         self.preferred_agent_id = preferred_agent_id
         self.preferred_carrier_id = preferred_carrier_id
@@ -297,7 +297,6 @@ class ExportPricingEngine:
             
         if is_dg:
             base_codes.append('EXP-DG')
-
         resolved_ids = resolve_export_codes_to_ids(base_codes)
 
         resolved_ids.extend(get_auto_product_code_ids(
