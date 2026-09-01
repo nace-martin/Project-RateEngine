@@ -226,6 +226,30 @@ class SpotPricingIdentityTests(TestCase):
             )
         )
 
+    def test_commercial_position_must_still_match_persisted_bucket(self):
+        line = self._create_resolved_line()
+        stale_context = dict(line.charge_context_json)
+        stale_context["commercial_position"] = "DESTINATION"
+        SPEChargeLineDB.objects.filter(pk=line.pk).update(charge_context_json=stale_context)
+        line.refresh_from_db()
+
+        resolution = resolve_spot_pricing_identity(line)
+
+        self.assertFalse(resolution.ready)
+        self.assertIn(SPOT_PRICING_IDENTITY_STALE_CONTEXT, resolution.blocker_codes)
+
+    def test_context_currency_must_still_match_persisted_charge_currency(self):
+        line = self._create_resolved_line(currency="USD")
+        stale_context = dict(line.charge_context_json)
+        stale_context["currency"] = "AUD"
+        SPEChargeLineDB.objects.filter(pk=line.pk).update(charge_context_json=stale_context)
+        line.refresh_from_db()
+
+        resolution = resolve_spot_pricing_identity(line)
+
+        self.assertFalse(resolution.ready)
+        self.assertIn(SPOT_PRICING_IDENTITY_STALE_CONTEXT, resolution.blocker_codes)
+
     def test_non_phase16_legacy_line_does_not_gain_new_identity_blockers(self):
         legacy_envelope = SpotPricingEnvelopeDB.objects.create(
             status="draft",
