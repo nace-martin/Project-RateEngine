@@ -17,13 +17,25 @@ class DetermineQuoteCurrencyTests(SimpleTestCase):
         currency = determine_quote_currency("EXPORT", "PREPAID", "PG", "SG")
         self.assertEqual(currency, "PGK")
 
-    def test_export_collect_non_au_is_usd(self):
+    def test_export_collect_non_partner_country_is_usd(self):
         currency = determine_quote_currency("EXPORT", "COLLECT", "PG", "SG")
         self.assertEqual(currency, "USD")
 
     def test_export_collect_to_australia_is_aud(self):
         currency = determine_quote_currency("EXPORT", "COLLECT", "PG", "AU")
         self.assertEqual(currency, "AUD")
+
+    def test_export_collect_to_new_zealand_is_aud(self):
+        currency = determine_quote_currency("EXPORT", "COLLECT", "PG", "NZ")
+        self.assertEqual(currency, "AUD")
+
+    def test_export_collect_to_solomon_islands_is_pgk(self):
+        currency = determine_quote_currency("EXPORT", "COLLECT", "PG", "SB")
+        self.assertEqual(currency, "PGK")
+
+    def test_export_collect_to_fiji_is_pgk(self):
+        currency = determine_quote_currency("EXPORT", "COLLECT", "PG", "FJ")
+        self.assertEqual(currency, "PGK")
 
     def test_import_collect_is_pgk(self):
         currency = determine_quote_currency("IMPORT", "COLLECT", "SG", "PG")
@@ -33,7 +45,19 @@ class DetermineQuoteCurrencyTests(SimpleTestCase):
         currency = determine_quote_currency("IMPORT", "PREPAID", "AU", "PG")
         self.assertEqual(currency, "AUD")
 
-    def test_import_prepaid_non_au_is_usd(self):
+    def test_import_prepaid_from_new_zealand_is_aud(self):
+        currency = determine_quote_currency("IMPORT", "PREPAID", "NZ", "PG")
+        self.assertEqual(currency, "AUD")
+
+    def test_import_prepaid_from_solomon_islands_is_pgk(self):
+        currency = determine_quote_currency("IMPORT", "PREPAID", "SB", "PG")
+        self.assertEqual(currency, "PGK")
+
+    def test_import_prepaid_from_fiji_is_pgk(self):
+        currency = determine_quote_currency("IMPORT", "PREPAID", "FJ", "PG")
+        self.assertEqual(currency, "PGK")
+
+    def test_import_prepaid_non_partner_country_is_usd(self):
         currency = determine_quote_currency("IMPORT", "PREPAID", "SG", "PG")
         self.assertEqual(currency, "USD")
 
@@ -94,6 +118,36 @@ class QuoteInputCurrencyBoundaryTests(SimpleTestCase):
         )
         self.assertEqual(quote_input.output_currency, "AUD")
 
+    def test_import_prepaid_from_new_zealand_rejects_stale_usd_output_currency(self):
+        quote_input = self._quote_input(
+            shipment_type="IMPORT",
+            payment_term="PREPAID",
+            origin_country="NZ",
+            destination_country="PG",
+            output_currency="USD",
+        )
+        self.assertEqual(quote_input.output_currency, "AUD")
+
+    def test_import_prepaid_from_solomon_islands_rejects_stale_usd_output_currency(self):
+        quote_input = self._quote_input(
+            shipment_type="IMPORT",
+            payment_term="PREPAID",
+            origin_country="SB",
+            destination_country="PG",
+            output_currency="USD",
+        )
+        self.assertEqual(quote_input.output_currency, "PGK")
+
+    def test_export_collect_to_fiji_rejects_stale_usd_output_currency(self):
+        quote_input = self._quote_input(
+            shipment_type="EXPORT",
+            payment_term="COLLECT",
+            origin_country="PG",
+            destination_country="FJ",
+            output_currency="USD",
+        )
+        self.assertEqual(quote_input.output_currency, "PGK")
+
     def test_incomplete_country_context_does_not_guess_output_currency(self):
         quote_input = QuoteInput(
             customer_id=uuid.uuid4(),
@@ -137,5 +191,14 @@ class PricingServiceV4AdapterCurrencyTests(SimpleTestCase):
     def test_adapter_export_collect_pom_bne_outputs_aud(self):
         self.assertEqual(self._adapter_for("COLLECT", "AU").get_output_currency(), "AUD")
 
-    def test_adapter_export_collect_pom_non_au_outputs_usd(self):
+    def test_adapter_export_collect_pom_new_zealand_outputs_aud(self):
+        self.assertEqual(self._adapter_for("COLLECT", "NZ").get_output_currency(), "AUD")
+
+    def test_adapter_export_collect_pom_solomon_islands_outputs_pgk(self):
+        self.assertEqual(self._adapter_for("COLLECT", "SB").get_output_currency(), "PGK")
+
+    def test_adapter_export_collect_pom_fiji_outputs_pgk(self):
+        self.assertEqual(self._adapter_for("COLLECT", "FJ").get_output_currency(), "PGK")
+
+    def test_adapter_export_collect_pom_non_partner_country_outputs_usd(self):
         self.assertEqual(self._adapter_for("COLLECT", "HK").get_output_currency(), "USD")
