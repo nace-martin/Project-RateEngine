@@ -104,6 +104,7 @@ def unresolved_blockers(
             })
 
     from quotes.services.spot_journey_charge_context import phase_16_resolution_blockers
+    from quotes.services.spot_pricing_identity import pricing_identity_review_blockers
 
     for line in envelope.charge_lines.select_related("journey_leg").all():
         for message in phase_16_resolution_blockers(line):
@@ -123,6 +124,8 @@ def unresolved_blockers(
                 "resolution_status": audit.get("status"),
                 "resolution_blocker_codes": audit.get("blocker_codes") or [],
             })
+
+    blockers.extend(pricing_identity_review_blockers(envelope))
 
     deduplicated: list[dict[str, Any]] = []
     seen: set[tuple[Any, ...]] = set()
