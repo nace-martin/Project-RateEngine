@@ -22,15 +22,10 @@ from pydantic import BaseModel, Field, ConfigDict
 class QuoteTotalsResponse(BaseModel):
     """
     Response schema for quote totals.
-    
+
     IMPORTANT: The `currency` field is the OUTPUT CURRENCY for display.
-    This is derived from shipment/payment country rules:
-    - EXPORT PREPAID to AU -> AUD
-    - EXPORT PREPAID non-AU -> USD
-    - EXPORT COLLECT -> PGK
-    - IMPORT PREPAID from AU -> AUD
-    - IMPORT PREPAID non-AU -> USD
-    - IMPORT COLLECT -> PGK
+    Quote-currency policy is owned by `quotes.currency_rules.determine_quote_currency()`;
+    this response schema must not duplicate or redefine that commercial rule.
     """
     model_config = ConfigDict(from_attributes=True)
     
