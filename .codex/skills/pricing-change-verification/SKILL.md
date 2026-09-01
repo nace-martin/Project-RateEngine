@@ -63,20 +63,30 @@ When payment terms, FX, SPOT pricing, or customer output are involved, establish
 - Do not infer customer quote currency from the native BUY/cost currency of an agent, airline, local supplier, or journey leg.
 - A client-, SPOT-, or persisted-draft `output_currency` must not override the canonical policy when trusted direction, payment term, and country context are known.
 - Mixed native cost currencies must be converted through the approved FX/CAF path into the single customer quote currency before customer totals are treated as complete.
+- For the foreign-partner branch of the policy (Import Prepaid / Export Collect), use the maintained partner-country mapping rather than assuming every non-AU country is USD: AU/NZ => AUD, SB/FJ => PGK, all other countries => USD.
 
-High-value import examples:
+High-value examples:
 
 ```text
 BNE → POM → LAE
 Import Collect  → PGK customer quote
 Import Prepaid  → AUD customer quote
 
+AKL → POM
+Import Prepaid  → AUD customer quote
+
+HIR → POM
+Import Prepaid  → PGK customer quote
+
+POM → NAN
+Export Collect  → PGK customer quote
+
 CAN → POM → LAE
 Import Collect  → PGK customer quote
 Import Prepaid  → USD customer quote
 ```
 
-Use the canonical resolver/tests for export and other country combinations rather than duplicating a second currency matrix in this skill.
+Use the canonical resolver/tests for all country combinations rather than duplicating a separate pricing-engine currency matrix.
 
 ### 3. Trace the full pricing path
 
