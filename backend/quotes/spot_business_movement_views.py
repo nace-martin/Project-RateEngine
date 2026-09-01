@@ -105,11 +105,22 @@ class SpotBusinessMovementAPIView(APIView):
                 leg_key=leg_key,
             )
         except ValueError as exc:
-            code = str(exc)
-            http_status = status.HTTP_409_CONFLICT if code == "JOURNEY_REVISION_STALE" else status.HTTP_400_BAD_REQUEST
+            internal_code = str(exc)
+            if internal_code == "JOURNEY_REVISION_STALE":
+                error_code = "JOURNEY_REVISION_STALE"
+                http_status = status.HTTP_409_CONFLICT
+            elif internal_code == "CURRENT_JOURNEY_NOT_AVAILABLE":
+                error_code = "CURRENT_JOURNEY_NOT_AVAILABLE"
+                http_status = status.HTTP_400_BAD_REQUEST
+            elif internal_code == "BUSINESS_MOVEMENT_NOT_IN_CURRENT_JOURNEY":
+                error_code = "BUSINESS_MOVEMENT_NOT_IN_CURRENT_JOURNEY"
+                http_status = status.HTTP_400_BAD_REQUEST
+            else:
+                error_code = "BUSINESS_MOVEMENT_INVALID"
+                http_status = status.HTTP_400_BAD_REQUEST
             return Response(
                 {
-                    "error_code": code,
+                    "error_code": error_code,
                     "error": "The selected business movement is not valid for the current trusted journey.",
                 },
                 status=http_status,
