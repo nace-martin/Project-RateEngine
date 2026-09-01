@@ -1,4 +1,5 @@
 import { SpotWorkspaceIssue } from "./spotResolutionState";
+import { BusinessMovementResolver } from "./BusinessMovementResolver";
 
 interface NeedsAttentionPanelProps {
   items: SpotWorkspaceIssue[];
@@ -22,20 +23,25 @@ export function NeedsAttentionPanel({
         {items.map((item) => (
           <div
             key={`${item.type}-${item.id}`}
-            className="bg-slate-950 border border-slate-850 rounded-xl p-3 flex justify-between items-center text-xs"
+            className="bg-slate-950 border border-slate-850 rounded-xl p-3 text-xs"
           >
-            <div>
-              <strong className="block text-slate-200">{item.title}</strong>
-              <span className="text-slate-400 mt-0.5 block">
-                {item.problem}
-              </span>
+            <div className="flex justify-between items-center gap-3">
+              <div>
+                <strong className="block text-slate-200">{item.title}</strong>
+                <span className="text-slate-400 mt-0.5 block">
+                  {item.problem}
+                </span>
+              </div>
+              <button
+                onClick={() => onSelectIssue(item.id)}
+                className="shrink-0 px-2.5 py-1.5 bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-900 text-indigo-300 hover:text-white rounded font-semibold transition"
+              >
+                Resolve Now
+              </button>
             </div>
-            <button
-              onClick={() => onSelectIssue(item.id)}
-              className="px-2.5 py-1.5 bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-900 text-indigo-300 hover:text-white rounded font-semibold transition"
-            >
-              Resolve Now
-            </button>
+            {item.type === "review_item" && item.charge ? (
+              <BusinessMovementResolver chargeLineId={item.charge.id} />
+            ) : null}
           </div>
         ))}
       </div>

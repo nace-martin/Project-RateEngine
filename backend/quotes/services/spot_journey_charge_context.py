@@ -40,6 +40,63 @@ def is_live_quote_linked_spot_line(line: SPEChargeLineDB) -> bool:
     )
 
 
+def current_live_spot_journey(line: SPEChargeLineDB) -> ShipmentJourneyDB | None:
+    if not is_live_quote_linked_spot_line(line):
+        return None
+    return (
+        line.envelope.shipment_journeys
+        .exclude(status=ShipmentJourneyDB.Status.SUPERSEDED)
+        .order_by("-revision", "-created_at", "-id")
+        .first()
+    )
+
+
+def business_movement_options(line: SPEChargeLineDB) -> list[dict]:
+    """Return current trusted journey legs as operator-facing business movements."""
+    journey = current_live_spot_journey(line)
+    if journey is None:
+        return []
+    return [
+        {
+            "journey_revision": journey.revision,
+            "leg_id": str(leg.id),
+            "leg_key": leg.leg_key,
+            "sequence": leg.sequence,
+            "role": leg.role,
+            "origin_code": leg.origin_code,
+            "destination_code": leg.destination_code,
+            "product_code_domain": leg.product_code_domain,
+            "transport_mode": leg.transport_mode,
+            "label": _movement_label(leg),
+        }
+        for leg in journey.legs.order_by("sequence", "id")
+    ]
+
+
+def assign_live_spot_business_movement(
+    line: SPEChargeLineDB,
+    *,
+    journey_revision: int,
+    leg_key: str,
+) -> SPEChargeLineDB:
+    """Assign an operator-selected movement after validating the current journey revision.
+
+    The client chooses a readable business movement/leg key, never a ProductCode.
+    ProductCode resolution is rerun from the resulting trusted leg context.
+    """
+    journey = current_live_spot_journey(line)
+    if journey is None:
+        raise ValueError("CURRENT_JOURNEY_NOT_AVAILABLE")
+    if int(journey_revision) != int(journey.revision):
+        raise ValueError("JOURNEY_REVISION_STALE")
+
+    leg = journey.legs.filter(leg_key=str(leg_key or "").strip()).first()
+    if leg is None:
+        raise ValueError("BUSINESS_MOVEMENT_NOT_IN_CURRENT_JOURNEY")
+
+    return _apply_context_for_leg(journey, leg, line)
+
+
 def apply_live_spot_leg_context(line: SPEChargeLineDB) -> SPEChargeLineDB:
     """Attach trusted journey-leg context and run the leg-aware ProductCode resolver.
 
@@ -47,17 +104,10 @@ def apply_live_spot_leg_context(line: SPEChargeLineDB) -> SPEChargeLineDB:
     every existing SPOT bucket. On multi-leg journeys only the airfreight bucket
     is automatically attached to the unique international leg; origin and
     destination buckets remain unassigned until the operator/business movement
-    is explicit rather than guessed.
+    is explicit rather than guessed. A valid existing assignment on the current
+    journey is retained so later charge edits do not erase an operator decision.
     """
-    if not is_live_quote_linked_spot_line(line):
-        return line
-
-    journey = (
-        line.envelope.shipment_journeys
-        .exclude(status=ShipmentJourneyDB.Status.SUPERSEDED)
-        .order_by("-revision", "-created_at", "-id")
-        .first()
-    )
+    journey = current_live_spot_journey(line)
     if journey is None:
         return line
 
@@ -76,6 +126,14 @@ def apply_live_spot_leg_context(line: SPEChargeLineDB) -> SPEChargeLineDB:
         line.save(update_fields=["journey_leg", "charge_context_json", "product_code_resolution_audit_json"])
         return line
 
+    return _apply_context_for_leg(journey, leg, line)
+
+
+def _apply_context_for_leg(
+    journey: ShipmentJourneyDB,
+    leg: ShipmentLegDB,
+    line: SPEChargeLineDB,
+) -> SPEChargeLineDB:
     context = _build_charge_context(journey, leg, line)
     requested_product = line.effective_resolved_product_code
     result = LegAwareProductCodeResolver().resolve(
@@ -84,6 +142,11 @@ def apply_live_spot_leg_context(line: SPEChargeLineDB) -> SPEChargeLineDB:
     )
     audit = result.to_dict()
     audit[PHASE_16_LIVE_MARKER] = True
+    audit["business_movement"] = {
+        "journey_revision": journey.revision,
+        "leg_key": leg.leg_key,
+        "label": _movement_label(leg),
+    }
 
     line.journey_leg = leg
     line.charge_context_json = context.to_audit_dict()
@@ -113,6 +176,15 @@ def phase_16_resolution_blockers(line: SPEChargeLineDB) -> list[str]:
 
 def _select_leg_for_line(journey: ShipmentJourneyDB, line: SPEChargeLineDB) -> ShipmentLegDB | None:
     legs = list(journey.legs.order_by("sequence", "id"))
+
+    # Preserve an explicit operator assignment while it still belongs to the
+    # current trusted journey revision. A route change creates a different
+    # journey, so stale assignments are not carried forward.
+    if line.journey_leg_id:
+        for leg in legs:
+            if leg.id == line.journey_leg_id:
+                return leg
+
     if len(legs) == 1:
         return legs[0]
 
@@ -125,6 +197,19 @@ def _select_leg_for_line(journey: ShipmentJourneyDB, line: SPEChargeLineDB) -> S
         if len(international) == 1:
             return international[0]
     return None
+
+
+def _movement_label(leg: ShipmentLegDB) -> str:
+    role_labels = {
+        LegRole.INTERNATIONAL_IMPORT.value: "International Air Freight",
+        LegRole.INTERNATIONAL_EXPORT.value: "International Air Freight",
+        LegRole.DOMESTIC_ON_FORWARDING.value: "Domestic On-forwarding",
+        LegRole.DOMESTIC_PRE_CARRIAGE.value: "Domestic Pre-carriage",
+        LegRole.FINAL_PICKUP.value: "Local Pickup",
+        LegRole.FINAL_DELIVERY.value: "Local Delivery",
+    }
+    role = role_labels.get(leg.role, str(leg.role or "Movement").replace("_", " ").title())
+    return f"{role}: {leg.origin_code} → {leg.destination_code}"
 
 
 def _build_charge_context(
