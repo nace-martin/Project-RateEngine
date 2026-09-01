@@ -50,6 +50,10 @@ class SpotPricingIdentity:
             self.currency,
         )
 
+    @property
+    def blocker_id(self) -> str:
+        return "spot-pricing-identity:" + "|".join(str(part) for part in self.key)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "identity_version": PRICING_IDENTITY_VERSION,
@@ -103,6 +107,7 @@ def resolve_spot_pricing_identity(line: SPEChargeLineDB) -> SpotPricingIdentityR
     component = _COMPONENT_BY_BUCKET.get(line.bucket)
     raw_revision = context.get("journey_revision")
     leg_key = str(context.get("leg_key") or "").strip()
+    product_code_value = str(getattr(product_code, "code", "") or "").strip().upper()
     commercial_position = str(context.get("commercial_position") or "").strip().upper()
     context_domain = str(context.get("product_code_domain") or "").strip().upper()
     currency = str(line.currency or "").strip().upper()
@@ -112,7 +117,17 @@ def resolve_spot_pricing_identity(line: SPEChargeLineDB) -> SpotPricingIdentityR
     except (TypeError, ValueError):
         journey_revision = None
 
-    if not all((journey_revision, leg_key, commercial_position, component, currency, context_domain)):
+    if not all(
+        (
+            journey_revision,
+            leg_key,
+            product_code_value,
+            commercial_position,
+            component,
+            currency,
+            context_domain,
+        )
+    ):
         blockers.append(SPOT_PRICING_IDENTITY_CONTEXT_INCOMPLETE)
 
     if leg is not None:
@@ -141,7 +156,7 @@ def resolve_spot_pricing_identity(line: SPEChargeLineDB) -> SpotPricingIdentityR
     identity = SpotPricingIdentity(
         journey_revision=journey_revision,
         leg_key=leg_key,
-        product_code=str(product_code.code or "").strip().upper(),
+        product_code=product_code_value,
         commercial_position=commercial_position,
         component=component,
         currency=currency,
@@ -199,6 +214,7 @@ def pricing_identity_review_blockers(envelope: SpotPricingEnvelopeDB) -> list[di
             continue
         first = duplicate_group[0]
         blockers.append({
+            "id": first.blocker_id,
             "code": SPOT_PRICING_IDENTITY_DUPLICATE,
             "message": (
                 "Multiple SPOT charges resolve to the same trusted pricing identity; "
