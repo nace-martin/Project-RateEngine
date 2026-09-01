@@ -55,7 +55,30 @@ Record the smallest realistic scenario that exercises the change, including as a
 
 Prefer an existing fixture or known test scenario over constructing artificial data.
 
-### 2. Trace the full pricing path
+### 2. Verify payment terms and quote-currency policy
+
+When payment terms, FX, SPOT pricing, or customer output are involved, establish the customer quote currency before checking arithmetic.
+
+- Use `quotes.currency_rules.determine_quote_currency()` as the canonical authority for direction + payment term + country.
+- Do not infer customer quote currency from the native BUY/cost currency of an agent, airline, local supplier, or journey leg.
+- A client-, SPOT-, or persisted-draft `output_currency` must not override the canonical policy when trusted direction, payment term, and country context are known.
+- Mixed native cost currencies must be converted through the approved FX/CAF path into the single customer quote currency before customer totals are treated as complete.
+
+High-value import examples:
+
+```text
+BNE → POM → LAE
+Import Collect  → PGK customer quote
+Import Prepaid  → AUD customer quote
+
+CAN → POM → LAE
+Import Collect  → PGK customer quote
+Import Prepaid  → USD customer quote
+```
+
+Use the canonical resolver/tests for export and other country combinations rather than duplicating a second currency matrix in this skill.
+
+### 3. Trace the full pricing path
 
 Trace the affected value through:
 
@@ -72,7 +95,7 @@ normalized quote input
 
 Skip stages that genuinely do not apply, but state that they were not applicable.
 
-### 3. Verify rate selection
+### 4. Verify rate selection
 
 Where rate selection is involved, prove:
 
@@ -82,7 +105,7 @@ Where rate selection is involved, prove:
 - missing coverage remains explicit rather than silently replaced; and
 - commodity or ProductCode behavior comes from canonical definitions rather than name matching or guesswork.
 
-### 4. Verify source semantics by layer
+### 5. Verify source semantics by layer
 
 When source metadata is asserted, distinguish commercial truth from normalized representation. A known COGS may remain commercially authoritative even when a canonical quote line intentionally uses a different `rate_source` to describe missing SELL coverage.
 
@@ -95,7 +118,7 @@ For each affected layer, record the expected meaning of fields such as:
 
 If a test disagrees with current canonical normalization but the commercial values and documented contract are correct, fix the stale expectation rather than changing runtime pricing logic to satisfy the test.
 
-### 5. Verify commercial arithmetic
+### 6. Verify commercial arithmetic
 
 Check affected values individually rather than validating only the final total. As applicable, capture before/after or expected/actual values for:
 
@@ -115,11 +138,11 @@ quote total
 
 If an item is unchanged, say so explicitly when it is commercially relevant to the change.
 
-### 6. Verify SPOT replacement when applicable
+### 7. Verify SPOT replacement when applicable
 
 For hybrid/SPOT scenarios, prove that the matching standard freight bucket is replaced rather than stacked. Check both persisted quote lines and customer-facing totals. Domestic freight must not be double-counted when it is part of the replaced bucket.
 
-### 7. Run targeted automated checks
+### 8. Run targeted automated checks
 
 Start with the narrowest relevant checks:
 
@@ -130,7 +153,7 @@ Start with the narrowest relevant checks:
 
 Run broader suites only when the scope justifies them. Do not report unrun checks as passed. Before merge, use CI from the current branch head as the authoritative broader regression result.
 
-### 8. Perform an end-to-end commercial check
+### 9. Perform an end-to-end commercial check
 
 When the change can reach a generated quote, execute one realistic end-to-end scenario through the affected path. Confirm the resulting quote lines and total, not merely the HTTP status or absence of an exception.
 
