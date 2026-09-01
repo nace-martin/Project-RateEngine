@@ -150,7 +150,22 @@ If an item is unchanged, say so explicitly when it is commercially relevant to t
 
 ### 7. Verify SPOT replacement when applicable
 
-For hybrid/SPOT scenarios, prove that the matching standard freight bucket is replaced rather than stacked. Check both persisted quote lines and customer-facing totals. Domestic freight must not be double-counted when it is part of the replaced bucket.
+For live Phase 16 SPOT pricing, do not use a legacy bucket match as proof of correct replacement. Establish the complete trusted commercial identity first:
+
+```text
+journey_revision
+leg_key
+product_code
+commercial_position
+component
+currency
+```
+
+Then prove the SPOT line replaces only the standard line with the exact compatible identity. Unrelated standard lines must remain even when they share the same legacy bucket. Unresolved or stale identities must not displace standard pricing, and duplicate SPOT identities must block review rather than silently choosing one. Check persisted quote lines and customer-facing totals for duplicate standard + SPOT pricing on the same identity.
+
+For legacy/non-Phase-16 SPOT paths that have not been migrated, verify the active bucket-level contract separately and prove freight is not stacked. Do not treat that legacy evidence as sufficient verification for a Phase 16 journey-aware change.
+
+Exercise Domestic freight independently from the international leg when both exist. A domestic on-forwarding/pre-carriage SPOT line must not replace international freight merely because the lines share a historical freight or destination bucket.
 
 ### 8. Run targeted automated checks
 
