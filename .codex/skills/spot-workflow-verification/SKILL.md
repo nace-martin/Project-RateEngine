@@ -1,6 +1,6 @@
 ---
 name: spot-workflow-verification
-description: Verify RateEngine SPE/SPOT workflow changes across intake, raw evidence, normalization, unresolved findings, operator resolution, ProductCode requests, finalization/reopen controls, V4 computation, quote creation, and SPOT freight replacement. Use after changing or reviewing SPOT workflow behavior; do not use for unrelated standard-quote work.
+description: Verify RateEngine SPE/SPOT workflow changes across intake, raw evidence, normalization, unresolved findings, operator resolution, ProductCode requests, finalization/reopen controls, V4 computation, quote creation, and granular SPOT replacement. Use after changing or reviewing SPOT workflow behavior; do not use for unrelated standard-quote work.
 ---
 
 # SPOT Workflow Verification
@@ -22,7 +22,7 @@ Use when work changes or could affect:
 - review locks or idempotency;
 - SPE envelope persistence;
 - V4 computation using `spot_envelope_id`;
-- SPOT-to-standard freight replacement; or
+- SPOT-to-standard pricing replacement; or
 - quote creation/public output derived from SPOT.
 
 Do not use for unrelated standard quote changes that do not touch SPE/SPOT behavior.
@@ -53,7 +53,7 @@ Describe one realistic scenario, including as applicable:
 - operator role;
 - expected resolution action;
 - expected final state; and
-- pricing bucket expected to be replaced.
+- trusted pricing identity expected to be replaced.
 
 Prefer existing fixtures and known workflow tests.
 
@@ -105,22 +105,37 @@ For changed mutation or read paths, test the relevant permitted and denied roles
 
 ### 7. Verify SPE persistence
 
-Confirm the intended active persistence path is used and deprecated quote-scoped SPOT CRUD is not revived. Where applicable verify the correct envelope, source batch, charge line, acknowledgement, audit, or resolution records are linked to the workflow.
+Confirm the intended active persistence path is used and deprecated quote-scoped SPOT CRUD is not revived. Where applicable verify the correct envelope, source batch, charge line, acknowledgement, audit, journey leg, ProductCode resolution, or operator decision records are linked to the workflow.
 
 ### 8. Verify V4 computation
 
 Confirm quote calculation uses the intended SPE envelope through `PricingServiceV4Adapter` and `spot_envelope_id`. Check that resolved operator decisions are represented correctly in the calculation input.
 
-### 9. Prove SPOT replacement
+### 9. Prove granular SPOT replacement
 
-For any SPOT freight charge:
+For every SPOT charge that can replace standard pricing, identify and record the complete trusted commercial identity:
 
-- identify the matching standard freight bucket;
-- prove the standard freight in that bucket is replaced;
-- prove no duplicate freight line survives in persisted output; and
-- prove customer-facing totals do not contain both standard and SPOT freight for the same bucket.
+```text
+journey_revision
+leg_key
+product_code
+commercial_position
+component
+currency
+```
 
-Include Domestic freight when it belongs to the matching bucket.
+Then prove that:
+
+- the journey revision and leg key belong to the current trusted journey;
+- the resolved ProductCode domain is compatible with that leg;
+- the SPOT line replaces only the standard line with the exact compatible identity;
+- unrelated standard lines remain, including lines in the same legacy bucket;
+- an unresolved or stale identity cannot displace a standard line;
+- duplicate SPOT identities block review rather than silently choosing one;
+- no duplicate standard + SPOT charge survives for the same trusted identity; and
+- customer-facing totals do not contain both standard and SPOT pricing for that same identity.
+
+Exercise domestic on-forwarding/pre-carriage separately from the international leg when the journey contains both. A domestic SPOT charge must not replace the international freight component merely because both are historically grouped under a freight or destination bucket.
 
 ### 10. Verify quote creation and output
 
@@ -141,8 +156,10 @@ Stop the affected verification and report the unresolved issue when:
 - finalized mutation controls or RBAC cannot be proven;
 - the workflow uses a deprecated SPOT persistence/API path;
 - the envelope used for calculation cannot be identified;
-- a fallback path dereferences a model field/relationship that is not part of the active model; or
-- standard and SPOT freight appear to stack for the same bucket.
+- a fallback path dereferences a model field/relationship that is not part of the active model;
+- a SPOT line lacks a trusted pricing identity but is allowed to replace standard pricing;
+- duplicate pricing identities are silently accepted; or
+- standard and SPOT pricing stack for the same trusted identity.
 
 Do not weaken safety or audit controls merely to complete the scenario.
 
@@ -171,8 +188,11 @@ Authority
 
 Pricing
 - SPE envelope used by V4: yes
-- matching standard freight replaced: yes
-- duplicate freight lines: none
+- trusted identity: revision + leg + ProductCode + position + component + currency
+- exact standard line replaced: yes
+- unrelated same-bucket lines retained: yes
+- duplicate pricing identities: none
+- duplicate standard + SPOT identity: none
 - unrelated quote totals changed: none
 
 Checks
