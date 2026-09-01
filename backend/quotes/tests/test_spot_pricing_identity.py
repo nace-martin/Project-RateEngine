@@ -1,3 +1,4 @@
+from datetime import timedelta
 from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
@@ -226,7 +227,7 @@ class SpotPricingIdentityTests(TestCase):
             spot_trigger_reason_code="LEGACY_TEST",
             spot_trigger_reason_text="Legacy test",
             created_by=self.user,
-            expires_at=timezone.now() + timezone.timedelta(hours=24),
+            expires_at=timezone.now() + timedelta(hours=24),
         )
         line = SPEChargeLineDB.objects.create(
             envelope=legacy_envelope,
