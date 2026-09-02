@@ -2,7 +2,7 @@
 
 Status: Phase 15B evidence capture log.
 
-Current launch recommendation: **NO-GO**. Phase 15B could not execute the live staging scenarios because this agent session does not have staging application/database access or staging user credentials. Local automated checks are recorded below as supporting evidence only and are not sufficient to mark the pilot GO.
+Current launch recommendation: **NO-GO**. Phase 15B could not execute the live staging scenarios because this agent session does not have staging application/database access or staging user credentials. Phase 15C confirmed the staging readiness evidence is still incomplete and created `docs/pilot/staging-readiness.md` to track environment blockers. Local automated checks are supporting evidence only and are not sufficient to mark the pilot GO.
 
 ## Evidence handling rules
 
@@ -86,18 +86,37 @@ Copy this block once per scenario execution.
 | --- | --- | --- | --- | --- |
 | P15B-ENV-01 | Phase 15B cannot execute real staging UAT from this agent session because staging application/database access, staging URL, and role-specific user credentials were not available. | Launch blocker for evidence completeness, not a confirmed product defect. | No code fix in scope; requires environment/access handoff and rerun. | Open. |
 | P15B-LOCAL-01 | Local seed-plan command failed with `no such table: product_codes` because the local default SQLite DB is not migrated/seeded. | Environment/setup issue; not launch evidence. | No migration or seed apply was run because Phase 15B requires staging evidence and production-like data, not local synthetic DB mutation. | Open as local-only note. |
+| P15C-ENV-01 | Staging environment identity, configuration, migrations, seed apply/audit, users, live workspace, endpoints, and AF15A test records are not verified. | Staging readiness blocker. | No code/pricing changes in scope; requires deployment/admin access and non-secret evidence capture. | Open; tracked in `docs/pilot/staging-readiness.md`. |
+
+## Phase 15C readiness summary
+
+| Readiness item | Phase 15C result | Status |
+| --- | --- | --- |
+| Staging frontend URL | Not provided/verified. | Blocked |
+| Staging backend/API URL | Not provided/verified. | Blocked |
+| Staging database | Not provided/verified. | Blocked |
+| Deployment platform | Repository docs identify active architecture as Google Cloud Run + Cloud SQL + Secret Manager + GCS; actual staging services are unverified. | Partially confirmed |
+| Current deployed commit | Not verified. Branch starts from `f14c3ba2` after PR #292 only. | Blocked |
+| Required env vars/secrets/storage/API config | Not verified in staging. | Blocked |
+| Migrations | Not applied/verified in staging from this session. | Blocked |
+| `air_freight_pilot_seed_plan` dry run/apply/audit | Not executed in staging. Apply must wait for reviewed dry-run output. | Blocked |
+| Staging users/memberships | Sales, manager, admin, and finance/read-only users not verified. | Blocked |
+| Live workspace/ProductCode selector/finalize/reopen/test SPEs | Not verified; no staging URL/user/SPE IDs available. | Blocked |
+| Decision | `NOT READY` | Blocks Phase 15B rerun |
+
+See `docs/pilot/staging-readiness.md` for owner/action details. No credentials, tokens, passwords, pricing changes, migrations, seed apply, cleanup, backfill, quote-total changes, GST changes, FX changes, margin changes, or public quote output changes were committed.
 
 ## Launch decision summary
 
 | Decision item | Status | Notes |
 | --- | --- | --- |
 | All mandatory scenarios executed | No | AF15A-01 through AF15A-12 were blocked by missing staging access. |
-| Zero unresolved blockers | No | Evidence-completeness blocker P15B-ENV-01 remains open. |
+| Zero unresolved blockers | No | Evidence-completeness blockers P15B-ENV-01 and P15C-ENV-01 remain open. |
 | Quote totals/public output verified | No | No staging quote/customer output evidence was available. |
 | Manager/admin reopen verified | No | Requires staging manager/admin UI evidence. |
 | Unauthorized-role checks verified | No | Requires staging sales/finance/cross-scope/unauthenticated UI/API evidence. |
 | Manual-review workload accepted | Pending | Requires manager review after real UAT execution. |
 
-Current recommendation: **NO-GO**.
+Current recommendation: **NO-GO**. Phase 15C environment decision: **NOT READY**.
 
 A future update may change this to `CONDITIONAL GO` or `GO` only after real staging evidence is attached and reviewed. Automated tests, local `manage.py check`, and local/demo evidence must remain supporting evidence only.
