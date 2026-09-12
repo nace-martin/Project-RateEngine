@@ -6,6 +6,16 @@ This file contains repository-wide guidance for AI agents working on RateEngine.
 
 Keep architecture, domain facts, operational procedures, and output templates in their existing canonical locations. Update an existing source rather than creating a competing one. Separate implemented behavior from plans and open questions.
 
+### Upstream Business Intent & Nas Brain
+
+Authoritative business intent, commercial rules, product decisions, and pricing policy are maintained in Nas Brain:
+
+- Location: `%USERPROFILE%\Nas-Brain`
+- When business, product, or pricing intent matters, agents should read `%USERPROFILE%\Nas-Brain\AGENTS.md`.
+- Nas Brain defines durable intent and business knowledge; RateEngine code, tests, and runtime evidence define implementation reality.
+- Brain intent must not be assumed implemented.
+- Accidental implementation behaviour must not become Brain truth.
+
 ## 2. Session Boot & Repository Navigation
 
 At the start of repository work, run:
