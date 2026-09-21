@@ -8,6 +8,20 @@ from django.utils.text import slugify
 
 from core.models import Country, City, Currency
 
+from .org_models import (  # noqa: F401 - Django model registration
+    OrgBranch,
+    OrgCompany,
+    OrgDepartment,
+    OrgOperatingEntity,
+)
+from .party_models import (  # noqa: F401 - Django model registration
+    PartyAddress,
+    PartyContact,
+    PartyMaster,
+    PartyRole,
+    PartyRoleIdentifier,
+)
+
 class Company(models.Model):
     AUDIENCE_LOCAL_PNG = 'LOCAL_PNG_CUSTOMER'
     AUDIENCE_OVERSEAS_AU = 'OVERSEAS_PARTNER_AU'
