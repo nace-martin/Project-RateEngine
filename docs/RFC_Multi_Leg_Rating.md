@@ -1,5 +1,9 @@
 # RFC: Multi-Leg Air Freight Rating with Incoterms and COGS/Sell Separation
 
+> [!WARNING]
+> **SUPERSEDED ARCHITECTURE**
+> This historical RFC has been formalized and superseded by [Clean Database Architecture v2.1 — Approved](architecture/clean-database-architecture-v2.1.md).
+
 **Author:** Nason Martin  
 **Date:** 2025-08-27  
 **Status:** Draft (North Star Vision)  

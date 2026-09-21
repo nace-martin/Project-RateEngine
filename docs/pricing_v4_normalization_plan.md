@@ -1,5 +1,9 @@
 # Pricing V4 Normalization Plan: ImportCOGS
 
+> [!WARNING]
+> **SUPERSEDED ARCHITECTURE**
+> This transitional document has been superseded by the unified rate matrix architecture in [Clean Database Architecture v2.1 — Approved](architecture/clean-database-architecture-v2.1.md).
+
 ## Phase 3A: Consolidation Planning (Origin-Scoped Rates)
 
 ### Findings

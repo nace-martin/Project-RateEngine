@@ -1,8 +1,9 @@
 # RateEngine Architecture Principles
 
 > **Document Status:** LOCKED - Changes require explicit approval
-> **Last Updated:** 2026-04-19
+> **Last Updated:** 2026-09-13
 > **Applies To:** All RateEngine development
+> **Canonical Database Specification:** [Clean Database Architecture v2.1 — Approved](architecture/clean-database-architecture-v2.1.md)
 
 ---
 
