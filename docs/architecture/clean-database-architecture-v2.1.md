@@ -101,11 +101,11 @@ geo_location
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `geo_location` | Normalized physical place, airport, seaport, or city | `id` (UUID) | None | `canonical_name`, `country_code`, `state_province`, `location_type` (AIRPORT, SEAPORT, CITY, INLAND_HUB), `is_active` | None | Canonical World Locations |
 | `geo_location_identifier` | Industry and standard codes for a location | `id` (UUID) | `location_id → geo_location.id` | `scheme` (ENUM: IATA, ICAO, UNLOCODE, INTERNAL_STATION), `code` | `UNIQUE(scheme, code)` | Standard Transport Codes |
-| `geo_corridor_policy` | Configurable routing, corridor rules, and transit policy | `id` (UUID) | `origin_id → geo_location.id`, `destination_id → geo_location.id`, `via_hub_id → geo_location.id` (opt) | `transport_mode` (AIR, SEA, ROAD), `is_active`, `requires_transit_hub`, `default_transit_days`, `valid_from`, `valid_until` | `UNIQUE(origin_id, destination_id, transport_mode, via_hub_id)` | Data-Driven Network Corridors |
+| `geo_corridor_policy` | Configurable routing, corridor rules, and transit policy | `id` (UUID) | `origin_id → geo_location.id`, `destination_id → geo_location.id`, `via_hub_id → geo_location.id` (opt) | `transport_mode` (AIR, SEA, ROAD), `automation_enabled`, `is_active`, `requires_transit_hub`, `default_transit_days`, `valid_from`, `valid_until` | `UNIQUE(origin_id, destination_id, transport_mode, via_hub_id)` | Data-Driven Network Corridors |
 
 *Location Identifier Governance:* The only schemes are `IATA`, `ICAO`, `UNLOCODE`, and `INTERNAL_STATION`. `INTERNAL_STATION` is EFM's controlled operational identifier where no appropriate external standard exists. GPS coordinates are attributes of `GeoLocation`, not identifiers. Postal codes belong to address records. An unrestricted identifier namespace is excluded; adding another scheme requires an explicit architecture decision.
 
-*Corridor Rule Governance:* Removes hardcoded POM gateway constraints. Routing rules (such as requiring a transit hub via POM or SIN) are defined dynamically in `geo_corridor_policy`.
+*Corridor Rule Governance:* Removes hardcoded POM gateway constraints. Routing rules (such as requiring a transit hub via POM or SIN) are defined dynamically in `geo_corridor_policy`. Corridor automation requires explicit approval: `automation_enabled` defaults to `False`; a corridor's existence in the database does not authorize automated quoting.
 
 ---
 
@@ -123,9 +123,9 @@ fx_market_rate (pure market exchange rates)
 | `commercial_product_code` | Sole commercial master of billable/payable freight charges | `id` (UUID) | None | `code`, `name`, `category` (FREIGHT, ORIGIN, DESTINATION, CLEARANCE, SERVICE), `sub_category`, `gst_treatment` (FREIGHT_EXPORT, FREIGHT_IMPORT, DOMESTIC_STANDARD, EXEMPT, ZERO_RATED), `charge_basis_default`, `is_active` | `UNIQUE(code)` | Sole Master of Commercial Charges & GST Classification |
 | `commercial_charge_alias` | Known supplier text strings mapped to ProductCodes | `id` (UUID) | `product_code_id → commercial_product_code.id` | `raw_text`, `transport_mode`, `carrier_party_id → party_master.id` (opt), `source_currency` (opt), `confidence_score` | `UNIQUE(raw_text, transport_mode, carrier_party_id)` | Intake Normalization Authority |
 | `fx_market_rate` | Pure historical/market exchange rates | `id` (UUID) | None | `base_currency`, `quote_currency`, `effective_date`, `tt_buy_rate`, `tt_sell_rate`, `mid_rate`, `source` | `UNIQUE(base_currency, quote_currency, effective_date, source)` | Market FX Facts |
-| `policy_commercial_terms` | Versioned commercial terms, margins, CAF, and tax rates | `id` (UUID) | None | `policy_code`, `valid_from`, `valid_until`, `default_margin_percent`, `import_caf_percent`, `export_caf_percent`, `gst_standard_percent`, `is_active` | `CHECK(valid_until IS NULL OR valid_until > valid_from)` | Versioned Commercial Pricing Policy |
+| `policy_commercial_terms` | Versioned commercial terms, margins, CAF, and tax rates | `id` (UUID) | None | `policy_code`, `valid_from`, `valid_until`, `target_gross_margin_percent`, `import_caf_percent`, `export_caf_percent`, `gst_standard_percent`, `is_active` | `CHECK(valid_until IS NULL OR valid_until > valid_from)` | Versioned Commercial Pricing Policy |
 
-*Amendment 2 Governance:* `commercial_product_code.gst_treatment` is the sole owner of GST/tax classification. `policy_commercial_terms` defines only the versioned rate (e.g. 10%) and application formula, eliminating conflicting tax definitions.
+*Amendment 2 Governance:* `commercial_product_code.gst_treatment` is the sole owner of GST/tax classification. `policy_commercial_terms` defines only the versioned rate (e.g. 10%) and application formula, eliminating conflicting tax definitions. RateEngine has no universal/default margin: `target_gross_margin_percent` is nullable policy data (< 100%) with no database default; approved SELL rates are not re-margined, and missing applicable commercial policy fails closed.
 
 ---
 

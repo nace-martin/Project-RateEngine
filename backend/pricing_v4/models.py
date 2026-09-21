@@ -25,6 +25,11 @@ from django.db import models
 from django.core.exceptions import ValidationError
 from core.commodity import COMMODITY_CHOICES, DEFAULT_COMMODITY_CODE
 from pricing_v4.category_rules import is_local_rate_category
+from .commercial_models import (  # noqa: F401 - Django model registration
+    CommercialProductCode,
+    CommercialChargeAlias,
+    CommercialTermsPolicy,
+)
 
 
 # =============================================================================
