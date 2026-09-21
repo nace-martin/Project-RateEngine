@@ -1,5 +1,10 @@
 # CRM Module V1
 
+> [!WARNING]
+> **SUPERSEDED ARCHITECTURE**
+> This document describes historical CRM features. CRM is explicitly **excluded** from RateEngine product scope.
+> Refer to canonical [Clean Database Architecture v2.1 — Approved](architecture/clean-database-architecture-v2.1.md).
+
 ## Purpose
 
 Phase 1 adds the backend foundation for RateEngine CRM tracking. It records customer opportunities, interactions, and follow-up tasks while keeping deterministic freight pricing, quote calculation, and operational shipment creation in their existing modules.

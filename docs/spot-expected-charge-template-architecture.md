@@ -1,5 +1,13 @@
 # Phase 10.3h — Expected Charge Template Framework for SPOT
 
+> [!NOTE]
+> **SPOT COMPLETENESS SAFETY GATE — ACTIVE CAPABILITY**
+> The expected-charge validation framework defines a dedicated completeness validation safety gate.
+> A SPOT response must be checked for expected/required commercial charges before safe quote finalization.
+> It remains conceptually separate from charge interpretation (ChargeAlias), canonical commercial identity (ProductCode), and tariff matching (RateApplicability).
+> The existing models (`ExpectedChargeTemplate`, `ExpectedTemplateLine`, `SpotTemplateValidationReview`, `SpotTemplateValidationEvent`, `SpotTemplateValidationSnapshot`) remain active until the clean target schema has an explicit replacement and regression tests prove equivalent safety behavior.
+> See canonical reference in [Clean Database Architecture v2.1 — Approved](architecture/clean-database-architecture-v2.1.md).
+
 ## Executive Summary
 This document proposes the architecture for an **Expected Charge Template Framework** in RateEngine's SPOT intake workflow. Building upon the semantic layer introduced by `CanonicalChargeType` (Phases 10.3d–10.3g), this framework establishes a mechanism to define what charges are commercially expected for a given shipment context (mode, route, service scope).
 

@@ -1,5 +1,9 @@
 # Phase 8D.5 — Exception Workspace Backend Integration Plan
 
+> [!WARNING]
+> **SUPERSEDED ARCHITECTURE**
+> This integration draft has been superseded by the normalized 3-stage SPOT pipeline in [Clean Database Architecture v2.1 — Approved](architecture/clean-database-architecture-v2.1.md).
+
 This document outlines how the frontend Exception Workspace prototype connects to real SPOT intake and backend data models. 
 
 ---

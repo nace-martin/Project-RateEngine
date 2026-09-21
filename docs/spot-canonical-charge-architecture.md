@@ -1,5 +1,9 @@
 # Phase 10.3d — Canonical Charge Type Architecture for SPOT
 
+> [!WARNING]
+> **SUPERSEDED / HISTORICAL ARCHITECTURE**
+> This document is a historical proposal. The authoritative SPOT pipeline and ProductCode single master are defined in [Clean Database Architecture v2.1 — Approved](architecture/clean-database-architecture-v2.1.md).
+
 ## Executive Summary
 This document proposes the architecture for a semantic middle layer—**Canonical Charge Type**—between raw agent labels/aliases and the final database `ProductCode` mapping within the RateEngine SPOT intake workflow. 
 

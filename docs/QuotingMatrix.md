@@ -1,5 +1,10 @@
 # RateEngine – Quoting Flow
 
+> [!WARNING]
+> **SUPERSEDED ARCHITECTURE**
+> This document contained hardcoded gateway assumptions (e.g. POM-only gateway). Routing and corridors are now data-driven via `geo_corridor_policy`.
+> Refer to canonical [Clean Database Architecture v2.1 — Approved](architecture/clean-database-architecture-v2.1.md).
+
 This document defines the decision logic and quoting flows for **Air Freight scenarios** in RateEngine, with PNG-specific operational rules. It is intended for product managers and developers to align on business logic, scope constraints, and implementation details.
 
 ---
