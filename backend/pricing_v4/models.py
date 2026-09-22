@@ -30,6 +30,12 @@ from .commercial_models import (  # noqa: F401 - Django model registration
     CommercialChargeAlias,
     CommercialTermsPolicy,
 )
+from .rate_matrix_models import (  # noqa: F401 - Django model registration
+    RateApplicability,
+    RateLine,
+    RateSheet,
+    RateTier,
+)
 
 
 # =============================================================================
