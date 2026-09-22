@@ -18,8 +18,6 @@ SCOPE_MODELS_NEEDING_ENTITY = {
     "crm.Task",
     "quotes.Quote",
     "quotes.SpotPricingEnvelopeDB",
-    "shipments.Shipment",
-    "shipments.ShipmentAddress",
 }
 
 

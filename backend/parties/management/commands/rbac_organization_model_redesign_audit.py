@@ -158,7 +158,6 @@ def scoped_record_report():
         ("crm.Task", apps.get_model("crm", "Task")),
         ("quotes.Quote", apps.get_model("quotes", "Quote")),
         ("quotes.SpotPricingEnvelopeDB", apps.get_model("quotes", "SpotPricingEnvelopeDB")),
-        ("shipments.Shipment", apps.get_model("shipments", "Shipment")),
     )
     return {label: scoped_model_summary(model) for label, model in specs}
 
@@ -290,7 +289,7 @@ def migration_steps():
         "Create or confirm Express Freight Management as the single Organization.",
         "Introduce OperatingEntity model or approved launch shim before moving country-level rows.",
         "Map EFM PNG, EFM Australia, EFM Fiji, and EFM Solomon Islands to operating entities.",
-        "Reparent branches, departments, memberships, CRM/customer, quote, SPOT, shipment, role, and branding dependencies.",
+        "Reparent branches, departments, memberships, CRM/customer, quote, SPOT, role, and branding dependencies.",
         "Archive/deactivate legacy organization rows only after dependency counts reach zero.",
         "Run selectors, quote, SPOT, CRM, and RBAC regression checks before enforcement changes.",
     ]

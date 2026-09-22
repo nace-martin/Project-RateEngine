@@ -21,7 +21,6 @@ urlpatterns = [
     path('api/', include('quotes.urls')), 
     path('api/', include('ratecards.urls')),
     path('api/', include('parties.urls')),
-    path('api/', include('shipments.urls')),
     path('api/', include('crm.urls')),
     path('api/', include('core.urls')),
     path('api/auth/', include('accounts.urls')),
