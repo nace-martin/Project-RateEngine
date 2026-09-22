@@ -71,7 +71,7 @@ class GeoCorridorPolicy(models.Model):
             ),
             models.CheckConstraint(
                 condition=models.Q(valid_until__isnull=True)
-                | models.Q(valid_until__gte=models.F("valid_from")),
+                | models.Q(valid_until__gt=models.F("valid_from")),
                 name="geo_corridor_valid_window",
             ),
             models.CheckConstraint(
@@ -99,9 +99,9 @@ class GeoCorridorPolicy(models.Model):
             raise ValidationError(
                 {"via_hub": "Via hub location is required when requires_transit_hub is True."}
             )
-        if self.valid_from and self.valid_until and self.valid_until < self.valid_from:
+        if self.valid_from and self.valid_until and self.valid_until <= self.valid_from:
             raise ValidationError(
-                {"valid_until": "valid_until cannot be earlier than valid_from."}
+                {"valid_until": "valid_until must be strictly greater than valid_from."}
             )
 
     def __str__(self):

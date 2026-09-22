@@ -1,10 +1,12 @@
 """Permanent objective FX market rate facts; legacy pricing still uses core.models.FxRate/FxSnapshot."""
 
+import re
 import uuid
 
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models.functions import Trim, Upper
+
+CURRENCY_CODE_REGEX = re.compile(r"^[A-Z]{3}$")
 
 
 class FxMarketRate(models.Model):
@@ -37,12 +39,12 @@ class FxMarketRate(models.Model):
                 name="fx_market_mid_rate_positive",
             ),
             models.CheckConstraint(
-                condition=models.Q(base_currency=Upper(Trim("base_currency"))),
-                name="fx_market_base_currency_normalized",
+                condition=models.Q(base_currency__regex=r"^[A-Z]{3}$"),
+                name="fx_market_base_currency_format",
             ),
             models.CheckConstraint(
-                condition=models.Q(quote_currency=Upper(Trim("quote_currency"))),
-                name="fx_market_quote_currency_normalized",
+                condition=models.Q(quote_currency__regex=r"^[A-Z]{3}$"),
+                name="fx_market_quote_currency_format",
             ),
             models.CheckConstraint(
                 condition=~models.Q(base_currency=models.F("quote_currency")),
@@ -54,16 +56,16 @@ class FxMarketRate(models.Model):
         super().clean()
         if self.base_currency:
             self.base_currency = self.base_currency.strip().upper()
-            if len(self.base_currency) != 3:
-                raise ValidationError(
-                    {"base_currency": "Currency code must be exactly 3 uppercase letters."}
-                )
+        if not self.base_currency or not CURRENCY_CODE_REGEX.match(self.base_currency):
+            raise ValidationError(
+                {"base_currency": f"Currency code must be exactly 3 uppercase letters [A-Z]{{3}}, got '{self.base_currency}'."}
+            )
         if self.quote_currency:
             self.quote_currency = self.quote_currency.strip().upper()
-            if len(self.quote_currency) != 3:
-                raise ValidationError(
-                    {"quote_currency": "Currency code must be exactly 3 uppercase letters."}
-                )
+        if not self.quote_currency or not CURRENCY_CODE_REGEX.match(self.quote_currency):
+            raise ValidationError(
+                {"quote_currency": f"Currency code must be exactly 3 uppercase letters [A-Z]{{3}}, got '{self.quote_currency}'."}
+            )
         if (
             self.base_currency
             and self.quote_currency
@@ -78,6 +80,13 @@ class FxMarketRate(models.Model):
             raise ValidationError({"tt_sell_rate": "TT SELL rate must be strictly positive."})
         if self.mid_rate is not None and self.mid_rate <= 0:
             raise ValidationError({"mid_rate": "Mid rate must be strictly positive."})
+
+    def save(self, *args, **kwargs):
+        if self.base_currency:
+            self.base_currency = self.base_currency.strip().upper()
+        if self.quote_currency:
+            self.quote_currency = self.quote_currency.strip().upper()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return (

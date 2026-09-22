@@ -4,6 +4,7 @@ Existing pricing runtime continues to use pricing_v4.ProductCode, pricing_v4.Cha
 and core.models.Policy until the cutover phase.
 """
 
+import re
 import uuid
 from decimal import Decimal
 
@@ -11,6 +12,8 @@ from core.corridor_models import TransportMode
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models.functions import Trim, Upper
+
+CURRENCY_CODE_REGEX = re.compile(r"^[A-Z]{3}$")
 
 
 class CommercialProductCode(models.Model):
@@ -22,11 +25,11 @@ class CommercialProductCode(models.Model):
         SERVICE = "SERVICE", "Service"
 
     class GstTreatment(models.TextChoices):
-        FREIGHT_EXPORT = "FREIGHT_EXPORT", "Freight export (Zero-rated 0%)"
-        FREIGHT_IMPORT = "FREIGHT_IMPORT", "Freight import (Standard 10%)"
-        DOMESTIC_STANDARD = "DOMESTIC_STANDARD", "Domestic standard (Standard 10%)"
-        EXEMPT = "EXEMPT", "Exempt (0%)"
-        ZERO_RATED = "ZERO_RATED", "Zero rated (0%)"
+        FREIGHT_EXPORT = "FREIGHT_EXPORT", "Freight Export"
+        FREIGHT_IMPORT = "FREIGHT_IMPORT", "Freight Import"
+        DOMESTIC_STANDARD = "DOMESTIC_STANDARD", "Domestic Standard"
+        EXEMPT = "EXEMPT", "Exempt"
+        ZERO_RATED = "ZERO_RATED", "Zero Rated"
 
     class ChargeBasis(models.TextChoices):
         FLAT = "FLAT", "Flat"
@@ -154,6 +157,11 @@ class CommercialChargeAlias(models.Model):
                 condition=models.Q(confidence_score__gte=0) & models.Q(confidence_score__lte=1),
                 name="charge_alias_confidence_range",
             ),
+            models.CheckConstraint(
+                condition=models.Q(source_currency="")
+                | models.Q(source_currency__regex=r"^[A-Z]{3}$"),
+                name="charge_alias_source_currency_format",
+            ),
         )
 
     def clean(self):
@@ -164,9 +172,14 @@ class CommercialChargeAlias(models.Model):
                 raise ValidationError({"raw_text": "Raw text cannot be empty."})
         if self.source_currency:
             self.source_currency = self.source_currency.strip().upper()
-            if len(self.source_currency) != 3:
+            if not CURRENCY_CODE_REGEX.match(self.source_currency):
                 raise ValidationError(
-                    {"source_currency": "Currency code must be exactly 3 uppercase letters."}
+                    {
+                        "source_currency": (
+                            f"Currency code must be exactly 3 uppercase letters [A-Z]{{3}}, "
+                            f"got '{self.source_currency}'."
+                        )
+                    }
                 )
         if (
             self.confidence_score is not None
@@ -192,6 +205,13 @@ class CommercialChargeAlias(models.Model):
                 raise ValidationError(
                     f"A charge alias for '{self.raw_text}' in mode {self.transport_mode} already exists for {scope}."
                 )
+
+    def save(self, *args, **kwargs):
+        if self.raw_text:
+            self.raw_text = normalize_alias_text(self.raw_text)
+        if self.source_currency:
+            self.source_currency = self.source_currency.strip().upper()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         carrier = f" [{self.carrier_party}]" if self.carrier_party else " [GLOBAL]"
@@ -237,7 +257,7 @@ class CommercialTermsPolicy(models.Model):
             ),
             models.CheckConstraint(
                 condition=models.Q(valid_until__isnull=True)
-                | models.Q(valid_until__gte=models.F("valid_from")),
+                | models.Q(valid_until__gt=models.F("valid_from")),
                 name="comm_policy_valid_window",
             ),
             models.CheckConstraint(
@@ -250,17 +270,24 @@ class CommercialTermsPolicy(models.Model):
             ),
             models.CheckConstraint(
                 condition=models.Q(import_caf_percent__isnull=True)
-                | models.Q(import_caf_percent__gte=0),
-                name="comm_policy_import_caf_non_negative",
+                | (
+                    models.Q(import_caf_percent__gte=0)
+                    & models.Q(import_caf_percent__lte=100)
+                ),
+                name="comm_policy_import_caf_range",
             ),
             models.CheckConstraint(
                 condition=models.Q(export_caf_percent__isnull=True)
-                | models.Q(export_caf_percent__gte=0),
-                name="comm_policy_export_caf_non_negative",
+                | (
+                    models.Q(export_caf_percent__gte=0)
+                    & models.Q(export_caf_percent__lte=100)
+                ),
+                name="comm_policy_export_caf_range",
             ),
             models.CheckConstraint(
-                condition=models.Q(gst_standard_percent__gte=0),
-                name="comm_policy_gst_standard_non_negative",
+                condition=models.Q(gst_standard_percent__gte=0)
+                & models.Q(gst_standard_percent__lte=100),
+                name="comm_policy_gst_standard_range",
             ),
         )
 
@@ -270,9 +297,9 @@ class CommercialTermsPolicy(models.Model):
             self.policy_code = self.policy_code.strip().upper()
             if not self.policy_code:
                 raise ValidationError({"policy_code": "Policy code cannot be empty."})
-        if self.valid_from and self.valid_until and self.valid_until < self.valid_from:
+        if self.valid_from and self.valid_until and self.valid_until <= self.valid_from:
             raise ValidationError(
-                {"valid_until": "valid_until cannot be earlier than valid_from."}
+                {"valid_until": "valid_until must be strictly greater than valid_from."}
             )
         if (
             self.target_gross_margin_percent is not None
@@ -283,17 +310,23 @@ class CommercialTermsPolicy(models.Model):
                     "target_gross_margin_percent": "Target gross margin percent must be >= 0% and < 100%."
                 }
             )
-        if self.import_caf_percent is not None and self.import_caf_percent < 0:
+        if self.import_caf_percent is not None and (
+            self.import_caf_percent < 0 or self.import_caf_percent > 100
+        ):
             raise ValidationError(
-                {"import_caf_percent": "Import CAF percent must be non-negative."}
+                {"import_caf_percent": "Import CAF percent must be between 0% and 100%."}
             )
-        if self.export_caf_percent is not None and self.export_caf_percent < 0:
+        if self.export_caf_percent is not None and (
+            self.export_caf_percent < 0 or self.export_caf_percent > 100
+        ):
             raise ValidationError(
-                {"export_caf_percent": "Export CAF percent must be non-negative."}
+                {"export_caf_percent": "Export CAF percent must be between 0% and 100%."}
             )
-        if self.gst_standard_percent is not None and self.gst_standard_percent < 0:
+        if self.gst_standard_percent is not None and (
+            self.gst_standard_percent < 0 or self.gst_standard_percent > 100
+        ):
             raise ValidationError(
-                {"gst_standard_percent": "GST standard percent must be non-negative."}
+                {"gst_standard_percent": "GST standard percent must be between 0% and 100%."}
             )
 
     def __str__(self):

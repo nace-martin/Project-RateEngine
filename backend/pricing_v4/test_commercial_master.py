@@ -19,7 +19,7 @@ from core.fx_market_models import FxMarketRate
 from core.geo_models import GeoLocation
 from django.apps import apps
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, models, transaction
+from django.db import DataError, IntegrityError, models, transaction
 from parties.party_models import PartyMaster
 
 from pricing_v4.commercial_models import (
@@ -77,6 +77,16 @@ class TestCommercialProductCode:
             "ZERO_RATED",
         ]
         assert list(CommercialProductCode.GstTreatment.values) == expected_gst
+
+        # Labels must not contain hardcoded percentages; ProductCode owns classification, policy owns rate
+        labels = dict(CommercialProductCode.GstTreatment.choices)
+        assert labels["FREIGHT_EXPORT"] == "Freight Export"
+        assert labels["FREIGHT_IMPORT"] == "Freight Import"
+        assert labels["DOMESTIC_STANDARD"] == "Domestic Standard"
+        assert labels["EXEMPT"] == "Exempt"
+        assert labels["ZERO_RATED"] == "Zero Rated"
+        for key, label in labels.items():
+            assert "%" not in label, f"Label for {key} contains hardcoded percentage: '{label}'"
 
         pc = CommercialProductCode.objects.create(
             code="CUSTOMS-DOC",
@@ -357,6 +367,88 @@ class TestCommercialChargeAlias:
         with pytest.raises(ValidationError):
             negative.full_clean()
 
+    def test_alias_canonical_form_persisted_on_orm_writes(self, product_code):
+        # Save must trim, uppercase, and collapse multiple spaces
+        alias = CommercialChargeAlias.objects.create(
+            product_code=product_code,
+            raw_text="   airline    terminal   security   fee   ",
+            transport_mode=TransportMode.AIR,
+        )
+        assert alias.raw_text == "AIRLINE TERMINAL SECURITY FEE"
+        fetched = CommercialChargeAlias.objects.get(id=alias.id)
+        assert fetched.raw_text == "AIRLINE TERMINAL SECURITY FEE"
+
+    def test_equivalent_whitespace_aliases_rejected_on_orm_writes(
+        self, product_code, alt_product_code, carrier
+    ):
+        CommercialChargeAlias.objects.create(
+            product_code=product_code,
+            raw_text="SECURITY FEE",
+            transport_mode=TransportMode.AIR,
+            carrier_party=carrier,
+        )
+        # Attempting to write an equivalent alias with extra spaces fails unique constraint
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CommercialChargeAlias.objects.create(
+                product_code=alt_product_code,
+                raw_text="SECURITY   FEE",
+                transport_mode=TransportMode.AIR,
+                carrier_party=carrier,
+            )
+
+        # Global scope equivalent alias also fails
+        CommercialChargeAlias.objects.create(
+            product_code=product_code,
+            raw_text="TERMINAL HANDLING",
+            transport_mode=TransportMode.AIR,
+            carrier_party=None,
+        )
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CommercialChargeAlias.objects.create(
+                product_code=alt_product_code,
+                raw_text="TERMINAL  HANDLING",
+                transport_mode=TransportMode.AIR,
+                carrier_party=None,
+            )
+
+    def test_source_currency_code_exact_three_uppercase_letters(self, product_code):
+        # Blank currency is allowed
+        a_blank = CommercialChargeAlias.objects.create(
+            product_code=product_code,
+            raw_text="BLANK CURRENCY",
+            transport_mode=TransportMode.AIR,
+            source_currency="",
+        )
+        assert a_blank.source_currency == ""
+
+        # Valid 3-letter currency code auto-uppercased
+        a_usd = CommercialChargeAlias.objects.create(
+            product_code=product_code,
+            raw_text="USD CURRENCY",
+            transport_mode=TransportMode.AIR,
+            source_currency="usd",
+        )
+        assert a_usd.source_currency == "USD"
+
+        # Invalid currency codes: numeric, symbol, incorrect length
+        invalid_codes = ["123", "US1", "1PG", "US$", "€UR", "AU#", "US", "USDA", "P"]
+        for bad in invalid_codes:
+            alias = CommercialChargeAlias(
+                product_code=product_code,
+                raw_text=f"BAD CUR {bad}",
+                transport_mode=TransportMode.AIR,
+                source_currency=bad,
+            )
+            with pytest.raises(ValidationError):
+                alias.full_clean()
+            with pytest.raises((IntegrityError, DataError)), transaction.atomic():
+                CommercialChargeAlias.objects.create(
+                    product_code=product_code,
+                    raw_text=f"DB BAD CUR {bad}",
+                    transport_mode=TransportMode.AIR,
+                    source_currency=bad,
+                )
+
 
 @pytest.mark.django_db
 class TestFxMarketRate:
@@ -448,6 +540,69 @@ class TestFxMarketRate:
         with pytest.raises(ValidationError):
             fx_same.full_clean()
 
+    def test_currency_codes_exact_three_uppercase_letters(self):
+        # Valid 3-letter currency code auto-uppercased
+        fx_valid = FxMarketRate.objects.create(
+            base_currency="usd",
+            quote_currency="pgk",
+            effective_date=datetime.date(2026, 9, 22),
+            tt_buy_rate=Decimal("3.85000000"),
+            tt_sell_rate=Decimal("3.95000000"),
+            mid_rate=Decimal("3.90000000"),
+            source="TEST_VALID",
+        )
+        assert fx_valid.base_currency == "USD"
+        assert fx_valid.quote_currency == "PGK"
+
+        # Invalid currency codes: numeric, symbol, incorrect length
+        invalid_codes = ["123", "US1", "1PG", "US$", "€UR", "AU#", "US", "USDA", "P"]
+        for bad in invalid_codes:
+            # Bad base currency
+            fx_bad_base = FxMarketRate(
+                base_currency=bad,
+                quote_currency="PGK",
+                effective_date=datetime.date(2026, 9, 22),
+                tt_buy_rate=Decimal("3.85000000"),
+                tt_sell_rate=Decimal("3.95000000"),
+                mid_rate=Decimal("3.90000000"),
+                source=f"TEST_BAD_BASE_{bad}",
+            )
+            with pytest.raises(ValidationError):
+                fx_bad_base.full_clean()
+            with pytest.raises((IntegrityError, DataError)), transaction.atomic():
+                FxMarketRate.objects.create(
+                    base_currency=bad,
+                    quote_currency="PGK",
+                    effective_date=datetime.date(2026, 9, 22),
+                    tt_buy_rate=Decimal("3.85000000"),
+                    tt_sell_rate=Decimal("3.95000000"),
+                    mid_rate=Decimal("3.90000000"),
+                    source=f"TEST_BAD_BASE_{bad}",
+                )
+
+            # Bad quote currency
+            fx_bad_quote = FxMarketRate(
+                base_currency="USD",
+                quote_currency=bad,
+                effective_date=datetime.date(2026, 9, 22),
+                tt_buy_rate=Decimal("3.85000000"),
+                tt_sell_rate=Decimal("3.95000000"),
+                mid_rate=Decimal("3.90000000"),
+                source=f"TEST_BAD_QUOTE_{bad}",
+            )
+            with pytest.raises(ValidationError):
+                fx_bad_quote.full_clean()
+            with pytest.raises((IntegrityError, DataError)), transaction.atomic():
+                FxMarketRate.objects.create(
+                    base_currency="USD",
+                    quote_currency=bad,
+                    effective_date=datetime.date(2026, 9, 22),
+                    tt_buy_rate=Decimal("3.85000000"),
+                    tt_sell_rate=Decimal("3.95000000"),
+                    mid_rate=Decimal("3.90000000"),
+                    source=f"TEST_BAD_QUOTE_{bad}",
+                )
+
     def test_purity_rule_no_caf_or_margin_fields(self):
         field_names = [f.name for f in FxMarketRate._meta.get_fields()]
         forbidden = ["caf", "margin", "markup", "buffer", "policy", "customer"]
@@ -459,6 +614,16 @@ class TestFxMarketRate:
 @pytest.mark.django_db
 class TestCommercialTermsPolicy:
     def test_validity_windows(self):
+        # Open-ended validity (valid_until is None) is permitted
+        p_open = CommercialTermsPolicy.objects.create(
+            policy_code="STD-OPEN-ENDED",
+            valid_from=datetime.date(2026, 10, 1),
+            valid_until=None,
+            gst_standard_percent=Decimal("10.00"),
+        )
+        assert p_open.valid_until is None
+
+        # valid_until > valid_from is permitted
         policy = CommercialTermsPolicy.objects.create(
             policy_code="STD-2026-Q4",
             valid_from=datetime.date(2026, 10, 1),
@@ -467,7 +632,24 @@ class TestCommercialTermsPolicy:
         )
         assert policy.policy_code == "STD-2026-Q4"
 
-        # Invalid window (until before from)
+        # Same-day start/end must fail (valid_until == valid_from)
+        same_day_policy = CommercialTermsPolicy(
+            policy_code="SAME-DAY-START-END",
+            valid_from=datetime.date(2026, 10, 1),
+            valid_until=datetime.date(2026, 10, 1),
+            gst_standard_percent=Decimal("10.00"),
+        )
+        with pytest.raises(ValidationError):
+            same_day_policy.full_clean()
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CommercialTermsPolicy.objects.create(
+                policy_code="SAME-DAY-DB",
+                valid_from=datetime.date(2026, 10, 1),
+                valid_until=datetime.date(2026, 10, 1),
+                gst_standard_percent=Decimal("10.00"),
+            )
+
+        # Invalid window (until strictly before from)
         invalid_policy = CommercialTermsPolicy(
             policy_code="INV-WINDOW",
             valid_from=datetime.date(2026, 10, 1),
@@ -476,6 +658,13 @@ class TestCommercialTermsPolicy:
         )
         with pytest.raises(ValidationError):
             invalid_policy.full_clean()
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CommercialTermsPolicy.objects.create(
+                policy_code="INV-WINDOW-DB",
+                valid_from=datetime.date(2026, 10, 1),
+                valid_until=datetime.date(2026, 9, 1),
+                gst_standard_percent=Decimal("10.00"),
+            )
 
     def test_no_universal_or_default_margin(self):
         # target_gross_margin_percent is nullable and has NO database default
@@ -492,16 +681,24 @@ class TestCommercialTermsPolicy:
         assert policy.target_gross_margin_percent is None
 
     def test_target_gross_margin_percent_validation(self):
-        # Valid margin (< 100%)
-        policy = CommercialTermsPolicy(
-            policy_code="MARGIN-15",
+        # Valid margin bounds: 0% <= x < 100%
+        policy_zero = CommercialTermsPolicy.objects.create(
+            policy_code="MARGIN-0",
             valid_from=datetime.date(2026, 1, 1),
-            target_gross_margin_percent=Decimal("15.00"),
+            target_gross_margin_percent=Decimal("0.00"),
             gst_standard_percent=Decimal("10.00"),
         )
-        policy.full_clean()
+        assert policy_zero.target_gross_margin_percent == Decimal("0.00")
 
-        # 100% or greater is rejected
+        policy_99 = CommercialTermsPolicy.objects.create(
+            policy_code="MARGIN-99",
+            valid_from=datetime.date(2026, 1, 1),
+            target_gross_margin_percent=Decimal("99.99"),
+            gst_standard_percent=Decimal("10.00"),
+        )
+        assert policy_99.target_gross_margin_percent == Decimal("99.99")
+
+        # 100% or greater is rejected at clean() and DB constraint
         policy_100 = CommercialTermsPolicy(
             policy_code="MARGIN-100",
             valid_from=datetime.date(2026, 1, 1),
@@ -510,37 +707,140 @@ class TestCommercialTermsPolicy:
         )
         with pytest.raises(ValidationError):
             policy_100.full_clean()
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CommercialTermsPolicy.objects.create(
+                policy_code="MARGIN-100-DB",
+                valid_from=datetime.date(2026, 1, 1),
+                target_gross_margin_percent=Decimal("100.00"),
+                gst_standard_percent=Decimal("10.00"),
+            )
 
-        # Negative margin is rejected
+        # Negative margin is rejected at clean() and DB constraint
         policy_neg = CommercialTermsPolicy(
             policy_code="MARGIN-NEG",
             valid_from=datetime.date(2026, 1, 1),
-            target_gross_margin_percent=Decimal("-5.00"),
+            target_gross_margin_percent=Decimal("-0.01"),
             gst_standard_percent=Decimal("10.00"),
         )
         with pytest.raises(ValidationError):
             policy_neg.full_clean()
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CommercialTermsPolicy.objects.create(
+                policy_code="MARGIN-NEG-DB",
+                valid_from=datetime.date(2026, 1, 1),
+                target_gross_margin_percent=Decimal("-0.01"),
+                gst_standard_percent=Decimal("10.00"),
+            )
 
-    def test_import_and_export_caf_independent(self):
+    def test_import_and_export_caf_independent_and_bounded(self):
+        # CAF can be NULL, 0%, or up to 100%
         policy = CommercialTermsPolicy.objects.create(
             policy_code="CAF-SPLIT-2026",
             valid_from=datetime.date(2026, 1, 1),
-            import_caf_percent=Decimal("5.00"),
-            export_caf_percent=Decimal("10.00"),
+            import_caf_percent=Decimal("0.00"),
+            export_caf_percent=Decimal("100.00"),
             gst_standard_percent=Decimal("10.00"),
         )
-        assert policy.import_caf_percent == Decimal("5.00")
-        assert policy.export_caf_percent == Decimal("10.00")
+        assert policy.import_caf_percent == Decimal("0.00")
+        assert policy.export_caf_percent == Decimal("100.00")
+
+        # Import CAF > 100% rejected
+        p_caf_over = CommercialTermsPolicy(
+            policy_code="CAF-OVER",
+            valid_from=datetime.date(2026, 1, 1),
+            import_caf_percent=Decimal("100.01"),
+            gst_standard_percent=Decimal("10.00"),
+        )
+        with pytest.raises(ValidationError):
+            p_caf_over.full_clean()
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CommercialTermsPolicy.objects.create(
+                policy_code="CAF-OVER-DB",
+                valid_from=datetime.date(2026, 1, 1),
+                import_caf_percent=Decimal("100.01"),
+                gst_standard_percent=Decimal("10.00"),
+            )
 
         # Negative CAF is rejected
         invalid_caf = CommercialTermsPolicy(
             policy_code="INV-CAF",
             valid_from=datetime.date(2026, 1, 1),
-            import_caf_percent=Decimal("-1.00"),
+            import_caf_percent=Decimal("-0.01"),
             gst_standard_percent=Decimal("10.00"),
         )
         with pytest.raises(ValidationError):
             invalid_caf.full_clean()
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CommercialTermsPolicy.objects.create(
+                policy_code="INV-CAF-DB",
+                valid_from=datetime.date(2026, 1, 1),
+                import_caf_percent=Decimal("-0.01"),
+                gst_standard_percent=Decimal("10.00"),
+            )
+
+        # Export CAF > 100% rejected
+        p_exp_over = CommercialTermsPolicy(
+            policy_code="EXP-CAF-OVER",
+            valid_from=datetime.date(2026, 1, 1),
+            export_caf_percent=Decimal("100.01"),
+            gst_standard_percent=Decimal("10.00"),
+        )
+        with pytest.raises(ValidationError):
+            p_exp_over.full_clean()
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CommercialTermsPolicy.objects.create(
+                policy_code="EXP-CAF-OVER-DB",
+                valid_from=datetime.date(2026, 1, 1),
+                export_caf_percent=Decimal("100.01"),
+                gst_standard_percent=Decimal("10.00"),
+            )
+
+    def test_gst_standard_percent_bounds(self):
+        # 0% allowed
+        p0 = CommercialTermsPolicy.objects.create(
+            policy_code="GST-ZERO",
+            valid_from=datetime.date(2026, 1, 1),
+            gst_standard_percent=Decimal("0.00"),
+        )
+        assert p0.gst_standard_percent == Decimal("0.00")
+
+        # 100% allowed
+        p100 = CommercialTermsPolicy.objects.create(
+            policy_code="GST-100",
+            valid_from=datetime.date(2026, 1, 1),
+            gst_standard_percent=Decimal("100.00"),
+        )
+        assert p100.gst_standard_percent == Decimal("100.00")
+
+        # > 100% rejected
+        p_over = CommercialTermsPolicy(
+            policy_code="GST-OVER",
+            valid_from=datetime.date(2026, 1, 1),
+            gst_standard_percent=Decimal("100.01"),
+        )
+        with pytest.raises(ValidationError):
+            p_over.full_clean()
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CommercialTermsPolicy.objects.create(
+                policy_code="GST-OVER-DB",
+                valid_from=datetime.date(2026, 1, 1),
+                gst_standard_percent=Decimal("100.01"),
+            )
+
+        # Negative rejected
+        p_neg = CommercialTermsPolicy(
+            policy_code="GST-NEG",
+            valid_from=datetime.date(2026, 1, 1),
+            gst_standard_percent=Decimal("-0.01"),
+        )
+        with pytest.raises(ValidationError):
+            p_neg.full_clean()
+        with pytest.raises(IntegrityError), transaction.atomic():
+            CommercialTermsPolicy.objects.create(
+                policy_code="GST-NEG-DB",
+                valid_from=datetime.date(2026, 1, 1),
+                gst_standard_percent=Decimal("-0.01"),
+            )
 
     def test_no_gst_classification_field_on_policy(self):
         field_names = [f.name for f in CommercialTermsPolicy._meta.get_fields()]
@@ -732,6 +1032,67 @@ class TestGeoCorridorPolicy:
         # Even though corridor is active, automation is strictly disabled by default
         assert corridor.is_active is True
         assert corridor.automation_enabled is False
+
+    def test_corridor_validity_window(self, bne, pom, lae):
+        # Open-ended validity allowed
+        c_open = GeoCorridorPolicy.objects.create(
+            origin=bne,
+            destination=pom,
+            transport_mode=TransportMode.AIR,
+            valid_from=datetime.date(2026, 1, 1),
+            valid_until=None,
+        )
+        assert c_open.valid_until is None
+
+        # valid_until > valid_from allowed
+        c_valid = GeoCorridorPolicy.objects.create(
+            origin=bne,
+            destination=pom,
+            via_hub=None,
+            transport_mode=TransportMode.SEA,
+            valid_from=datetime.date(2026, 1, 1),
+            valid_until=datetime.date(2026, 12, 31),
+        )
+        assert c_valid.valid_until == datetime.date(2026, 12, 31)
+
+        # Same-day start/end must fail (valid_until == valid_from)
+        same_day = GeoCorridorPolicy(
+            origin=bne,
+            destination=pom,
+            transport_mode=TransportMode.ROAD,
+            valid_from=datetime.date(2026, 1, 1),
+            valid_until=datetime.date(2026, 1, 1),
+        )
+        with pytest.raises(ValidationError):
+            same_day.full_clean()
+        with pytest.raises(IntegrityError), transaction.atomic():
+            GeoCorridorPolicy.objects.create(
+                origin=bne,
+                destination=pom,
+                transport_mode=TransportMode.ROAD,
+                valid_from=datetime.date(2026, 1, 1),
+                valid_until=datetime.date(2026, 1, 1),
+            )
+
+        # valid_until < valid_from must fail
+        backwards = GeoCorridorPolicy(
+            origin=bne,
+            destination=lae,
+            transport_mode=TransportMode.AIR,
+            valid_from=datetime.date(2026, 6, 1),
+            valid_until=datetime.date(2026, 1, 1),
+        )
+        with pytest.raises(ValidationError):
+            backwards.full_clean()
+        with pytest.raises(IntegrityError), transaction.atomic():
+            GeoCorridorPolicy.objects.create(
+                origin=bne,
+                destination=lae,
+                transport_mode=TransportMode.AIR,
+                valid_from=datetime.date(2026, 6, 1),
+                valid_until=datetime.date(2026, 1, 1),
+            )
+
 
 
 @pytest.mark.django_db
