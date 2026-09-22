@@ -138,7 +138,6 @@ def build_report(*, show_details: bool = False, limit: int = 50) -> dict:
                 opportunities__isnull=True,
                 interactions__isnull=True,
                 crm_tasks__isnull=True,
-                shipment_address_book_entries__isnull=True,
             ).distinct().count(),
             "internal_like_companies": companies.filter(
                 is_customer=False,

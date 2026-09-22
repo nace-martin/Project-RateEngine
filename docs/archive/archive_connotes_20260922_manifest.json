@@ -1,0 +1,21 @@
+{
+  "archive_filename": "archive_connotes_20260922.json",
+  "archived_at": "2026-09-22T05:41:00Z",
+  "storage_location": "RateEngine-local-artifacts/cold_storage/archive_connotes_20260922.json",
+  "storage_note": "Stored in approved private local cold storage outside repository history. Contains legacy pre-production connote and operational shipment execution records.",
+  "total_tables": 8,
+  "total_rows": 32,
+  "table_row_counts": {
+    "ShipmentSettings": 1,
+    "ShipmentAddressBookEntry": 3,
+    "ShipmentTemplate": 0,
+    "Shipment": 4,
+    "ShipmentPiece": 4,
+    "ShipmentCharge": 4,
+    "ShipmentDocument": 2,
+    "ShipmentEvent": 14
+  },
+  "file_sha256": "9a0f74067559bffbb00a46d321bd3d0715defe9061846cb1f9b63c75baec68b6",
+  "payload_sha256": "0ced2c3fe9a342a96f0f3e7fb6503b8d908d46dacd0f38357abd4bebd8dec039",
+  "integrity_result": "PASSED: 100% referential integrity, 0 orphan relationships, all row counts and checksums verified."
+}

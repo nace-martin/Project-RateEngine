@@ -128,8 +128,8 @@ INSTALLED_APPS = [
     'accounts',
     'core',
     'parties',
-    'shipments',
     'quotes',
+    'shipments',  # Migration-safe stub (wave 2A: models dropped in 0007; pending app removal in follow-up)
     'crm',
     'ratecards',
     'services',

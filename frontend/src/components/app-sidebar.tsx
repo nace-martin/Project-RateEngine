@@ -15,7 +15,6 @@ import {
     LogOut,
     Plane,
     ChevronLeft,
-    PackageCheck,
     BarChart3,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -39,12 +38,6 @@ export function AppSidebar() {
             icon: FileText,
             href: '/quotes',
             color: 'text-violet-500',
-        },
-        {
-            label: 'Shipments',
-            icon: PackageCheck,
-            href: '/shipments',
-            color: 'text-emerald-600',
         },
         {
             label: 'Customers',
