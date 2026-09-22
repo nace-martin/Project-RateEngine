@@ -1,6 +1,4 @@
-import os
 from decimal import Decimal
-import json
 
 # Setup Django Environment (if running standalone)
 # import django
@@ -9,7 +7,7 @@ import json
 
 from parties.models import Company
 from core.models import Airport
-from services.models import ServiceComponent, ServiceRule, ServiceRuleComponent
+from services.models import ServiceComponent
 from ratecards.models import PartnerRateCard, PartnerRateLane, PartnerRate
 
 def run():
@@ -127,36 +125,5 @@ def run():
         }
     )
     print("   - Pick-Up Fuel Surcharge configured successfully.")
-
-    # 6. Update the Service Rule (Recipe)
-    rule, created = ServiceRule.objects.get_or_create(
-        mode='AIR', direction='IMPORT', incoterm='EXW',
-        payment_term='COLLECT', service_scope='D2D',
-        defaults={'description': 'Auto-created rule for BNE-POM Tiered Rates'}
-    )
-
-    if created:
-        print(f"5. Created new Target Rule: {rule}")
-    else:
-        print(f"5. Found Target Rule: {rule}")
-        
-    print("   Updating ingredients...")
-    
-    # Get all components we just worked with
-    simple_rate_codes = [item[0] for item in simple_rates_data]
-    all_codes = simple_rate_codes + ["FRT_AIR", "PUF_BNE"] # <-- Add PUF_BNE here
-    components = ServiceComponent.objects.filter(code__in=all_codes).order_by('code')
-    
-    # Clear existing components from this rule to ensure correct sequence
-    ServiceRuleComponent.objects.filter(service_rule=rule).delete()
-    
-    for i, comp in enumerate(components):
-        ServiceRuleComponent.objects.create(
-            service_rule=rule,
-            service_component=comp,
-            sequence=i + 1,
-            is_mandatory=True
-        )
-    print("   Success: Service Rule now includes all required charges!")
 
     print("--- Done ---")

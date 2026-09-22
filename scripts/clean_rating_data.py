@@ -1,5 +1,4 @@
-import sys
-from services.models import ServiceComponent, ServiceRule
+from services.models import ServiceComponent
 from ratecards.models import PartnerRateCard
 from quotes.models import Quote
 
@@ -15,11 +14,6 @@ def run():
     # This automatically deletes PartnerRateLanes and PartnerRates
     rc_count, _ = PartnerRateCard.objects.all().delete()
     print(f"Deleted {rc_count} Partner Rate Cards (and related lanes/rates).")
-
-    # 3. Delete Service Rules (The "Recipes")
-    # This automatically deletes ServiceRuleComponents
-    sr_count, _ = ServiceRule.objects.all().delete()
-    print(f"Deleted {sr_count} Service Rules.")
 
     # 4. Delete Service Components (The "Ingredients")
     # We delete these to ensure no 'bad ingredients' are left over.

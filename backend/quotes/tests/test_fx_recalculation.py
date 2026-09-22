@@ -7,8 +7,8 @@ from rest_framework.test import APIClient
 
 from core.models import Airport, City, Country, FxSnapshot, Currency, Policy, Location
 from parties.models import Company, Contact
-from services.models import ServiceComponent, ServiceRule, ServiceRuleComponent, LEG_CHOICES
-from quotes.models import Quote, QuoteVersion
+from services.models import ServiceComponent, LEG_CHOICES
+from quotes.models import Quote
 
 class QuoteFxRecalculationTests(TestCase):
     def setUp(self):
@@ -52,7 +52,7 @@ class QuoteFxRecalculationTests(TestCase):
         self.customer = Company.objects.create(name="FX Test Customer", is_customer=True)
         self.contact = Contact.objects.create(first_name="John", last_name="Doe", company=self.customer, email="john@example.com")
 
-        # 5. Create Service Components and Rules for Import A2A
+        # 5. Create Service Components for Import A2A
         # Note: We need a freight component and maybe origin/dest components
         self.freight, _ = ServiceComponent.objects.get_or_create(
             code='IMP-FRT-AIR', defaults={'description': 'Air Freight Cost', 'cost_type': 'COGS', 'unit': 'PER_KG', 'mode': 'AIR', 'leg': 'MAIN'}
@@ -60,17 +60,6 @@ class QuoteFxRecalculationTests(TestCase):
         self.agency, _ = ServiceComponent.objects.get_or_create(
             code='IMP-AGENCY-DEST', defaults={'description': 'Agency Destination', 'cost_type': 'SELL', 'unit': 'PER_SHIPMENT', 'mode': 'AIR', 'leg': 'DESTINATION'}
         )
-
-        self.rule, _ = ServiceRule.objects.get_or_create(
-            mode='AIR',
-            direction='IMPORT',
-            incoterm='DAP',
-            payment_term='PREPAID',
-            service_scope='A2A',
-            defaults={'description': 'Import Rule A2A'},
-        )
-        ServiceRuleComponent.objects.get_or_create(service_rule=self.rule, service_component=self.freight, defaults={'sequence': 1})
-        ServiceRuleComponent.objects.get_or_create(service_rule=self.rule, service_component=self.agency, defaults={'sequence': 2})
 
         # 6. Setup Policies to match remediated dev environment:
         # Launch Policy is active (20% margin, effective earlier)

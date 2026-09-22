@@ -2,7 +2,7 @@
 
 from django.contrib import admin
 from .models import (
-    Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote,
+    Quote, QuoteVersion, QuoteLine, QuoteTotal,
     RouteAutomationPolicyDB, ShipmentJourneyDB, ShipmentLegDB,
 )
 from .spot_models import (
@@ -22,17 +22,12 @@ class QuoteTotalInline(admin.StackedInline):
     readonly_fields = [f.name for f in QuoteTotal._meta.fields]
     can_delete = False
     
-class OverrideNoteInline(admin.TabularInline):
-    model = OverrideNote
-    extra = 0
-    readonly_fields = [f.name for f in OverrideNote._meta.fields]
-    can_delete = False
 
 class QuoteVersionAdmin(admin.ModelAdmin):
     model = QuoteVersion
     list_display = ('quote', 'version_number', 'status', 'created_at', 'created_by')
     list_filter = ('status', 'created_at')
-    inlines = [QuoteTotalInline, QuoteLineInline, OverrideNoteInline]
+    inlines = [QuoteTotalInline, QuoteLineInline]
     readonly_fields = ('quote', 'version_number', 'payload_json', 'policy', 'fx_snapshot', 'status', 'reason', 'created_at', 'created_by')
 
 class QuoteVersionInline(admin.TabularInline):

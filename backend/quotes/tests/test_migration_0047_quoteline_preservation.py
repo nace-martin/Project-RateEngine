@@ -19,7 +19,8 @@ PRESERVED_COLUMNS = {
 
 class QuoteLineMigrationSafetyTests(TransactionTestCase):
     def tearDown(self):
-        MigrationExecutor(connection).migrate([MIGRATE_TO])
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
         super().tearDown()
         connection.close()
 
