@@ -3,7 +3,6 @@ import json
 from django.core.management.base import BaseCommand
 
 from accounts.models import CustomUser, UserMembership
-from crm.models import Interaction, Opportunity, Task
 from parties.models import Company
 from quotes.models import Quote
 from quotes.spot_models import SpotPricingEnvelopeDB
@@ -107,11 +106,11 @@ def inspect_user(username):
 def dependency_counts(user):
     return {
         "customer_account_owner": Company.objects.filter(account_owner=user).count(),
-        "crm_opportunity_owner": Opportunity.objects.filter(owner=user).count(),
-        "crm_opportunity_won_by": Opportunity.objects.filter(won_by=user).count(),
-        "crm_interaction_author": Interaction.objects.filter(author=user).count(),
-        "crm_task_owner": Task.objects.filter(owner=user).count(),
-        "crm_task_completed_by": Task.objects.filter(completed_by=user).count(),
+        "crm_opportunity_owner": 0,
+        "crm_opportunity_won_by": 0,
+        "crm_interaction_author": 0,
+        "crm_task_owner": 0,
+        "crm_task_completed_by": 0,
         "quote_created_by": Quote.objects.filter(created_by=user).count(),
         "quote_owner": Quote.objects.filter(owner=user).count(),
         "quote_finalized_by": Quote.objects.filter(finalized_by=user).count(),

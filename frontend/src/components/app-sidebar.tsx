@@ -26,7 +26,16 @@ export function AppSidebar() {
     const brandName = user?.organization?.branding?.display_name || user?.organization?.name || 'RateEngine';
     const brandLogoUrl = user?.organization?.branding?.logo_url || null;
 
-    const routes = [
+    interface SidebarRoute {
+        label: string;
+        icon: typeof LayoutDashboard;
+        href: string;
+        color: string;
+        role?: string[];
+        badge?: string;
+    }
+
+    const routes: SidebarRoute[] = [
         {
             label: 'Dashboard',
             icon: LayoutDashboard,
@@ -44,21 +53,6 @@ export function AppSidebar() {
             icon: Users,
             href: '/customers',
             color: 'text-pink-700',
-        },
-        {
-            label: 'CRM',
-            icon: FileText,
-            href: '/crm',
-            color: 'text-slate-600',
-            role: ['sales', 'manager', 'admin']
-        },
-        {
-            label: 'Opportunities',
-            icon: FileText,
-            href: '/crm/opportunities',
-            color: 'text-slate-600',
-            role: ['sales', 'manager', 'admin'],
-            badge: 'CRM'
         },
         {
             label: 'SPOT Analytics',
@@ -119,9 +113,7 @@ export function AppSidebar() {
                     if (route.role && (!user || !route.role.includes(user.role))) return null;
                     const isActive = route.href === "/"
                         ? pathname === route.href
-                        : route.href === "/crm"
-                            ? pathname === route.href
-                            : pathname === route.href || pathname.startsWith(`${route.href}/`);
+                        : pathname === route.href || pathname.startsWith(`${route.href}/`);
 
                     return (
                         <Link

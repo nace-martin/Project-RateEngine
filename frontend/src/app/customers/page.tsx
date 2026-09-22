@@ -20,7 +20,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from '@/lib/api';
-import { CrmSubNav } from '@/components/crm/CrmSubNav';
 import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import ProtectedRoute from '@/components/protected-route';
 import { useAuth } from '@/context/auth-context';
@@ -129,8 +128,6 @@ export default function CustomersPage() {
             ) : null
           }
         />
-
-        <CrmSubNav />
 
         <Card className="border-slate-200 shadow-sm">
           <CardHeader className="pb-2">

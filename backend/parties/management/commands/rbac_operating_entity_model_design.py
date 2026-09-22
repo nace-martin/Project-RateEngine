@@ -13,9 +13,6 @@ SCOPE_MODELS_NEEDING_ENTITY = {
     "parties.Department",
     "parties.Company",
     "parties.Contact",
-    "crm.Opportunity",
-    "crm.Interaction",
-    "crm.Task",
     "quotes.Quote",
     "quotes.SpotPricingEnvelopeDB",
 }

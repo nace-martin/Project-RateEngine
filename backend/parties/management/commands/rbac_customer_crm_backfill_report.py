@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from django.core.management.base import BaseCommand, CommandError
 
 from accounts.scope import SCOPE_FIELD_NAMES, get_active_memberships
-from crm.models import Interaction, Opportunity, Task
 from parties.models import Company, Contact
 
 
@@ -121,44 +120,6 @@ def build_report(*, show_details=False, limit=50):
             show_details=show_details,
             limit=limit,
         ),
-        "opportunity": inspect_records(
-            "opportunity",
-            Opportunity.objects.select_related(
-                "company",
-                "owner",
-                "organization",
-                "branch",
-                "department",
-            ).prefetch_related("quotes").order_by("created_at", "id"),
-            show_details=show_details,
-            limit=limit,
-        ),
-        "interaction": inspect_records(
-            "interaction",
-            Interaction.objects.select_related(
-                "company",
-                "opportunity",
-                "author",
-                "organization",
-                "branch",
-                "department",
-            ).prefetch_related("opportunity__quotes").order_by("created_at", "id"),
-            show_details=show_details,
-            limit=limit,
-        ),
-        "task": inspect_records(
-            "task",
-            Task.objects.select_related(
-                "company",
-                "opportunity",
-                "owner",
-                "organization",
-                "branch",
-                "department",
-            ).prefetch_related("opportunity__quotes").order_by("created_at", "id"),
-            show_details=show_details,
-            limit=limit,
-        ),
     }
     return {
         "write_enabled": False,
@@ -248,10 +209,6 @@ def candidate_from_parents(model_name, record, values):
     parents = []
     if model_name == "contact":
         parents = [record.company]
-    elif model_name == "opportunity":
-        parents = [record.company]
-    elif model_name in {"interaction", "task"}:
-        parents = [getattr(record, "opportunity", None), getattr(record, "company", None)]
 
     merged = merge_from_sources(values, parents)
     if merged != values:
@@ -260,16 +217,6 @@ def candidate_from_parents(model_name, record, values):
 
 
 def candidate_from_quote(record, values):
-    quotes = []
-    if isinstance(record, Opportunity):
-        quotes = list(record.quotes.all())
-    elif isinstance(record, (Interaction, Task)) and getattr(record, "opportunity_id", None):
-        quotes = list(record.opportunity.quotes.all())
-
-    scoped_quotes = [quote for quote in quotes if any(getattr(quote, f"{field}_id", None) for field in SCOPE_FIELD_NAMES)]
-    merged = merge_from_sources(values, scoped_quotes)
-    if merged != values:
-        return Candidate(merged, SOURCE_LINKED_QUOTE, REASON_LINKED_QUOTE_SCOPE)
     return None
 
 
@@ -315,12 +262,6 @@ def merge_from_sources(values, sources):
 def owner_user(model_name, record):
     if model_name == "company":
         return record.account_owner
-    if model_name == "opportunity":
-        return record.owner
-    if model_name == "interaction":
-        return record.author
-    if model_name == "task":
-        return record.owner
     return None
 
 
@@ -364,12 +305,6 @@ def safe_label(model_name, record):
         return ascii_safe(record.name)
     if model_name == "contact":
         return ascii_safe(f"{record.first_name} {record.last_name}".strip())
-    if model_name == "opportunity":
-        return ascii_safe(record.title)
-    if model_name == "interaction":
-        return record.interaction_type
-    if model_name == "task":
-        return record.status
     return ""
 
 

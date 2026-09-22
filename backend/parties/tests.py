@@ -17,7 +17,6 @@ from rest_framework import status
 from PIL import Image
 
 from accounts.models import CustomUser, Role, UserMembership
-from crm.models import Interaction, Opportunity, Task
 from core.models import Country, City, Location
 from core.models import Currency
 from parties.models import Branch, Company, Contact, Address, Department, OperatingEntity, Organization, OrganizationBranding
@@ -540,49 +539,19 @@ class CustomerCrmBackfillReportTests(TestCase):
         self.assertEqual(company["unresolved_fields"], ["branch", "department"])
         self.assertEqual(company["ambiguity_reason"], "multiple_memberships_shared_values_only")
 
-    def test_unsafe_text_fields_are_not_used_for_inference(self):
-        company = Company.objects.create(name="AIR POM Customer")
-        Opportunity.objects.create(
-            company=company,
-            title="AIR POM department lane",
-            service_type="AIR",
-            origin="POM",
-            destination="LAE",
-        )
-
-        payload = json.loads(self._call_report("--format", "json", "--show-details"))
-
-        opportunity = next(row for row in payload["models"]["opportunity"]["details"] if row["label"] == "AIR POM department lane")
-        self.assertEqual(opportunity["candidate_source"], "unresolved")
-        self.assertEqual(opportunity["unresolved_fields"], ["organization", "branch", "department"])
-
-    def test_show_details_omits_sensitive_crm_content(self):
+    def test_show_details_renders_contact_and_company_candidates(self):
         company = Company.objects.create(name="Sensitive Customer")
-        opportunity = Opportunity.objects.create(
+        Contact.objects.create(
             company=company,
-            title="Sensitive opportunity title",
-            service_type="AIR",
-        )
-        Interaction.objects.create(
-            company=company,
-            opportunity=opportunity,
-            interaction_type=Interaction.InteractionType.CALL,
-            summary="Do not leak this interaction summary",
-            outcomes="Do not leak this outcome",
-        )
-        Task.objects.create(
-            company=company,
-            owner=CustomUser.objects.create_user(username="task-owner", password="x"),
-            description="Do not leak this task description",
-            due_date=timezone.now().date(),
+            first_name="Safe",
+            last_name="Contact",
+            email="safe@example.com",
         )
 
         output = self._call_report("--show-details")
 
-        self.assertIn("Sensitive opportunity title", output)
-        self.assertNotIn("Do not leak this interaction summary", output)
-        self.assertNotIn("Do not leak this outcome", output)
-        self.assertNotIn("Do not leak this task description", output)
+        self.assertIn("Sensitive Customer", output)
+        self.assertIn("Safe Contact", output)
 
 
 class HistoricalScopeBackfillPlanTests(TestCase):
@@ -896,46 +865,6 @@ class HistoricalScopeBackfillApplyTests(TestCase):
         self.assertIsNone(contact.branch_id)
         self.assertIsNone(contact.department_id)
 
-    def test_apply_backfills_crm_models_from_safe_owner_or_parent_evidence(self):
-        owner, organization, branch, department = self._member("crm-owner")
-        company = Company.objects.create(
-            name="CRM Parent Apply Customer",
-            organization=organization,
-            branch=branch,
-            department=department,
-        )
-        opportunity = Opportunity.objects.create(
-            company=company,
-            title="Owner scoped opportunity",
-            service_type="AIR",
-            owner=owner,
-        )
-        interaction = Interaction.objects.create(
-            company=company,
-            opportunity=opportunity,
-            author=owner,
-            interaction_type=Interaction.InteractionType.CALL,
-            summary="Hidden body",
-        )
-        task = Task.objects.create(
-            company=company,
-            opportunity=opportunity,
-            owner=owner,
-            due_date=timezone.now().date(),
-            description="Hidden task body",
-        )
-
-        payload = json.loads(self._call_apply("--apply", "--format", "json"))
-
-        for record in (opportunity, interaction, task):
-            record.refresh_from_db()
-            self.assertEqual(record.organization, organization)
-            self.assertEqual(record.branch, branch)
-            self.assertEqual(record.department, department)
-        self.assertEqual(payload["models"]["Opportunity"]["summary"]["applied"], 1)
-        self.assertEqual(payload["models"]["Interaction"]["summary"]["applied"], 1)
-        self.assertEqual(payload["models"]["Task"]["summary"]["applied"], 1)
-
     def test_apply_excludes_manual_review_records(self):
         organization, _branch, _department = self._scope("manual")
         no_member = CustomUser.objects.create_user(username="apply-no-member", password="x")
@@ -1183,12 +1112,7 @@ class ScopeCompletenessReportTests(TestCase):
             role=role,
         )
         Company.objects.create(name="Single Member Customer", account_owner=single)
-        Task.objects.create(
-            company=Company.objects.create(name="No Member Customer"),
-            owner=none,
-            due_date=timezone.now().date(),
-            description="Hidden task body",
-        )
+        Company.objects.create(name="No Member Customer", account_owner=none)
 
         payload = json.loads(self._call_report("--format", "json"))
 
@@ -1198,56 +1122,6 @@ class ScopeCompletenessReportTests(TestCase):
         self.assertEqual(membership["users_with_multiple_memberships"], 0)
         self.assertEqual(membership["users_with_no_memberships"], 1)
         self.assertEqual(membership["branch_populated"], 1)
-
-    def test_quote_coverage_counts_linked_quote_scope(self):
-        organization, branch, department = self._scope("quote")
-        company = Company.objects.create(name="Quoted Customer")
-        opportunity = Opportunity.objects.create(company=company, title="Quoted", service_type="AIR")
-        Quote.objects.create(customer=company, opportunity=opportunity, mode="AIR", organization=organization)
-        Quote.objects.create(
-            customer=company,
-            opportunity=opportunity,
-            mode="SEA",
-            organization=organization,
-            branch=branch,
-            department=department,
-        )
-
-        payload = json.loads(self._call_report("--format", "json"))
-
-        quote = payload["quote_coverage"]
-        self.assertEqual(quote["linked_quotes"], 2)
-        self.assertEqual(quote["organization_only"], 1)
-        self.assertEqual(quote["organization_branch_department"], 1)
-        self.assertGreaterEqual(payload["branch_discovery"]["quote_scope"]["complete_count"], 1)
-
-    def test_show_details_omits_sensitive_crm_content(self):
-        company = Company.objects.create(name="Completeness Sensitive Customer")
-        opportunity = Opportunity.objects.create(
-            company=company,
-            title="Completeness safe title",
-            service_type="AIR",
-        )
-        Interaction.objects.create(
-            company=company,
-            opportunity=opportunity,
-            interaction_type=Interaction.InteractionType.EMAIL,
-            summary="Sensitive completeness interaction summary",
-            outcomes="Sensitive completeness outcome",
-        )
-        Task.objects.create(
-            company=company,
-            owner=CustomUser.objects.create_user(username="completeness-task-owner", password="x"),
-            description="Sensitive completeness task description",
-            due_date=timezone.now().date(),
-        )
-
-        output = self._call_report("--show-details")
-
-        self.assertIn("Completeness safe title", output)
-        self.assertNotIn("Sensitive completeness interaction summary", output)
-        self.assertNotIn("Sensitive completeness outcome", output)
-        self.assertNotIn("Sensitive completeness task description", output)
 
 
 class RBACHierarchyReportTests(TestCase):
@@ -1954,43 +1828,21 @@ class ObsoleteUserCleanupApplyTests(TestCase):
     def test_no_crm_customer_quote_or_spot_writes(self):
         user = CustomUser.objects.create_user(username="finance")
         company = Company.objects.create(name="Untouched Cleanup Customer")
-        opportunity = Opportunity.objects.create(
-            company=company,
-            title="Untouched Opportunity",
-            service_type="AIR",
-            owner=user,
-        )
-        task = Task.objects.create(
-            company=company,
-            description="Untouched task",
-            owner=user,
-            due_date=timezone.now().date(),
-        )
         before = {
             "companies": Company.objects.count(),
-            "opportunities": Opportunity.objects.count(),
-            "tasks": Task.objects.count(),
             "quotes": Quote.objects.count(),
             "spot": SpotPricingEnvelopeDB.objects.count(),
             "company_owner": company.account_owner_id,
-            "opportunity_owner": opportunity.owner_id,
-            "task_owner": task.owner_id,
         }
 
         self._call_apply("--apply")
 
         company.refresh_from_db()
-        opportunity.refresh_from_db()
-        task.refresh_from_db()
         after = {
             "companies": Company.objects.count(),
-            "opportunities": Opportunity.objects.count(),
-            "tasks": Task.objects.count(),
             "quotes": Quote.objects.count(),
             "spot": SpotPricingEnvelopeDB.objects.count(),
             "company_owner": company.account_owner_id,
-            "opportunity_owner": opportunity.owner_id,
-            "task_owner": task.owner_id,
         }
         self.assertEqual(after, before)
 
@@ -2709,14 +2561,6 @@ class OrganizationModelRedesignAuditTests(TestCase):
             branch=png_pom,
             department=png_air,
         )
-        Opportunity.objects.create(
-            company=company,
-            title="Phase 10A Opportunity",
-            service_type="AIR",
-            organization=png,
-            branch=png_pom,
-            department=png_air,
-        )
         Quote.objects.create(customer=company, organization=png, branch=png_pom, department=png_air)
         SpotPricingEnvelopeDB.objects.create(
             organization=png,
@@ -2782,7 +2626,6 @@ class OrganizationModelRedesignAuditTests(TestCase):
 
         self.assertEqual(payload["memberships"]["count"], 1)
         self.assertGreater(payload["scoped_records"]["parties.Company"]["with_organization"], 0)
-        self.assertGreater(payload["scoped_records"]["crm.Opportunity"]["with_organization"], 0)
         self.assertGreater(payload["quote_spot_productcode"]["quotes"]["with_organization"], 0)
         self.assertGreater(payload["quote_spot_productcode"]["spot_envelopes"]["with_organization"], 0)
         self.assertTrue(
@@ -4038,53 +3881,6 @@ class BackendScopedAccessAPITests(APITestCase):
         )
         self.contact_a_other = self._contact(self.company_a_other, "a-other")
 
-        self.opportunity_a = self._opportunity("Phase 9D Opportunity A", self.company_a, self.org_a, self.branch_a, self.department_a)
-        self.opportunity_a_other_department = self._opportunity(
-            "Phase 9D Opportunity A Other Department",
-            self.company_a_other_department,
-            self.org_a,
-            self.branch_a,
-            self.department_a_other,
-        )
-        self.opportunity_a_other_branch = self._opportunity(
-            "Phase 9D Opportunity A Other Branch",
-            self.company_a_other_branch,
-            self.org_a,
-            self.branch_a_other,
-            self.department_a_other_branch,
-        )
-        self.opportunity_b = self._opportunity("Phase 9D Opportunity B", self.company_b, self.org_b, self.branch_b, self.department_b)
-        self.interaction_a = self._interaction(self.company_a, self.org_a, self.branch_a, self.department_a)
-        self.interaction_a_other_department = self._interaction(
-            self.company_a_other_department,
-            self.org_a,
-            self.branch_a,
-            self.department_a_other,
-        )
-        self.interaction_a_other_branch = self._interaction(
-            self.company_a_other_branch,
-            self.org_a,
-            self.branch_a_other,
-            self.department_a_other_branch,
-        )
-        self.interaction_b = self._interaction(self.company_b, self.org_b, self.branch_b, self.department_b)
-        self.task_a = self._task("Phase 9D Task A", self.company_a, self.org_a, self.branch_a, self.department_a)
-        self.task_a_other_department = self._task(
-            "Phase 9D Task A Other Department",
-            self.company_a_other_department,
-            self.org_a,
-            self.branch_a,
-            self.department_a_other,
-        )
-        self.task_a_other_branch = self._task(
-            "Phase 9D Task A Other Branch",
-            self.company_a_other_branch,
-            self.org_a,
-            self.branch_a_other,
-            self.department_a_other_branch,
-        )
-        self.task_b = self._task("Phase 9D Task B", self.company_b, self.org_b, self.branch_b, self.department_b)
-
     def _user(self, username, role, organization, branch, department, membership_role):
         user = CustomUser.objects.create_user(username=username, password="testpass123", role=role)
         UserMembership.objects.create(
@@ -4120,38 +3916,6 @@ class BackendScopedAccessAPITests(APITestCase):
             is_active=True,
         )
 
-    def _opportunity(self, title, company, organization, branch, department):
-        return Opportunity.objects.create(
-            company=company,
-            title=title,
-            service_type="AIR",
-            owner=self.sales,
-            organization=organization,
-            branch=branch,
-            department=department,
-        )
-
-    def _interaction(self, company, organization, branch, department):
-        return Interaction.objects.create(
-            company=company,
-            interaction_type=Interaction.InteractionType.CALL,
-            summary=f"Call with {company.name}",
-            author=self.sales,
-            organization=organization,
-            branch=branch,
-            department=department,
-        )
-
-    def _task(self, description, company, organization, branch, department):
-        return Task.objects.create(
-            company=company,
-            description=description,
-            owner=self.sales,
-            due_date=timezone.now().date(),
-            organization=organization,
-            branch=branch,
-            department=department,
-        )
 
     def _spot_envelope(self):
         return SpotPricingEnvelopeDB.objects.create(
@@ -4268,66 +4032,6 @@ class BackendScopedAccessAPITests(APITestCase):
         self.assertEqual(self._ids(same_operating_entity_other_branch), {str(self.contact_a_other_branch.id)})
         self.assertEqual(other_operating_entity.status_code, status.HTTP_404_NOT_FOUND)
         self.assertEqual(out_of_scope.status_code, status.HTTP_404_NOT_FOUND)
-
-    def test_crm_viewsets_filter_and_deny_direct_out_of_scope_ids(self):
-        self.client.force_authenticate(user=self.sales)
-
-        opportunity_list = self.client.get("/api/v3/crm/opportunities/")
-        interaction_list = self.client.get("/api/v3/crm/interactions/")
-        task_list = self.client.get("/api/v3/crm/tasks/")
-
-        self.assertEqual(opportunity_list.status_code, status.HTTP_200_OK)
-        self.assertEqual(interaction_list.status_code, status.HTTP_200_OK)
-        self.assertEqual(task_list.status_code, status.HTTP_200_OK)
-        self.assertIn(str(self.opportunity_a.id), self._ids(opportunity_list))
-        self.assertNotIn(str(self.opportunity_a_other_department.id), self._ids(opportunity_list))
-        self.assertNotIn(str(self.opportunity_a_other_branch.id), self._ids(opportunity_list))
-        self.assertNotIn(str(self.opportunity_b.id), self._ids(opportunity_list))
-        self.assertIn(str(self.interaction_a.id), self._ids(interaction_list))
-        self.assertNotIn(str(self.interaction_a_other_department.id), self._ids(interaction_list))
-        self.assertNotIn(str(self.interaction_a_other_branch.id), self._ids(interaction_list))
-        self.assertNotIn(str(self.interaction_b.id), self._ids(interaction_list))
-        self.assertIn(str(self.task_a.id), self._ids(task_list))
-        self.assertNotIn(str(self.task_a_other_department.id), self._ids(task_list))
-        self.assertNotIn(str(self.task_a_other_branch.id), self._ids(task_list))
-        self.assertNotIn(str(self.task_b.id), self._ids(task_list))
-
-        self.assertEqual(
-            self.client.get(f"/api/v3/crm/opportunities/{self.opportunity_a_other_department.id}/").status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
-        self.assertEqual(
-            self.client.get(f"/api/v3/crm/opportunities/{self.opportunity_a_other_branch.id}/").status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
-        self.assertEqual(
-            self.client.get(f"/api/v3/crm/interactions/{self.interaction_a_other_department.id}/").status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
-        self.assertEqual(
-            self.client.get(f"/api/v3/crm/interactions/{self.interaction_a_other_branch.id}/").status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
-        self.assertEqual(
-            self.client.get(f"/api/v3/crm/tasks/{self.task_a_other_department.id}/").status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
-        self.assertEqual(
-            self.client.get(f"/api/v3/crm/tasks/{self.task_a_other_branch.id}/").status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
-        self.assertEqual(
-            self.client.get(f"/api/v3/crm/opportunities/{self.opportunity_b.id}/").status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
-        self.assertEqual(
-            self.client.get(f"/api/v3/crm/interactions/{self.interaction_b.id}/").status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
-        self.assertEqual(
-            self.client.get(f"/api/v3/crm/tasks/{self.task_b.id}/").status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
 
     def test_quote_calculation_rejects_out_of_scope_customer_id_before_pricing(self):
         self.client.force_authenticate(user=self.sales)

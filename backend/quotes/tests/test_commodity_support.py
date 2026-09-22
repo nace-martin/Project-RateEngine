@@ -13,7 +13,6 @@ from core.commodity import COMMODITY_CODE_AVI, COMMODITY_CODE_DG, DEFAULT_COMMOD
 from core.dataclasses import CalculatedTotals, QuoteCharges
 from core.models import Country, Currency, FxSnapshot, Policy
 from core.tests.helpers import create_location
-from crm.models import Opportunity
 from parties.models import Company, Contact
 from pricing_v4.models import CommodityChargeRule, ProductCode
 from quotes.models import Quote
@@ -251,7 +250,7 @@ class QuoteCommodityPersistenceTests(TestCase):
         payload.update(overrides)
         return QuoteComputeRequest(**payload)
 
-    def test_save_quote_create_without_opportunity_creates_no_crm_records(self):
+    def test_save_quote_create_saves_customer_and_contact(self):
         payload = self._base_payload()
 
         quote = QuoteComputeV3APIView()._save_quote_v3(
@@ -265,79 +264,8 @@ class QuoteCommodityPersistenceTests(TestCase):
             initial_status=Quote.Status.DRAFT,
         )
 
-        self.assertIsNone(quote.opportunity_id)
         self.assertEqual(quote.customer, self.customer)
         self.assertEqual(quote.contact, self.contact)
-        self.assertEqual(Opportunity.objects.count(), 0)
-
-    def test_save_quote_update_does_not_resolve_supplied_opportunity_id(self):
-        quote = Quote.objects.create(
-            customer=self.customer,
-            contact=self.contact,
-            mode="AIR",
-            shipment_type=Quote.ShipmentType.IMPORT,
-            status=Quote.Status.DRAFT,
-            created_by=self.user,
-        )
-        opportunity = Opportunity.objects.create(
-            company=self.customer,
-            title="CRM linked quote",
-            service_type="AIR",
-            owner=self.user,
-        )
-        before_count = Opportunity.objects.count()
-        payload = self._base_payload(quote_id=quote.id, opportunity_id=opportunity.id)
-
-        updated = QuoteComputeV3APIView()._save_quote_v3(
-            request=self._build_request(),
-            validated_data=payload,
-            shipment_type=Quote.ShipmentType.IMPORT,
-            charges=self._empty_charges(),
-            snapshot=self.fx_snapshot,
-            policy=self.policy,
-            output_currency="PGK",
-            initial_status=Quote.Status.DRAFT,
-            quote=quote,
-        )
-
-        updated.refresh_from_db()
-        self.assertIsNone(updated.opportunity_id)
-        self.assertEqual(Opportunity.objects.count(), before_count)
-
-    def test_save_quote_update_preserves_opportunity_when_opportunity_id_omitted(self):
-        opportunity = Opportunity.objects.create(
-            company=self.customer,
-            title="Existing CRM link",
-            service_type="AIR",
-            owner=self.user,
-        )
-        quote = Quote.objects.create(
-            customer=self.customer,
-            contact=self.contact,
-            opportunity=opportunity,
-            mode="AIR",
-            shipment_type=Quote.ShipmentType.IMPORT,
-            status=Quote.Status.DRAFT,
-            created_by=self.user,
-        )
-        payload = self._base_payload(quote_id=quote.id)
-        before_count = Opportunity.objects.count()
-
-        updated = QuoteComputeV3APIView()._save_quote_v3(
-            request=self._build_request(),
-            validated_data=payload,
-            shipment_type=Quote.ShipmentType.IMPORT,
-            charges=self._empty_charges(),
-            snapshot=self.fx_snapshot,
-            policy=self.policy,
-            output_currency="PGK",
-            initial_status=Quote.Status.DRAFT,
-            quote=quote,
-        )
-
-        updated.refresh_from_db()
-        self.assertEqual(updated.opportunity, opportunity)
-        self.assertEqual(Opportunity.objects.count(), before_count)
 
 @override_settings(RBAC_ALLOW_LEGACY_SCOPE_FALLBACK_FOR_TESTS=True)
 class QuoteCommodityAPITests(APITestCase):

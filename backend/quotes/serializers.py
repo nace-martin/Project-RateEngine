@@ -532,7 +532,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
         fields = (
             'id', 'quote_number', 'customer', 'contact', 'mode', 
             'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'commodity_code', 'output_currency', 
-            'origin_location', 'destination_location', 'opportunity',
+            'origin_location', 'destination_location',
             'status', 'valid_until', 'created_at',
             'latest_version', 'request_details_json', 'spot_negotiation',
             'created_by', 'rate_provider', 'branding', 'quote_result'
@@ -578,7 +578,7 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
         fields = (
             'id', 'quote_number', 'customer', 'contact', 'mode', 
             'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'commodity_code', 'output_currency', 
-            'origin_location', 'destination_location', 'opportunity',
+            'origin_location', 'destination_location',
             'status', 'valid_until', 'created_at',
             'latest_version', 'created_by', 'branding',
             'spot_negotiation'

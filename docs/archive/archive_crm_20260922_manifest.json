@@ -1,0 +1,17 @@
+{
+  "archive_filename": "archive_crm_20260922.json",
+  "archived_at": "2026-09-22T11:08:47Z",
+  "storage_location": "RateEngine-local-artifacts/cold_storage/archive_crm_20260922.json",
+  "storage_note": "Stored in approved private local cold storage outside repository history. Contains legacy pre-production CRM opportunities, interactions, tasks, and quote linkages.",
+  "total_tables": 3,
+  "total_rows": 347,
+  "table_row_counts": {
+    "Opportunity": 88,
+    "Interaction": 259,
+    "Task": 0
+  },
+  "quote_linkages_count": 60,
+  "file_sha256": "6b9c26c0955cb1a32bd01ee075373038974baef80262106800899aa66b9c4891",
+  "payload_sha256": "2fb90f8f0a73e20089a3e0f6816e0eef98eaec879fbeefa3708f27dbfd9d0a13",
+  "integrity_result": "PASSED: 100% referential integrity, 0 orphan relationships, all row counts and checksums verified."
+}

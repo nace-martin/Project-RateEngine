@@ -29,7 +29,7 @@ export default function AppHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
-  const { canEditRateCards, canEditFXRates, canEditQuotes, canViewCRM, canReviewProductCodes, role, isAdmin, isManager } = usePermissions();
+  const { canEditRateCards, canEditFXRates, canEditQuotes, canReviewProductCodes, role, isAdmin, isManager } = usePermissions();
   const [open, setOpen] = useState(false);
   const brandName = user?.organization?.branding?.display_name || user?.organization?.name || 'RateEngine';
   const brandLogoUrl = user?.organization?.branding?.logo_url || null;
@@ -44,12 +44,8 @@ export default function AppHeader() {
   const navItems = [
     { href: '/', label: 'Dashboard', icon: Home },
     { href: '/quotes', label: 'Quotes', icon: FileText },
+    { href: '/customers', label: 'Customers', icon: Users },
   ];
-
-  if (canViewCRM) {
-    navItems.push({ href: '/customers', label: 'Customers', icon: Users });
-    navItems.push({ href: '/crm', label: 'CRM', icon: FileText });
-  }
 
   // 2. Secondary/Configuration Navigation (Dropdown)
   const moreItems: { href: string; label: string; icon: LucideIcon }[] = [];
@@ -123,9 +119,7 @@ export default function AppHeader() {
                   const Icon = item.icon;
                   const isActive = item.href === '/'
                     ? pathname === item.href
-                    : item.href === '/crm'
-                      ? pathname === item.href
-                      : pathname === item.href || pathname.startsWith(`${item.href}/`);
+                    : pathname === item.href || pathname.startsWith(`${item.href}/`);
                   return (
                     <Link
                       key={item.href}
@@ -194,9 +188,7 @@ export default function AppHeader() {
             // I will keep generic active logic but styling: text-muted-foreground vs text-primary
             const isActive = item.href === '/'
               ? pathname === item.href
-              : item.href === '/crm'
-                ? pathname === item.href
-                : pathname === item.href || pathname.startsWith(`${item.href}/`);
+              : pathname === item.href || pathname.startsWith(`${item.href}/`);
 
             return (
               <Link

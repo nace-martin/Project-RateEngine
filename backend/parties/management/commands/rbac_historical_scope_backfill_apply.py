@@ -4,7 +4,6 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from accounts.scope import get_active_memberships
-from crm.models import Interaction, Opportunity, Task
 from parties.models import Company, Contact
 
 from .rbac_historical_scope_backfill_plan import SCOPE_FIELDS, classify_record
@@ -24,27 +23,6 @@ MODEL_SPECS = {
         ),
         "owner_field": None,
         "parent_fields": ("company",),
-    },
-    "Opportunity": {
-        "queryset": lambda: Opportunity.objects.select_related(
-            "company", "owner", "organization", "branch", "department"
-        ).order_by("created_at", "id"),
-        "owner_field": "owner",
-        "parent_fields": ("company",),
-    },
-    "Interaction": {
-        "queryset": lambda: Interaction.objects.select_related(
-            "company", "opportunity", "author", "organization", "branch", "department"
-        ).order_by("created_at", "id"),
-        "owner_field": "author",
-        "parent_fields": ("opportunity", "company"),
-    },
-    "Task": {
-        "queryset": lambda: Task.objects.select_related(
-            "company", "opportunity", "owner", "organization", "branch", "department"
-        ).order_by("due_date", "created_at", "id"),
-        "owner_field": "owner",
-        "parent_fields": ("opportunity", "company"),
     },
 }
 

@@ -64,12 +64,11 @@ function NewQuoteContent() {
 
   useEffect(() => {
     const customerId = searchParams.get("company");
-    const opportunityId = searchParams.get("opportunity");
     const serviceType = searchParams.get("service_type");
     const originParam = searchParams.get("origin");
     const destinationParam = searchParams.get("destination");
 
-    if (customerId || originParam || destinationParam || serviceType || opportunityId) {
+    if (customerId || originParam || destinationParam || serviceType) {
       const fetchInitial = async () => {
         setIsLoadingInitial(true);
         try {
@@ -85,7 +84,6 @@ function NewQuoteContent() {
 
           const prefill = buildQuotePrefillDefaults({
             companyId: customerId,
-            opportunityId,
             serviceType,
             originLocationId: origin?.id,
             destinationLocationId: destination?.id,
@@ -236,8 +234,8 @@ function NewQuoteContent() {
         <>
           {unsupportedServiceType && (
             <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              This CRM opportunity uses {unsupportedServiceType}. The quote form currently supports AIR quotes only, so
-              the quote mode was not prefilled from the opportunity.
+              This request uses {unsupportedServiceType}. The quote form currently supports AIR quotes only, so
+              the quote mode was not prefilled.
             </div>
           )}
           <QuoteForm
