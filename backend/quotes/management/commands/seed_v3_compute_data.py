@@ -12,11 +12,7 @@ from core.models import (
     FxSnapshot,
 )
 from parties.models import Company, Contact, CustomerCommercialProfile
-from services.models import (
-    ServiceComponent,
-    ServiceRule,
-    ServiceRuleComponent,
-)
+from services.models import ServiceComponent
 from ratecards.models import PartnerRateCard, PartnerRateLane, PartnerRate
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 
@@ -439,101 +435,6 @@ PNG_LOCAL_EXPORT_RATE_DEFS = [
 ]
 
 
-SERVICE_RULE_DEFS = [
-    {
-        "mode": "AIR",
-        "direction": "IMPORT",
-        "incoterm": "EXW",
-        "payment_term": "PREPAID",
-        "service_scope": "D2D",
-        "description": "Seed AIR IMPORT EXW Door-to-Door",
-        "components": [
-            {"code": "ORIGIN_PICKUP_SEED"},
-            {"code": "ORIGIN_FUEL_SURCH_SEED"},
-            {"code": "ORIGIN_SECURITY_SEED"},
-            {"code": "AIR_FREIGHT_SEED"},
-            {"code": "IMPORT_HANDLING_SEED"},
-            {"code": "IMPORT_CLEARANCE_SEED"},
-        ],
-    },
-    {
-        "mode": "AIR",
-        "direction": "IMPORT",
-        "incoterm": "EXW",
-        "payment_term": "PREPAID",
-        "service_scope": "D2A",
-        "description": "Seed AIR IMPORT EXW Door-to-Airport",
-        "components": [
-            {"code": "ORIGIN_PICKUP_SEED"},
-            {"code": "ORIGIN_FUEL_SURCH_SEED"},
-            {"code": "ORIGIN_SECURITY_SEED"},
-            {"code": "AIR_FREIGHT_SEED"},
-        ],
-    },
-    {
-        "mode": "AIR",
-        "direction": "IMPORT",
-        "incoterm": "EXW",
-        "payment_term": "PREPAID",
-        "service_scope": "A2D",
-        "description": "Seed AIR IMPORT EXW Airport-to-Door",
-        "components": [
-            {"code": "AIR_FREIGHT_SEED"},
-            {"code": "IMPORT_HANDLING_SEED"},
-            {"code": "IMPORT_CLEARANCE_SEED"},
-        ],
-    },
-    {
-        "mode": "AIR",
-        "direction": "IMPORT",
-        "incoterm": "EXW",
-        "payment_term": "PREPAID",
-        "service_scope": "A2A",
-        "description": "Seed AIR IMPORT EXW Airport-to-Airport",
-        "components": [
-            {"code": "AIR_FREIGHT_SEED"},
-        ],
-    },
-    {
-        "mode": "AIR",
-        "direction": "IMPORT",
-        "incoterm": "DAP",
-        "payment_term": "COLLECT",
-        "service_scope": "A2D",
-        "description": "Import Collect DAP A2D (Hybrid)",
-        "components": [
-            {"code": "CUS_CLR_IMP"},
-            {"code": "AGENCY_IMP"},
-            {"code": "DOC_IMP"},
-            {"code": "HANDLING_GEN"},
-            {"code": "TERM_INT_IMP"},
-            {"code": "CARTAGE_IMP"},
-            {"code": "CARTAGE_FUEL_IMP"},
-        ],
-    },
-    {
-        "mode": "AIR",
-        "direction": "EXPORT",
-        "incoterm": "CPT",
-        "payment_term": "PREPAID",
-        "service_scope": "D2A",
-        "description": "Export Prepaid CPT D2A (Hybrid)",
-        "components": [
-            {"code": "PKUP_ORG"},
-            {"code": "CARTAGE_FUEL_EXP"},
-            {"code": "CUS_CLR_EXP"},
-            {"code": "AGENCY_EXP"},
-            {"code": "DOC_EXP"},
-            {"code": "AWB_FEE"},
-            {"code": "SEC_SUR_AIR"},
-            {"code": "FUEL_SUR_AIR"},
-            {"code": "TERM_INT_EXP"},
-            {"code": "FRT_AIR"},
-        ],
-    },
-]
-
-
 class Command(BaseCommand):
     help = "Seed a minimal but complete dataset so the V3 quote compute flow can run end-to-end."
 
@@ -543,7 +444,6 @@ class Command(BaseCommand):
         QuoteTotal.objects.all().delete()
         QuoteVersion.objects.all().delete()
         Quote.objects.all().delete()
-        ServiceRule.objects.all().delete()
         ServiceComponent.objects.all().delete()
         PartnerRate.objects.all().delete()
 
@@ -555,7 +455,6 @@ class Command(BaseCommand):
             snapshot = self._ensure_fx_snapshot()
             components = self._ensure_service_components()
             components.update(self._ensure_png_local_service_components())
-            self._ensure_service_rules(components)
             partner_lanes = self._ensure_partner_rates(
                 supplier=supplier,
                 lanes=[
@@ -719,163 +618,6 @@ class Command(BaseCommand):
                     component.save(update_fields=updated_fields)
             components[definition["code"]] = component
         return components
-
-    def _ensure_service_rules(self, components):
-        recipes = {
-            "AIR_EXPORT_D2A_COLLECT_CPT_AGENT": {
-                "mode": "AIR",
-                "direction": "EXPORT",
-                "incoterm": "CPT",
-                "payment_term": "COLLECT",
-                "service_scope": "D2A",
-                "description": "Agent Request: Export to Agent (USD), we handle Origin + Freight.",
-                "output_currency_type": "USD",
-                "components": [
-                    {"code": "PKUP_ORG"},
-                    {"code": "CUS_CLR_EXP"},
-                    {"code": "DOC_EXP"},
-                    {"code": "FRT_AIR"},
-                    {"code": "AWB_FEE"},
-                    {"code": "SEC_SUR_AIR"},
-                ],
-            },
-            "AIR_EXPORT_D2D_COLLECT_EXW_FULL": {
-                "mode": "AIR",
-                "direction": "EXPORT",
-                "incoterm": "EXW",
-                "payment_term": "COLLECT",
-                "service_scope": "D2D",
-                "description": "Export Full D2D (PGK): Auto Origin + Manual Frt/Dest.",
-                "output_currency_type": "PGK",
-                "components": [
-                    {"code": "PKUP_ORG"},
-                    {"code": "CARTAGE_FUEL_EXP"},
-                    {"code": "CUS_CLR_EXP"},
-                    {"code": "AGENCY_EXP"},
-                    {"code": "DOC_EXP"},
-                    {"code": "AWB_FEE"},
-                    {"code": "SEC_SUR_AIR"},
-                    {"code": "FUEL_SUR_AIR"},
-                    {"code": "TERM_INT_EXP"},
-                    {"code": "FRT_AIR", "notes": "Manual International Freight"},
-                    {"code": "CUS_CLR_IMP", "notes": "Manual Destination Clearance"},
-                    {"code": "CARTAGE_IMP", "notes": "Manual Destination Delivery"},
-                ],
-            },
-            "AIR_IMPORT_A2D_PREPAID_DAP_AGENT": {
-                "mode": "AIR",
-                "direction": "IMPORT",
-                "incoterm": "DAP",
-                "payment_term": "PREPAID",
-                "service_scope": "A2D",
-                "description": "Agent Request: Import from Agent (USD), we handle Dest only.",
-                "output_currency_type": "USD",
-                "components": [
-                    {"code": "CUS_CLR_IMP"},
-                    {"code": "DOC_IMP"},
-                    {"code": "HANDLING_GEN"},
-                    {"code": "CARTAGE_IMP"},
-                ],
-            },
-            "AIR_IMPORT_A2D_COLLECT_DAP_LOCAL": {
-                "mode": "AIR",
-                "direction": "IMPORT",
-                "incoterm": "DAP",
-                "payment_term": "COLLECT",
-                "service_scope": "A2D",
-                "description": "Local Client: Import DAP (PGK), we handle Dest only.",
-                "output_currency_type": "PGK",
-                "components": [
-                    {"code": "CUS_CLR_IMP"},
-                    {"code": "DOC_IMP"},
-                    {"code": "HANDLING_GEN"},
-                    {"code": "CARTAGE_IMP"},
-                ],
-            },
-            "AIR_IMPORT_D2D_COLLECT_EXW_FULL": {
-                "mode": "AIR",
-                "direction": "IMPORT",
-                "incoterm": "EXW",
-                "payment_term": "COLLECT",
-                "service_scope": "D2D",
-                "description": "Full Import (PGK): Manual Origin/Freight + Auto Dest.",
-                "output_currency_type": "PGK",
-                "components": [
-                    {"code": "PKUP_ORG", "notes": "Manual Origin Pickup"},
-                    {"code": "CUS_CLR_EXP", "notes": "Manual Export Clearance"},
-                    {"code": "FRT_AIR", "notes": "Manual International Freight"},
-                    {"code": "CUS_CLR_IMP"},
-                    {"code": "DOC_IMP"},
-                    {"code": "CARTAGE_IMP"},
-                ],
-            },
-            "AIR_IMPORT_D2A_COLLECT_EXW_ONFWD": {
-                "mode": "AIR",
-                "direction": "IMPORT",
-                "incoterm": "EXW",
-                "payment_term": "COLLECT",
-                "service_scope": "D2A",
-                "description": "Import to HGU (No Deliv): Manual Orig/Frt + POM Transit + Dom Frt.",
-                "output_currency_type": "PGK",
-                "components": [
-                    {"code": "PKUP_ORG", "notes": "Manual Origin Pickup"},
-                    {"code": "FRT_AIR", "notes": "Manual International Freight"},
-                    {"code": "CUS_CLR_IMP"},
-                    {"code": "DOM_ONFWD"},
-                ],
-            },
-        }
-
-        all_rules = SERVICE_RULE_DEFS + list(recipes.values())
-        for rule_def in all_rules:
-            filters = {
-                "mode": rule_def["mode"],
-                "direction": rule_def["direction"],
-                "incoterm": rule_def.get("incoterm"),
-                "payment_term": rule_def["payment_term"],
-                "service_scope": rule_def["service_scope"],
-            }
-            defaults = {
-                "description": rule_def.get("description", ""),
-                "output_currency_type": rule_def.get("output_currency_type", "DESTINATION"),
-                "notes": rule_def.get("notes", ""),
-            }
-            rule, created = ServiceRule.objects.get_or_create(defaults=defaults, **filters)
-            if not created:
-                updated = []
-                for field, value in defaults.items():
-                    if getattr(rule, field) != value:
-                        setattr(rule, field, value)
-                        updated.append(field)
-                if updated:
-                    rule.save(update_fields=updated)
-
-            seen_component_ids = []
-            for sequence, component_def in enumerate(rule_def.get("components", []), start=1):
-                component = components.get(component_def["code"])
-                if not component:
-                    # Skip silently if the component definition is missing
-                    continue
-                rule_component, created_rc = ServiceRuleComponent.objects.update_or_create(
-                    service_rule=rule,
-                    service_component=component,
-                    defaults={
-                        "sequence": sequence,
-                        "leg_owner": component_def.get("leg_owner", "COMPANY"),
-                        "is_mandatory": component_def.get("is_mandatory", True),
-                        "notes": component_def.get("notes"),
-                    },
-                )
-                if not created_rc:
-                    # Ensure sequence is accurate even if nothing else changed
-                    if rule_component.sequence != sequence:
-                        rule_component.sequence = sequence
-                        rule_component.save(update_fields=["sequence"])
-                seen_component_ids.append(component.id)
-
-            ServiceRuleComponent.objects.filter(service_rule=rule).exclude(
-                service_component_id__in=seen_component_ids
-            ).delete()
 
     def _ensure_png_import_local_rates(self, origin, destination, components):
         supplier = self._ensure_self_supplier()

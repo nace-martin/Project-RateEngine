@@ -835,40 +835,6 @@ class QuoteTotal(models.Model):
         return f"Totals for v{self.quote_version.version_number} of {self.quote_version.quote.quote_number}"
 
 
-# --- V3 OverrideNote MODEL ---
-class OverrideNote(models.Model):
-    """
-    Records a manual override made during the quote process.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    quote_version = models.ForeignKey(
-        QuoteVersion,
-        on_delete=models.CASCADE,
-        related_name='overrides'
-    )
-
-    field = models.CharField(
-        max_length=100,
-        help_text="Identifier of what was overridden (e.g., 'manual_rate:FRT_AIR')."
-    )
-    old_value = models.TextField(null=True, blank=True)
-    new_value = models.TextField()
-    reason = models.TextField(help_text="Mandatory reason for the override.")
-    created_at = models.DateTimeField(auto_now_add=True)
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True, blank=True, related_name='+'
-    )
-
-    def __str__(self):
-        return f"Override on {self.quote_version}: {self.field}"
-
-    class Meta:
-        ordering = ['-created_at']
-
-
 # --- QuoteEvent MODEL for Funnel Tracking ---
 class QuoteEvent(models.Model):
     """

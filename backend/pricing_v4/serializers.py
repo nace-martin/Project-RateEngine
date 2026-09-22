@@ -21,7 +21,6 @@ from .models import (
     ImportSellRate,
     LocalCOGSRate,
     LocalSellRate,
-    ComponentMargin,
     CustomerDiscount,
     RateChangeLog,
     ProductCodeCreationRequest,
@@ -507,10 +506,6 @@ class RateChangeLogSerializer(serializers.ModelSerializer):
 class RateRevisionRequestSerializer(serializers.Serializer):
     retire_previous = serializers.BooleanField(required=False, default=True)
 
-class ComponentMarginSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ComponentMargin
-        fields = '__all__'
 
 class CustomerDiscountSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source='customer.name', read_only=True)
