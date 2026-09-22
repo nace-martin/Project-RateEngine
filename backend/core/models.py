@@ -7,6 +7,8 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from .geo_models import GeoLocation, GeoLocationIdentifier  # noqa: F401 - Django model registration
+from .corridor_models import GeoCorridorPolicy, TransportMode  # noqa: F401 - Django model registration
+from .fx_market_models import FxMarketRate  # noqa: F401 - Django model registration
 
 # --- Existing Core Models (with minor enhancements) ---
 
