@@ -126,13 +126,10 @@ class Command(BaseCommand):
                 'details': details,
             }
 
-        # CRM Endpoints - Check actual implementations
+        # Customer Endpoints - Check actual implementations
         endpoints.extend([
             inspected('CRM_Companies', 'parties.Company', 'parties.views.CustomerV3ViewSet', 'Companies endpoint inspected for scoped queryset, object lookup, and permissions'),
             not_applicable('CRM_Contacts', 'parties.Contact', 'Contacts are exposed only as a company-nested list; there is no standalone retrieve route to inspect'),
-            inspected('CRM_Opportunities', 'crm.Opportunity', 'crm.views.OpportunityViewSet', 'Opportunities endpoint inspected for scoped queryset, object lookup, and permissions'),
-            inspected('CRM_Interactions', 'crm.Interaction', 'crm.views.InteractionViewSet', 'Interactions endpoint inspected for scoped queryset, object lookup, and permissions'),
-            inspected('CRM_Tasks', 'crm.Task', 'crm.views.TaskViewSet', 'Tasks endpoint inspected for scoped queryset, object lookup, and permissions'),
         ])
 
         # Quote Endpoints

@@ -4,7 +4,6 @@ from collections import Counter
 from django.core.management.base import BaseCommand
 
 from accounts.scope import get_active_memberships
-from crm.models import Interaction, Opportunity, Task
 from parties.models import Company, Contact
 
 
@@ -63,30 +62,6 @@ def build_report():
             ),
             parent_fields=("company",),
             label_func=lambda row: f"{row.first_name} {row.last_name}".strip(),
-        ),
-        "Opportunity": inspect_model(
-            Opportunity.objects.select_related("company", "owner", "organization", "branch", "department").order_by(
-                "created_at", "id"
-            ),
-            owner_field="owner",
-            parent_fields=("company",),
-            label_field="title",
-        ),
-        "Interaction": inspect_model(
-            Interaction.objects.select_related(
-                "company", "opportunity", "author", "organization", "branch", "department"
-            ).order_by("created_at", "id"),
-            owner_field="author",
-            parent_fields=("opportunity", "company"),
-            label_field="interaction_type",
-        ),
-        "Task": inspect_model(
-            Task.objects.select_related("company", "opportunity", "owner", "organization", "branch", "department").order_by(
-                "due_date", "created_at", "id"
-            ),
-            owner_field="owner",
-            parent_fields=("opportunity", "company"),
-            label_field="status",
         ),
     }
     summary = combined_summary(models)

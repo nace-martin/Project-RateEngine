@@ -8,7 +8,6 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from accounts.models import Role, UserMembership
-from crm.models import Interaction, Opportunity, Task
 from parties.models import Branch, Company, Contact, Department, OperatingEntity, Organization
 from pricing_v4.models import ProductCode, ProductCodeCreationRequest
 from quotes.models import Quote
@@ -80,12 +79,6 @@ class RBACBackendEnforcementAPITest(APITestCase):
         self.other_contact = self._contact(self.other_company, "bne@example.test", self.branch_bne, self.dept_sea)
         self.quote = self._quote("QT-RBAC-001", self.company, self.sales, self.branch_pom, self.dept_air)
         self.other_quote = self._quote("QT-RBAC-002", self.other_company, self.other_sales, self.branch_bne, self.dept_sea)
-        self.opportunity = self._opportunity("POM Opportunity", self.company, self.sales, self.branch_pom, self.dept_air)
-        self.other_opportunity = self._opportunity("BNE Opportunity", self.other_company, self.other_sales, self.branch_bne, self.dept_sea)
-        self.interaction = self._interaction(self.company, self.contact, self.opportunity, self.sales, self.branch_pom, self.dept_air)
-        self.other_interaction = self._interaction(self.other_company, self.other_contact, self.other_opportunity, self.other_sales, self.branch_bne, self.dept_sea)
-        self.task = self._task(self.company, self.opportunity, self.sales, self.branch_pom, self.dept_air)
-        self.other_task = self._task(self.other_company, self.other_opportunity, self.other_sales, self.branch_bne, self.dept_sea)
         self.spe = self._spe(self.sales, self.branch_pom, self.dept_air, self.quote)
         self.other_spe = self._spe(self.other_sales, self.branch_bne, self.dept_sea, self.other_quote)
         self.product_request = ProductCodeCreationRequest.objects.create(
@@ -145,41 +138,6 @@ class RBACBackendEnforcementAPITest(APITestCase):
             status=Quote.Status.DRAFT,
         )
 
-    def _opportunity(self, title, company, owner, branch, department):
-        return Opportunity.objects.create(
-            company=company,
-            title=title,
-            service_type="AIR",
-            owner=owner,
-            organization=self.org,
-            branch=branch,
-            department=department,
-        )
-
-    def _interaction(self, company, contact, opportunity, author, branch, department):
-        return Interaction.objects.create(
-            company=company,
-            contact=contact,
-            opportunity=opportunity,
-            author=author,
-            organization=self.org,
-            branch=branch,
-            department=department,
-            interaction_type=Interaction.InteractionType.CALL,
-            summary="Call",
-        )
-
-    def _task(self, company, opportunity, owner, branch, department):
-        return Task.objects.create(
-            company=company,
-            opportunity=opportunity,
-            owner=owner,
-            organization=self.org,
-            branch=branch,
-            department=department,
-            description="Follow up",
-            due_date=timezone.now().date(),
-        )
 
     def _spe(self, user, branch, department, quote):
         return SpotPricingEnvelopeDB.objects.create(
@@ -230,15 +188,6 @@ class RBACBackendEnforcementAPITest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         with self.assertRaises(NoReverseMatch):
             reverse("parties:contact-detail", kwargs={"pk": self.other_contact.pk})
-
-    def test_opportunity_list_retrieve_cross_scope(self):
-        self.assert_hidden_from_sales("crm:opportunity-list", "crm:opportunity-detail", self.opportunity, self.other_opportunity)
-
-    def test_interaction_list_retrieve_cross_scope(self):
-        self.assert_hidden_from_sales("crm:interaction-list", "crm:interaction-detail", self.interaction, self.other_interaction)
-
-    def test_task_list_retrieve_cross_scope(self):
-        self.assert_hidden_from_sales("crm:task-list", "crm:task-detail", self.task, self.other_task)
 
     def test_quote_list_retrieve_cross_scope(self):
         self.assert_hidden_from_sales("quotes:quote-v3-list", "quotes:quote-v3-detail", self.quote, self.other_quote)
@@ -311,7 +260,6 @@ class RBACBackendEnforcementAPITest(APITestCase):
         self.client.force_authenticate(user=None)
         for url in [
             reverse("parties:customer-v3-list"),
-            reverse("crm:opportunity-list"),
             reverse("quotes:quote-v3-list"),
             reverse("quotes:spot-envelope-list-create"),
         ]:
@@ -331,7 +279,6 @@ class RBACBackendEnforcementAPITest(APITestCase):
         self._login(self.sales)
         for endpoint, obj in [
             ("parties:customer-v3-detail", self.other_company),
-            ("crm:opportunity-detail", self.other_opportunity),
             ("quotes:quote-v3-detail", self.other_quote),
             ("quotes:spot-envelope-detail", self.other_spe),
         ]:
@@ -342,9 +289,6 @@ class RBACBackendEnforcementAPITest(APITestCase):
         self._login(self.sales)
         guessed_urls = [
             reverse("parties:customer-v3-detail", kwargs={"pk": self.other_company.pk}),
-            reverse("crm:opportunity-detail", kwargs={"pk": self.other_opportunity.pk}),
-            reverse("crm:interaction-detail", kwargs={"pk": self.other_interaction.pk}),
-            reverse("crm:task-detail", kwargs={"pk": self.other_task.pk}),
             reverse("quotes:quote-v3-detail", kwargs={"pk": self.other_quote.pk}),
             reverse("quotes:spot-envelope-detail", kwargs={"envelope_id": self.other_spe.pk}),
             reverse("quotes:spot-envelope-draft-quote", kwargs={"envelope_id": self.other_spe.pk}),

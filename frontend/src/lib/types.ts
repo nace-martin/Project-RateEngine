@@ -117,109 +117,6 @@ export interface CompanySearchResult {
   tags?: string[];
 }
 
-// --- CRM TYPES ---
-export type InteractionType = 'CALL' | 'MEETING' | 'EMAIL' | 'SITE_VISIT' | 'SYSTEM';
-
-export interface Opportunity {
-  id: string;
-  company: string;
-  company_name?: string;
-  title: string;
-  service_type: 'AIR' | 'SEA' | 'CUSTOMS' | 'TRANSPORT' | 'DOMESTIC' | 'MULTIMODAL' | string;
-  direction?: 'IMPORT' | 'EXPORT' | 'DOMESTIC' | string;
-  scope?: string;
-  origin?: string;
-  destination?: string;
-  estimated_weight_kg?: string | number | null;
-  estimated_volume_cbm?: string | number | null;
-  estimated_fcl_count?: number | null;
-  estimated_frequency?: string;
-  estimated_revenue?: string | number | null;
-  estimated_currency?: string;
-  status: 'NEW' | 'QUALIFIED' | 'QUOTED' | 'WON' | 'LOST' | string;
-  priority: 'LOW' | 'MEDIUM' | 'HIGH' | string;
-  owner?: number | null;
-  owner_username?: string | null;
-  next_action?: string;
-  next_action_date?: string | null;
-  last_activity_at?: string | null;
-  won_at?: string | null;
-  won_by?: number | null;
-  won_by_username?: string | null;
-  won_reason?: string;
-  lost_reason?: string;
-  is_active?: boolean;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface OpportunityPayload {
-  company: string;
-  title: string;
-  service_type: string;
-  direction?: string;
-  scope?: string;
-  origin: string;
-  destination: string;
-  estimated_weight_kg?: string | number | null;
-  estimated_volume_cbm?: string | number | null;
-  estimated_fcl_count?: number | null;
-  estimated_frequency?: string;
-  estimated_revenue?: string | number | null;
-  estimated_currency?: string;
-  status: string;
-  priority: string;
-  owner?: number | null;
-  next_action?: string;
-  next_action_date?: string | null;
-}
-
-export interface Interaction {
-  id: string;
-  company: string;
-  company_name?: string;
-  contact?: string | null;
-  opportunity?: string | null;
-  author?: number | null;
-  author_username?: string | null;
-  interaction_type: InteractionType;
-  summary: string;
-  outcomes?: string;
-  next_action?: string;
-  next_action_date?: string | null;
-  is_system_generated?: boolean;
-  system_event_type?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface CreateInteractionPayload {
-  company: string;
-  contact?: string | null;
-  opportunity?: string | null;
-  interaction_type: Exclude<InteractionType, 'SYSTEM'>;
-  summary: string;
-  outcomes?: string;
-  next_action?: string;
-  next_action_date?: string | null;
-}
-
-export interface Task {
-  id: string;
-  company?: string | null;
-  opportunity?: string | null;
-  description: string;
-  owner: number;
-  owner_username?: string | null;
-  due_date: string;
-  status: 'PENDING' | 'COMPLETED' | 'CANCELLED' | string;
-  completed_at?: string | null;
-  completed_by?: number | null;
-  completed_by_username?: string | null;
-  created_at?: string;
-  updated_at?: string;
-}
-
 export interface AirportSearchResult {
   iata_code: string;
   name: string;
@@ -315,7 +212,6 @@ export interface V3ManualOverride {
 
 export interface V3QuoteComputeRequest {
   quote_id?: string;
-  opportunity_id?: string;
   customer_id: string;
   contact_id: string;
   mode: string;
@@ -534,7 +430,6 @@ export interface V3QuoteComputeResponse {
   quote_number: string;
   customer: string | QuoteCustomerRef;
   contact: string | QuoteContactRef;
-  opportunity?: string | null;
   branding?: QuoteBrandingRef | null;
   mode: string;
   shipment_type: string; // The backend calculates and returns this

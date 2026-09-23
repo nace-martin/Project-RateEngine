@@ -11,24 +11,6 @@ NOT_READY = "NOT_READY_FOR_ENFORCEMENT_DESIGN"
 
 SURFACES = [
     {
-        "name": "CRM opportunity list/detail",
-        "code_path": "backend/crm/views.py:OpportunityViewSet.get_queryset",
-        "current_state": "scoped_queryset_enforced",
-        "required_rule": "filter Opportunity by organization, branch, and department for scoped roles",
-    },
-    {
-        "name": "CRM interaction list/detail",
-        "code_path": "backend/crm/views.py:InteractionViewSet.get_queryset",
-        "current_state": "scoped_queryset_enforced",
-        "required_rule": "filter Interaction by direct scope or scoped company/opportunity parent",
-    },
-    {
-        "name": "CRM task list/detail",
-        "code_path": "backend/crm/views.py:TaskViewSet.get_queryset",
-        "current_state": "scoped_queryset_enforced",
-        "required_rule": "filter Task by direct scope or scoped company/opportunity parent",
-    },
-    {
         "name": "Company/customer list",
         "code_path": "backend/parties/views.py:CustomerV3ViewSet.get_queryset",
         "current_state": "scoped_queryset_enforced",
@@ -45,18 +27,6 @@ SURFACES = [
         "code_path": "backend/parties/views.py:CompanyContactListV3View.get_queryset",
         "current_state": "parent_scope_authorized",
         "required_rule": "authorize parent Company scope before returning Contact rows",
-    },
-    {
-        "name": "Opportunity selectors",
-        "code_path": "backend/crm/views.py:OpportunityViewSet.get_queryset",
-        "current_state": "scoped_queryset_enforced",
-        "required_rule": "filter opportunity selector options to scoped Opportunity records",
-    },
-    {
-        "name": "Interaction/Task selectors",
-        "code_path": "backend/crm/views.py:InteractionViewSet.get_queryset; backend/crm/views.py:TaskViewSet.get_queryset",
-        "current_state": "scoped_queryset_enforced",
-        "required_rule": "filter interaction and task selector options by scoped parent records",
     },
     {
         "name": "Quote customer detail lookup",

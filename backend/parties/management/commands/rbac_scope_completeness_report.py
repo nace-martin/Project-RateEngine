@@ -4,7 +4,6 @@ from collections import Counter, defaultdict
 from django.core.management.base import BaseCommand, CommandError
 
 from accounts.scope import SCOPE_FIELD_NAMES, get_active_memberships
-from crm.models import Interaction, Opportunity, Task
 from parties.models import Branch, Company, Contact, Department, Organization
 from quotes.models import Quote
 
@@ -152,31 +151,6 @@ def build_report(*, show_details=False, limit=50):
     model_specs = {
         "company": Company.objects.select_related("organization", "branch", "department", "account_owner").order_by("name", "id"),
         "contact": Contact.objects.select_related("company", "organization", "branch", "department").order_by("company__name", "last_name", "id"),
-        "opportunity": Opportunity.objects.select_related(
-            "company",
-            "owner",
-            "won_by",
-            "organization",
-            "branch",
-            "department",
-        ).prefetch_related("quotes").order_by("created_at", "id"),
-        "interaction": Interaction.objects.select_related(
-            "company",
-            "opportunity",
-            "author",
-            "organization",
-            "branch",
-            "department",
-        ).prefetch_related("opportunity__quotes").order_by("created_at", "id"),
-        "task": Task.objects.select_related(
-            "company",
-            "opportunity",
-            "owner",
-            "completed_by",
-            "organization",
-            "branch",
-            "department",
-        ).prefetch_related("opportunity__quotes").order_by("created_at", "id"),
     }
 
     branch_coverage = {}
@@ -358,30 +332,16 @@ def derivable_fields(record, source_values):
 
 
 def linked_quotes_for_record(record):
-    if isinstance(record, Opportunity):
-        return list(record.quotes.all())
-    opportunity = getattr(record, "opportunity", None)
-    if opportunity is None:
-        return []
-    return list(opportunity.quotes.all())
+    return []
 
 
 def linked_quote_ids():
-    opportunity_ids = set(Opportunity.objects.values_list("id", flat=True))
-    interaction_opportunity_ids = set(
-        Interaction.objects.exclude(opportunity_id__isnull=True).values_list("opportunity_id", flat=True)
-    )
-    return set(
-        Quote.objects.filter(opportunity_id__in=opportunity_ids.union(interaction_opportunity_ids)).values_list("id", flat=True)
-    )
+    return set()
 
 
 def owner_users(model_name, record):
     fields = {
         "company": ("account_owner",),
-        "opportunity": ("owner", "won_by"),
-        "interaction": ("author",),
-        "task": ("owner", "completed_by"),
     }.get(model_name, ())
     return [getattr(record, field, None) for field in fields if getattr(record, f"{field}_id", None)]
 
@@ -413,9 +373,6 @@ def referenced_user_field_counts():
 def user_reference_fields():
     return {
         Company: ("account_owner",),
-        Opportunity: ("owner", "won_by"),
-        Interaction: ("author",),
-        Task: ("owner", "completed_by"),
     }
 
 

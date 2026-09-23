@@ -153,9 +153,6 @@ def scoped_record_report():
     specs = (
         ("parties.Company", Company),
         ("parties.Contact", Contact),
-        ("crm.Opportunity", apps.get_model("crm", "Opportunity")),
-        ("crm.Interaction", apps.get_model("crm", "Interaction")),
-        ("crm.Task", apps.get_model("crm", "Task")),
         ("quotes.Quote", apps.get_model("quotes", "Quote")),
         ("quotes.SpotPricingEnvelopeDB", apps.get_model("quotes", "SpotPricingEnvelopeDB")),
     )

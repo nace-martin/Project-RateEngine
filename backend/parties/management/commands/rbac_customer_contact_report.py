@@ -135,9 +135,6 @@ def build_report(*, show_details: bool = False, limit: int = 50) -> dict:
             "companies_without_detected_scope_link": companies.filter(
                 account_owner__isnull=True,
                 quotes_as_customer__isnull=True,
-                opportunities__isnull=True,
-                interactions__isnull=True,
-                crm_tasks__isnull=True,
             ).distinct().count(),
             "internal_like_companies": companies.filter(
                 is_customer=False,

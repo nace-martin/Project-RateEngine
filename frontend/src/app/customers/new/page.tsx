@@ -282,7 +282,7 @@ export default function NewCustomerPage() {
         <PageBackButton fallbackHref="/customers" returnTo={returnTo} />
         <Alert>
           <AlertDescription>
-            Customer creation is restricted to administrators. Use in-scope customer search and CRM activity instead.
+            Customer creation is restricted to administrators. Use in-scope customer search instead.
           </AlertDescription>
         </Alert>
         <PageActionBar>

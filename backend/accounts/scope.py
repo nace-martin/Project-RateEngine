@@ -48,7 +48,6 @@ LEGACY_AUTHENTICATED_PERMISSION_CODES = {
     "quote.view.own",
     "quote.view.sell",
     "customer.view",
-    "crm.view",
     "report.view.own",
 }
 
