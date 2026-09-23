@@ -1,39 +1,27 @@
-"""
-Legacy Ratecard Migration Service for Wave 2C1.
+"""Legacy Ratecard Audit Service for Wave 2C1.
 
-Audits, classifies, and evaluates legacy V3 ratecards (PartnerRateCard,
-PartnerRateLane, PartnerRate) against the clean Phase 3 Rate Matrix
-(RateSheet -> RateLine -> RateApplicability -> RateTier).
+Read-only audit and classification service for legacy V3 ratecards
+(PartnerRateCard, PartnerRateLane, PartnerRate).
 
-Enforces commercial invariants:
+Evaluates commercial invariants against clean architecture standards:
 - BUY vs SELL separation
 - approved SELL without re-margining
 - source currency preservation
 - strict validity window
 - basis and tier integrity
-- fails closed on ambiguous mappings, missing ProductCodes, or partial card migrations
+- fails closed on ambiguous mappings, missing ProductCodes, or test data
+
+Note: PR #354 is strictly audit/archive only. Zero target Rate Matrix rows
+are created, and no write/migration paths exist for legacy rows.
 """
 
 from dataclasses import dataclass, field
-from decimal import Decimal
 from typing import Any
 
-from core.geo_models import GeoLocation, GeoLocationIdentifier
-from django.db import transaction
-from django.utils import timezone
-from parties.party_models import PartyMaster, PartyRole
 from ratecards.models import (
     PartnerRate,
     PartnerRateCard,
     PartnerRateLane,
-)
-
-from pricing_v4.commercial_models import CommercialProductCode
-from pricing_v4.rate_matrix_models import (
-    RateApplicability,
-    RateLine,
-    RateSheet,
-    RateTier,
 )
 
 
@@ -58,7 +46,6 @@ class RateEvaluationResult:
     status: str  # 'matched', 'blocked', 'archive-only', 'invalid'
     blocker_reasons: list[str] = field(default_factory=list)
     mapped_product_code: str | None = None
-    target_line_id: str | None = None
 
 
 @dataclass
@@ -90,13 +77,13 @@ class MigrationAuditReport:
 
 
 class RatecardMigrationService:
-    """Service to audit, classify, and migrate legacy ratecards."""
+    """Read-only service to audit and classify legacy ratecards."""
 
-    def __init__(self, dry_run: bool = True):
-        self.dry_run = dry_run
+    def __init__(self, *args, **kwargs):
+        pass
 
     def audit_and_classify(self) -> MigrationAuditReport:
-        """Run complete audit and classification across all legacy ratecard rows."""
+        """Run complete read-only audit and classification across all legacy ratecard rows."""
         report = MigrationAuditReport()
         cards = PartnerRateCard.objects.all().order_by("id")
         report.total_cards = cards.count()
@@ -158,23 +145,20 @@ class RatecardMigrationService:
         # Check for AUD destination charges on import cards (Cards 10 & 11)
         if card.currency_code == "AUD":
             dest_comps = rates.filter(
-                service_component__code__in=[
-                    "DOC_IMP", "AGENCY_IMP", "HANDLING", "TERM_INT", "CARTAGE", "PICKUP_FUEL_DST"
-                ]
+                service_component__code__in=["DOC_IMP", "AGENCY_IMP", "CARTAGE_IMP", "HANDLING_GEN", "CUS_CLR_IMP"]
             )
             if dest_comps.exists():
                 is_card_archive_only = True
                 card_blockers.append(
-                    "Commercial invariant violation: Destination import charges denominated in AUD instead of PNG local PGK."
+                    "AUD destination charges present on import card; violates clean V4 PGK destination tariff policy."
                 )
 
-        # Check for service level mismatches
-        if card.service_level not in ["STANDARD", "EXPRESS", "DEFERRED"]:
-            card_blockers.append(
-                f"Non-standard service_level '{card.service_level}' (RateApplicability supports EXPRESS, STANDARD, DEFERRED)."
-            )
+        # Check for non-standard service levels
+        if card.service_level and card.service_level not in ["EXPRESS", "STANDARD", "DEFERRED"]:
+            is_card_archive_only = True
+            card_blockers.append(f"Non-standard service level: '{card.service_level}'.")
 
-        # Check for unmapped service components across the card
+        # Check for unmapped service components across all child rates
         unmapped_components = set()
         for r in rates:
             comp_code = r.service_component.code
@@ -232,7 +216,6 @@ class RatecardMigrationService:
             rate_status = status
             if classification == RatecardClassification.ARCHIVE_ONLY:
                 rate_status = "archive-only" if not is_card_invalid else "invalid"
-                # If specific rate has blockers, ensure marked
                 if not rate_usable and rate_status not in ["invalid", "archive-only"]:
                     rate_status = "blocked"
             elif classification == RatecardClassification.INVESTIGATE:
@@ -273,7 +256,6 @@ class RatecardMigrationService:
         self, comp_code: str, direction: str
     ) -> str | None:
         """Resolve a legacy ServiceComponent code to a canonical ProductCode string."""
-        # Clean direction prefix
         dir_prefix = "EXP" if direction == "EXPORT" else "IMP"
 
         # Direct canonical mappings
@@ -314,201 +296,4 @@ class RatecardMigrationService:
         if comp_code == "XRAY" and direction == "IMPORT":
             return "IMP-SCREEN-ORIGIN"
 
-        # Unresolved
         return None
-
-    @transaction.atomic
-    def execute_migration(self, card_ids: list[int] | None = None) -> MigrationAuditReport:
-        """
-        Execute migration into clean Rate Matrix (RateSheet -> RateLine -> RateApplicability -> RateTier).
-        Fails closed on any ambiguous or partial card.
-        """
-        report = self.audit_and_classify()
-
-        cards = PartnerRateCard.objects.all()
-        if card_ids:
-            cards = cards.filter(id__in=card_ids)
-
-        for card in cards:
-            card_eval = next((c for c in report.card_summaries if c["card_id"] == card.id), None)
-            if not card_eval:
-                continue
-
-            # Strict gate: Only migrate cards classified as MIGRATE with 100% usable rates
-            if card_eval["classification"] != RatecardClassification.MIGRATE:
-                continue
-
-            all_rates_usable = all(r.is_usable for r in card_eval["rate_results"])
-            if not all_rates_usable:
-                continue
-
-            if not self.dry_run:
-                self._persist_clean_rate_matrix(card, card_eval, report)
-
-        return report
-
-    def _persist_clean_rate_matrix(
-        self,
-        legacy_card: PartnerRateCard,
-        card_eval: dict[str, Any],
-        report: MigrationAuditReport,
-    ):
-        """Persist clean RateSheet, RateLine, RateApplicability, RateTier idempotently."""
-        # 1. Resolve or create PartyMaster counterparty
-        carrier_party = None
-        customer_party = None
-
-        if legacy_card.rate_type == "BUY_RATE" and legacy_card.supplier:
-            # Map supplier to PartyMaster
-            supplier_name = legacy_card.supplier.name
-            country_code = "PG"
-            if "AU" in supplier_name:
-                country_code = "AU"
-            carrier_party, _ = PartyMaster.objects.get_or_create(
-                legal_name=supplier_name,
-                country_code=country_code,
-                defaults={"entity_type": "CARRIER", "is_active": True},
-            )
-            PartyRole.objects.get_or_create(
-                party=carrier_party,
-                role_type=PartyRole.RoleType.CARRIER,
-                defaults={"is_active": True},
-            )
-
-        # 2. Idempotent RateSheet creation
-        rate_type_clean = "BUY" if legacy_card.rate_type == "BUY_RATE" else "SELL"
-        sheet, created_sheet = RateSheet.objects.get_or_create(
-            name=f"Migrated: {legacy_card.name}",
-            defaults={
-                "rate_type": rate_type_clean,
-                "transport_mode": RateSheet.TransportMode.AIR,
-                "currency_code": legacy_card.currency_code,
-                "valid_from": legacy_card.valid_from or timezone.now().date(),
-                "valid_until": legacy_card.valid_until,
-                "carrier": carrier_party,
-                "party": customer_party,
-                "is_active": True,
-                "version": 1,
-            },
-        )
-        if created_sheet:
-            report.target_rows_created["RateSheet"] += 1
-
-        # 3. Process lanes and rates
-        for r_res in card_eval["rate_results"]:
-            if not r_res.is_usable:
-                continue
-
-            legacy_rate = PartnerRate.objects.get(id=r_res.rate_id)
-            legacy_lane = legacy_rate.lane
-
-            # Resolve CommercialProductCode
-            cpc = CommercialProductCode.objects.filter(code=r_res.mapped_product_code).first()
-            if not cpc:
-                continue
-
-            # Determine rate basis
-            if legacy_rate.tiering_json and legacy_rate.tiering_json.get("breaks"):
-                rate_basis = RateLine.RateBasis.TIERED_WEIGHT
-                unit_rate = None
-            elif legacy_rate.unit in ["KG", "PER_KG"]:
-                rate_basis = RateLine.RateBasis.PER_KG
-                unit_rate = legacy_rate.rate_per_kg_fcy
-            else:
-                rate_basis = RateLine.RateBasis.FLAT
-                unit_rate = legacy_rate.rate_per_shipment_fcy
-
-            # Idempotent RateLine
-            rate_line, created_line = RateLine.objects.get_or_create(
-                sheet=sheet,
-                product_code=cpc,
-                rate_basis=rate_basis,
-                defaults={
-                    "unit_rate": unit_rate,
-                    "min_charge": legacy_rate.min_charge_fcy,
-                    "max_charge": legacy_rate.max_charge_fcy,
-                },
-            )
-            if created_line:
-                report.target_rows_created["RateLine"] += 1
-                r_res.target_line_id = str(rate_line.id)
-
-            # Resolve GeoLocations
-            origin_geo = None
-            dest_geo = None
-            if legacy_lane.origin_airport:
-                origin_geo = self._resolve_or_create_airport_geo(legacy_lane.origin_airport)
-            if legacy_lane.destination_airport:
-                dest_geo = self._resolve_or_create_airport_geo(legacy_lane.destination_airport)
-
-            # RateApplicability (1:1 with RateLine)
-            clean_direction = legacy_lane.direction if legacy_lane.direction in ["IMPORT", "EXPORT", "DOMESTIC"] else ""
-            clean_service_level = (
-                legacy_card.service_level
-                if legacy_card.service_level in ["EXPRESS", "STANDARD", "DEFERRED"]
-                else RateApplicability.ServiceLevel.STANDARD
-            )
-
-            _app, created_app = RateApplicability.objects.get_or_create(
-                rate_line=rate_line,
-                defaults={
-                    "origin": origin_geo,
-                    "destination": dest_geo,
-                    "direction": clean_direction,
-                    "service_level": clean_service_level,
-                },
-            )
-            if created_app:
-                report.target_rows_created["RateApplicability"] += 1
-
-            # RateTiers for TIERED_WEIGHT
-            if rate_basis == RateLine.RateBasis.TIERED_WEIGHT and legacy_rate.tiering_json:
-                breaks = legacy_rate.tiering_json.get("breaks", [])
-                for i, b in enumerate(breaks):
-                    min_q = Decimal(str(b["min_kg"]))
-                    max_q = (
-                        Decimal(str(breaks[i + 1]["min_kg"]))
-                        if i + 1 < len(breaks)
-                        else None
-                    )
-                    tier_rate = Decimal(str(b["rate_per_kg"]))
-
-                    _tier, created_tier = RateTier.objects.get_or_create(
-                        rate_line=rate_line,
-                        min_quantity=min_q,
-                        defaults={
-                            "max_quantity": max_q,
-                            "unit_rate": tier_rate,
-                        },
-                    )
-                    if created_tier:
-                        report.target_rows_created["RateTier"] += 1
-
-    def _resolve_or_create_airport_geo(self, airport) -> GeoLocation:
-        """Resolve or create a normalized GeoLocation for an airport."""
-        iata = airport.iata_code.strip().upper()
-        # Look for existing identifier
-        ident = GeoLocationIdentifier.objects.filter(
-            scheme=GeoLocationIdentifier.Scheme.IATA, code=iata
-        ).first()
-        if ident:
-            return ident.location
-
-        # Create GeoLocation
-        country_code = (
-            airport.city.country.code
-            if airport.city and airport.city.country
-            else ("PG" if iata == "POM" else "AU")
-        )
-        location = GeoLocation.objects.create(
-            canonical_name=airport.name or f"{iata} Airport",
-            country_code=country_code,
-            location_type=GeoLocation.LocationType.AIRPORT,
-            is_active=True,
-        )
-        GeoLocationIdentifier.objects.create(
-            location=location,
-            scheme=GeoLocationIdentifier.Scheme.IATA,
-            code=iata,
-        )
-        return location
