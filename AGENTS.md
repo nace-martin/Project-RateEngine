@@ -50,7 +50,6 @@ RateEngine/
 │   ├── parties/        organizations, companies, contacts, hierarchy
 │   ├── pricing_v4/     active deterministic pricing engine
 │   ├── quotes/         quote lifecycle and SPE/SPOT workflows
-│   ├── ratecards/      rate-card APIs
 │   └── rate_engine/    Django project configuration
 ├── frontend/
 │   ├── src/            Next.js application
