@@ -20,6 +20,10 @@ from pricing_v4.engine.domestic_engine import DomesticPricingEngine
 from pricing_v4.models import ProductCode, CustomerDiscount
 from services.models import ServiceComponent
 from quotes.completeness import evaluate_from_lines
+from pricing_v4.services.commercial_policy import (
+    MissingCommercialPolicyError,
+    resolve_commercial_terms_policy,
+)
 from quotes.currency_rules import determine_quote_currency
 from quotes.quote_result_contract import basis_for_unit, quantity_for_unit
 
@@ -108,7 +112,11 @@ class PricingServiceV4Adapter:
         self._audit_warnings: list[str] = []
         self._audit_metadata: dict[str, object] = {}
         
-        # Fetch Policy and FX just like V3 did, so views can save them to Quote
+        # Resolve active CommercialTermsPolicy for commercial calculations (Wave 3B2 cutover)
+        quote_date = getattr(quote_input, "quote_date", None) if quote_input else None
+        self.commercial_terms_policy = resolve_commercial_terms_policy(quote_date)
+
+        # Retain legacy core.Policy strictly for database FK compatibility (Quote.policy / QuoteVersion.policy)
         try:
             self.policy = Policy.objects.filter(is_active=True).latest('effective_from')
         except Policy.DoesNotExist:
@@ -205,6 +213,9 @@ class PricingServiceV4Adapter:
 
     def get_policy(self):
         return self.policy
+
+    def get_commercial_terms_policy(self):
+        return self.commercial_terms_policy
     
     def get_pricing_mode(self) -> str:
         """Return the pricing mode used (NORMAL or SPOT)."""
@@ -491,14 +502,14 @@ class PricingServiceV4Adapter:
             tt_buy = Decimal(str(fx_info.get('tt_buy'))) if tt_buy_from_snapshot else Decimal('2.50')
             tt_sell = Decimal(str(fx_info.get('tt_sell'))) if tt_sell_from_snapshot else Decimal('2.78')
             
-            # Get CAF and margin from policy or use defaults
-            caf_rate = None
-            margin_rate = None
-            if self.policy:
-                if self.policy.caf_export_pct is not None:
-                    caf_rate = Decimal(str(self.policy.caf_export_pct))
-                if self.policy.margin_pct is not None:
-                    margin_rate = Decimal(str(self.policy.margin_pct))
+            # Get CAF and margin from CommercialTermsPolicy (Wave 3B2 cutover)
+            if not self.commercial_terms_policy:
+                raise MissingCommercialPolicyError(
+                    "No active CommercialTermsPolicy found for quote calculation; calculation fails closed."
+                )
+
+            caf_rate = self.commercial_terms_policy.export_caf_rate
+            margin_rate = self.commercial_terms_policy.target_gross_margin_rate
 
             caf_used = caf_rate if caf_rate is not None else ExportPricingEngine.DEFAULT_CAF
             fx_applied = (str(quote_currency or '').upper() != 'PGK') and (export_payment_term == ExportPaymentTerm.PREPAID)
@@ -557,15 +568,14 @@ class PricingServiceV4Adapter:
             tt_buy = Decimal(str(fx_info.get('tt_buy'))) if tt_buy_from_snapshot else Decimal('0.35')
             tt_sell = Decimal(str(fx_info.get('tt_sell'))) if tt_sell_from_snapshot else Decimal('0.36')
             
-            # Get specific policy overrides if any (reuse Export policy fields or define Import ones?)
-            # Assuming shared policy margin/caf for now or defaults in engine
-            caf_rate = None
-            margin_rate = None
-            if self.policy:
-                if self.policy.caf_import_pct is not None:
-                     caf_rate = Decimal(str(self.policy.caf_import_pct))
-                if self.policy.margin_pct is not None:
-                     margin_rate = Decimal(str(self.policy.margin_pct))
+            # Get CAF and margin from CommercialTermsPolicy (Wave 3B2 cutover)
+            if not self.commercial_terms_policy:
+                raise MissingCommercialPolicyError(
+                    "No active CommercialTermsPolicy found for quote calculation; calculation fails closed."
+                )
+
+            caf_rate = self.commercial_terms_policy.import_caf_rate
+            margin_rate = self.commercial_terms_policy.target_gross_margin_rate
 
             caf_used = caf_rate if caf_rate is not None else ImportPricingEngine.DEFAULT_CAF
             normalized_quote_currency = str(quote_currency or "").upper() or "PGK"
@@ -1328,10 +1338,10 @@ class PricingServiceV4Adapter:
         output_fx_sell = self._get_fx_sell_rate(output_currency, fx_rates)
         chargeable_weight = self._calculate_chargeable_weight()
 
-        # Get margin from policy
+        # Get margin from CommercialTermsPolicy (Wave 3B2 cutover)
         margin_pct = Decimal('0.15')  # Default 15%
-        if self.policy and self.policy.margin_pct is not None:
-            margin_pct = Decimal(str(self.policy.margin_pct))
+        if self.commercial_terms_policy and self.commercial_terms_policy.target_gross_margin_rate is not None:
+            margin_pct = self.commercial_terms_policy.target_gross_margin_rate
         
         codes = [c.code for c in charges]
         component_map = {
@@ -1374,14 +1384,14 @@ class PricingServiceV4Adapter:
                 or (is_percentage and not bucket_has_base.get(charge.bucket, False))
             )
             
-            # Determine CAF pct
-            caf_pct = Decimal("0")
-            if self.policy:
+            # Determine CAF pct from CommercialTermsPolicy (Wave 3B2 cutover)
+            caf_pct = Decimal(0)
+            if self.commercial_terms_policy:
                 shipment_type = self.quote_input.shipment.shipment_type
                 if shipment_type == 'IMPORT':
-                    caf_pct = Decimal(str(self.policy.caf_import_pct))
+                    caf_pct = self.commercial_terms_policy.import_caf_rate or Decimal(0)
                 elif shipment_type == 'EXPORT':
-                    caf_pct = Decimal(str(self.policy.caf_export_pct))
+                    caf_pct = self.commercial_terms_policy.export_caf_rate or Decimal(0)
 
             # Capture quote-level FX audit for SPOT overlay conversion when the
             # output currency is FCY (rare) or when FCY buy costs exist.

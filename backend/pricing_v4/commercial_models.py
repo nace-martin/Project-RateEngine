@@ -329,5 +329,21 @@ class CommercialTermsPolicy(models.Model):
                 {"gst_standard_percent": "GST standard percent must be between 0% and 100%."}
             )
 
+    @property
+    def import_caf_rate(self) -> Decimal | None:
+        return (self.import_caf_percent / Decimal(100)) if self.import_caf_percent is not None else None
+
+    @property
+    def export_caf_rate(self) -> Decimal | None:
+        return (self.export_caf_percent / Decimal(100)) if self.export_caf_percent is not None else None
+
+    @property
+    def target_gross_margin_rate(self) -> Decimal | None:
+        return (self.target_gross_margin_percent / Decimal(100)) if self.target_gross_margin_percent is not None else None
+
+    @property
+    def gst_standard_rate(self) -> Decimal | None:
+        return (self.gst_standard_percent / Decimal(100)) if self.gst_standard_percent is not None else None
+
     def __str__(self):
         return f"{self.policy_code} (Valid: {self.valid_from} - {self.valid_until or 'Present'})"
