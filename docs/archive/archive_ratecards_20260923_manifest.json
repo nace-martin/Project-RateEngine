@@ -1,0 +1,16 @@
+{
+  "archive_filename": "archive_ratecards_20260923.json",
+  "archived_at": "2026-09-23T02:58:53Z",
+  "storage_location": "RateEngine-local-artifacts/cold_storage/archive_ratecards_20260923.json",
+  "storage_note": "Stored in approved private local cold storage outside repository history. Contains legacy pre-production ratecards, lanes, and rates prior to clean rate matrix cutover.",
+  "total_tables": 3,
+  "total_rows": 473,
+  "table_row_counts": {
+    "PartnerRateCard": 7,
+    "PartnerRateLane": 32,
+    "PartnerRate": 434
+  },
+  "file_sha256": "3d3e24aeb14be37e5181a4681f2061d2f962f7798a9c44cf49b5aad1a59ed143",
+  "payload_sha256": "6e14dbdd84bf60d6103981517704c7a87632164cefd0b7006d4fa28b17866e35",
+  "integrity_result": "PASSED: 100% referential integrity, 0 orphan relationships, all row counts and checksums verified."
+}

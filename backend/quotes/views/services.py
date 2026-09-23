@@ -1,28 +1,27 @@
 import logging
 from decimal import Decimal
 
-from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import transaction
-from django.db.models.deletion import ProtectedError
-from django.db.models import Q
-from django.shortcuts import get_object_or_404
-from django.utils import timezone
-from rest_framework import status
-from rest_framework.exceptions import ValidationError
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.permissions import IsAuthenticated
-
-from parties.models import Address, Company, Contact, CustomerCommercialProfile
+# RBAC permissions
+from accounts.permissions import IsAdmin, IsManagerOrAdmin, QuoteAccessPermission
 from accounts.scope import customer_register_queryset_for_user
 from core.models import Airport, City, Country, Currency
 from core.security import validate_csv_upload
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
+from django.db.models import Q
+from django.db.models.deletion import ProtectedError
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from parties.models import Address, Company, Contact, CustomerCommercialProfile
+from pricing_v4.rate_matrix_models import RateSheet
 from ratecards.models import PartnerRateCard
+from rest_framework import status
+from rest_framework.exceptions import ValidationError
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
-# RBAC permissions
-from accounts.permissions import QuoteAccessPermission
-from accounts.permissions import IsAdmin, IsManagerOrAdmin
 from quotes.selectors import get_quote_for_user
 
 logger = logging.getLogger(__name__)
@@ -303,17 +302,60 @@ class CustomerDetailAPIView(APIView):
 
 
 class RatecardListAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsManagerOrAdmin]
+    """
+    List rate cards.
+    Repointed to clean Phase 3 RateSheet as primary authority,
+    with legacy PartnerRateCard fallback during migration cutover.
+    """
+    permission_classes = (IsAuthenticated, IsManagerOrAdmin)
 
     def get(self, request):
-        cards = (
+        data = []
+        sheets = (
+            RateSheet.objects.select_related('carrier', 'party')
+            .order_by('-valid_from', 'name')
+        )
+        for sheet in sheets:
+            data.append(self._serialize_sheet(sheet))
+
+        legacy_cards = (
             PartnerRateCard.objects.select_related('supplier')
             .order_by('-created_at')
         )
-        data = [self._serialize(card) for card in cards]
+        for card in legacy_cards:
+            data.append(self._serialize_legacy_card(card))
+
         return Response(data)
 
-    def _serialize(self, card: PartnerRateCard) -> dict:
+    def _serialize_sheet(self, sheet: RateSheet) -> dict:
+        today = timezone.now().date()
+        if sheet.valid_from and sheet.valid_from > today:
+            status_label = 'PENDING'
+        elif sheet.valid_until and sheet.valid_until < today:
+            status_label = 'EXPIRED'
+        else:
+            status_label = 'ACTIVE' if sheet.is_active else 'INACTIVE'
+        party_name = ''
+        if sheet.carrier:
+            party_name = sheet.carrier.legal_name
+        elif sheet.party:
+            party_name = sheet.party.legal_name
+        else:
+            party_name = 'Standard / General'
+
+        return {
+            'id': str(sheet.id),
+            'name': sheet.name,
+            'supplier_name': party_name,
+            'currency_code': sheet.currency_code,
+            'valid_from': sheet.valid_from.isoformat() if sheet.valid_from else None,
+            'valid_until': sheet.valid_until.isoformat() if sheet.valid_until else None,
+            'status': status_label,
+            'created_at': sheet.valid_from.isoformat() if sheet.valid_from else '',
+            'file_type': 'RATE_SHEET',
+        }
+
+    def _serialize_legacy_card(self, card: PartnerRateCard) -> dict:
         today = timezone.now().date()
         if card.valid_from and card.valid_from > today:
             status_label = 'PENDING'
@@ -332,6 +374,9 @@ class RatecardListAPIView(APIView):
             'created_at': card.created_at.isoformat(),
             'file_type': 'CSV',
         }
+
+    def _serialize(self, card: PartnerRateCard) -> dict:
+        return self._serialize_legacy_card(card)
 
 
 class RatecardUploadAPIView(APIView):
