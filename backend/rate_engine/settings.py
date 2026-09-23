@@ -129,7 +129,7 @@ INSTALLED_APPS = [
     'core',
     'parties',
     'quotes',
-    'crm',
+    'crm',  # Migration-only stub: quotes.0036_quote_opportunity depends on crm.0001_initial
     'ratecards',
     'services',
     'pricing_v4',  # Greenfield pricing engine
