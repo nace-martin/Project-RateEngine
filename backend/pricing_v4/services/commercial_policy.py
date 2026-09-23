@@ -16,8 +16,16 @@ from pricing_v4.commercial_models import CommercialTermsPolicy
 logger = logging.getLogger(__name__)
 
 
-class MissingCommercialPolicyError(ValueError):
+class PolicyResolutionError(ValueError):
+    """Base error for commercial terms policy resolution failures."""
+
+
+class MissingCommercialPolicyError(PolicyResolutionError):
     """Raised when an active CommercialTermsPolicy is required but not found."""
+
+
+class InvalidPolicyEffectiveDateError(PolicyResolutionError):
+    """Raised when an invalid effective date is provided for policy resolution."""
 
 
 def resolve_commercial_terms_policy(
@@ -28,28 +36,38 @@ def resolve_commercial_terms_policy(
 
     Deterministic resolution rules:
     1. Filter for active policies (is_active=True).
-    2. Normalize effective_date to date (defaults to current date if None).
+    2. Normalize effective_date to date:
+       - None: defaults to current date (timezone.now().date()) intentionally representing "current effective policy".
+       - str: parses ISO format date string; invalid strings fail closed with InvalidPolicyEffectiveDateError.
+       - datetime: extracts date component.
+       - date: used directly.
+       - unsupported types: fail closed with InvalidPolicyEffectiveDateError.
     3. Match valid_from <= target_date AND (valid_until IS NULL OR valid_until >= target_date).
     4. Order by -valid_from.
     5. Return the single best-matching policy, or None if no valid active policy exists.
     """
     target_date: date
-    if effective_date is not None:
-        if isinstance(effective_date, str):
-            clean_str = effective_date.strip().split("T")[0].split(" ")[0]
-            try:
-                target_date = date.fromisoformat(clean_str)
-            except ValueError:
-                logger.warning("Invalid effective_date string '%s'; falling back to current date.", effective_date)
-                target_date = timezone.now().date()
-        elif isinstance(effective_date, datetime):
-            target_date = effective_date.date()
-        elif isinstance(effective_date, date):
-            target_date = effective_date
-        else:
-            target_date = timezone.now().date()
-    else:
+    if effective_date is None:
         target_date = timezone.now().date()
+    elif isinstance(effective_date, str):
+        cleaned = effective_date.strip()
+        if not cleaned:
+            raise InvalidPolicyEffectiveDateError("Empty effective_date string provided.")
+        clean_str = cleaned.split("T")[0].split(" ")[0]
+        try:
+            target_date = date.fromisoformat(clean_str)
+        except ValueError as err:
+            raise InvalidPolicyEffectiveDateError(
+                f"Invalid effective_date string '{effective_date}': {err}"
+            ) from err
+    elif isinstance(effective_date, datetime):
+        target_date = effective_date.date()
+    elif isinstance(effective_date, date):
+        target_date = effective_date
+    else:
+        raise InvalidPolicyEffectiveDateError(
+            f"Unsupported effective_date type: {type(effective_date).__name__}"
+        )
 
     return CommercialTermsPolicy.objects.filter(
         is_active=True,

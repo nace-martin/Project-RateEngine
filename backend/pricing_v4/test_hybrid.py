@@ -27,6 +27,7 @@ class HybridPricingTest(TestCase):
         self.quote_input.output_currency = 'PGK'
         self.quote_input.shipment = MagicMock()
         self.quote_input.shipment.pieces = []
+        self.quote_input.shipment.shipment_type = 'EXPORT'
         
         # Create an SPE in the database
         now = timezone.now()

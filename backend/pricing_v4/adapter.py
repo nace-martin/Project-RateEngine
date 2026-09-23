@@ -509,17 +509,19 @@ class PricingServiceV4Adapter:
                 )
 
             caf_rate = self.commercial_terms_policy.export_caf_rate
+            if caf_rate is None:
+                raise MissingCommercialPolicyError(
+                    "Export CAF rate is missing in CommercialTermsPolicy; calculation fails closed."
+                )
+            caf_used = caf_rate
             margin_rate = self.commercial_terms_policy.target_gross_margin_rate
 
-            caf_used = caf_rate if caf_rate is not None else ExportPricingEngine.DEFAULT_CAF
             fx_applied = (str(quote_currency or '').upper() != 'PGK') and (export_payment_term == ExportPaymentTerm.PREPAID)
             defaults_used: list[dict[str, str]] = []
             if not tt_buy_from_snapshot:
                 defaults_used.append({"field": "tt_buy", "currency": str(quote_currency or "").upper() or "UNKNOWN", "default": str(tt_buy)})
             if not tt_sell_from_snapshot:
                 defaults_used.append({"field": "tt_sell", "currency": str(quote_currency or "").upper() or "UNKNOWN", "default": str(tt_sell)})
-            if caf_rate is None:
-                defaults_used.append({"field": "caf_percent", "scope": "export", "default": str(caf_used)})
 
             self._capture_fx_audit(
                 applied=fx_applied,
@@ -575,9 +577,13 @@ class PricingServiceV4Adapter:
                 )
 
             caf_rate = self.commercial_terms_policy.import_caf_rate
+            if caf_rate is None:
+                raise MissingCommercialPolicyError(
+                    "Import CAF rate is missing in CommercialTermsPolicy; calculation fails closed."
+                )
+            caf_used = caf_rate
             margin_rate = self.commercial_terms_policy.target_gross_margin_rate
 
-            caf_used = caf_rate if caf_rate is not None else ImportPricingEngine.DEFAULT_CAF
             normalized_quote_currency = str(quote_currency or "").upper() or "PGK"
             normalized_buy_currency = str(getattr(self.quote_input, "buy_currency", None) or "").upper() or None
             fx_applied = (normalized_quote_currency != "PGK") or (normalized_buy_currency not in (None, "", "PGK"))
@@ -586,8 +592,6 @@ class PricingServiceV4Adapter:
                 defaults_used.append({"field": "tt_buy", "currency": normalized_quote_currency, "default": str(tt_buy)})
             if not tt_sell_from_snapshot:
                 defaults_used.append({"field": "tt_sell", "currency": normalized_quote_currency, "default": str(tt_sell)})
-            if caf_rate is None:
-                defaults_used.append({"field": "caf_percent", "scope": "import", "default": str(caf_used)})
 
             if fx_applied:
                 if normalized_quote_currency != "PGK":
@@ -1338,10 +1342,36 @@ class PricingServiceV4Adapter:
         output_fx_sell = self._get_fx_sell_rate(output_currency, fx_rates)
         chargeable_weight = self._calculate_chargeable_weight()
 
-        # Get margin from CommercialTermsPolicy (Wave 3B2 cutover)
-        margin_pct = Decimal('0.15')  # Default 15%
-        if self.commercial_terms_policy and self.commercial_terms_policy.target_gross_margin_rate is not None:
-            margin_pct = self.commercial_terms_policy.target_gross_margin_rate
+        # Get margin and CAF from CommercialTermsPolicy (Wave 3B2 cutover)
+        if not self.commercial_terms_policy:
+            raise MissingCommercialPolicyError(
+                "No active CommercialTermsPolicy found for SPOT calculation; calculation fails closed."
+            )
+        if self.commercial_terms_policy.target_gross_margin_rate is None:
+            raise MissingCommercialPolicyError(
+                "Target gross margin is missing in CommercialTermsPolicy for SPOT calculation; calculation fails closed."
+            )
+        margin_pct = self.commercial_terms_policy.target_gross_margin_rate
+
+        shipment_type = getattr(self.quote_input.shipment, "shipment_type", None)
+        if shipment_type == "IMPORT":
+            if self.commercial_terms_policy.import_caf_rate is None:
+                raise MissingCommercialPolicyError(
+                    "Import CAF is missing in CommercialTermsPolicy for SPOT calculation; calculation fails closed."
+                )
+            caf_pct = self.commercial_terms_policy.import_caf_rate
+        elif shipment_type == "EXPORT":
+            if self.commercial_terms_policy.export_caf_rate is None:
+                raise MissingCommercialPolicyError(
+                    "Export CAF is missing in CommercialTermsPolicy for SPOT calculation; calculation fails closed."
+                )
+            caf_pct = self.commercial_terms_policy.export_caf_rate
+        elif shipment_type == "DOMESTIC":
+            caf_pct = Decimal(0)
+        else:
+            raise MissingCommercialPolicyError(
+                f"Unsupported shipment type '{shipment_type}' for SPOT calculation; calculation fails closed."
+            )
         
         codes = [c.code for c in charges]
         component_map = {
@@ -1384,15 +1414,6 @@ class PricingServiceV4Adapter:
                 or (is_percentage and not bucket_has_base.get(charge.bucket, False))
             )
             
-            # Determine CAF pct from CommercialTermsPolicy (Wave 3B2 cutover)
-            caf_pct = Decimal(0)
-            if self.commercial_terms_policy:
-                shipment_type = self.quote_input.shipment.shipment_type
-                if shipment_type == 'IMPORT':
-                    caf_pct = self.commercial_terms_policy.import_caf_rate or Decimal(0)
-                elif shipment_type == 'EXPORT':
-                    caf_pct = self.commercial_terms_policy.export_caf_rate or Decimal(0)
-
             # Capture quote-level FX audit for SPOT overlay conversion when the
             # output currency is FCY (rare) or when FCY buy costs exist.
             if "fx_audit" not in self._audit_metadata:
@@ -1452,7 +1473,10 @@ class PricingServiceV4Adapter:
                 cost_fcy = Decimal("0")
                 
             # Convert to PGK using TT BUY (subtracts CAF per hardcoded rule)
-            cost_pgk = self._convert_fcy_to_pgk(cost_fcy, fx_buy, caf_pct)
+            if (charge.currency or "PGK").upper() == "PGK":
+                cost_pgk = cost_fcy
+            else:
+                cost_pgk = self._convert_fcy_to_pgk(cost_fcy, fx_buy, caf_pct)
             
             # Apply margin for sell price
             sell_pgk = cost_pgk * (Decimal('1') + margin_pct)
