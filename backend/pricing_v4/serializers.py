@@ -3,16 +3,18 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from django.db import models
 from django.core.exceptions import ValidationError
+from django.db import models
+from parties.models import Company
 from rest_framework import serializers
 
 from pricing_v4.category_rules import is_local_rate_category
 from pricing_v4.services.pricing_domain_service import PricingDomainService
+
 from .models import (
     Agent,
     Carrier,
-    ProductCode,
+    CustomerDiscount,
     DomesticCOGS,
     DomesticSellRate,
     ExportCOGS,
@@ -21,11 +23,10 @@ from .models import (
     ImportSellRate,
     LocalCOGSRate,
     LocalSellRate,
-    CustomerDiscount,
-    RateChangeLog,
+    ProductCode,
     ProductCodeCreationRequest,
+    RateChangeLog,
 )
-from parties.models import Company
 
 RATE_AUDIT_FIELDS = [
     'created_at',
@@ -38,35 +39,6 @@ RATE_AUDIT_FIELDS = [
     'supersedes_rate',
 ]
 
-
-def _is_internal_pricing_field(field_name: str) -> bool:
-    key = (field_name or "").lower()
-    if not key:
-        return False
-    if key.startswith("buy_"):
-        return True
-    if "cogs" in key or "margin" in key:
-        return True
-    if key.startswith("cost") or "_cost" in key:
-        return True
-    return False
-
-
-def scrub_pricing_result_payload(payload: Any, include_internal_fields: bool = False) -> Any:
-    if include_internal_fields:
-        return payload
-    if isinstance(payload, dict):
-        sanitized = {}
-        for key, value in payload.items():
-            if _is_internal_pricing_field(str(key)):
-                continue
-            sanitized[key] = scrub_pricing_result_payload(value, include_internal_fields=False)
-        return sanitized
-    if isinstance(payload, list):
-        return [scrub_pricing_result_payload(item, include_internal_fields=False) for item in payload]
-    if isinstance(payload, tuple):
-        return tuple(scrub_pricing_result_payload(item, include_internal_fields=False) for item in payload)
-    return payload
 
 class ProductCodeSerializer(serializers.ModelSerializer):
     class Meta:
@@ -567,27 +539,6 @@ class CustomerDiscountBulkLineSerializer(serializers.Serializer):
 class CustomerDiscountBulkUpsertSerializer(serializers.Serializer):
     customer = serializers.PrimaryKeyRelatedField(queryset=Company.objects.filter(models.Q(is_customer=True) | models.Q(company_type='CUSTOMER')))
     lines = CustomerDiscountBulkLineSerializer(many=True)
-
-
-class CargoDetailsSerializer(serializers.Serializer):
-    weight_kg = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0.01)
-    volume_m3 = serializers.DecimalField(max_digits=10, decimal_places=3, min_value=0.001)
-    quantity = serializers.IntegerField(min_value=1, default=1)
-    
-class QuoteRequestSerializerV4(serializers.Serializer):
-    SERVICE_TYPE_CHOICES = [('DOMESTIC', 'Domestic'), ('EXPORT', 'Export'), ('IMPORT', 'Import'),]
-    INCOTERMS_CHOICES = [('EXW', 'Ex Works (EXW)'), ('FCA', 'Free Carrier (FCA)'), ('FOB', 'Free on Board (FOB)'), ('CFR', 'Cost and Freight (CFR)'), ('CIF', 'Cost, Insurance & Freight (CIF)'), ('DAP', 'Delivered at Place (DAP)'), ('DPU', 'Delivered at Place Unloaded (DPU)'), ('DDP', 'Delivered Duty Paid (DDP)'),]
-    customer_id = serializers.PrimaryKeyRelatedField(queryset=Company.objects.filter(company_type='CUSTOMER'), source='customer', help_text="UUID of the customer company")
-    origin = serializers.CharField(max_length=5, help_text="IATA Airport Code (e.g. POM) or Zone ID")
-    destination = serializers.CharField(max_length=5, help_text="IATA Airport Code (e.g. BNE) or Zone ID")
-    service_type = serializers.ChoiceField(choices=SERVICE_TYPE_CHOICES)
-    incoterms = serializers.ChoiceField(choices=INCOTERMS_CHOICES, required=False, allow_null=True)
-    service_scope = serializers.ChoiceField(choices=['A2A', 'A2D', 'D2A', 'D2D', 'P2P'], default='A2A', help_text="Service Scope (e.g. A2A=Airport-to-Airport)")
-    is_dg = serializers.BooleanField(required=False, default=False, help_text="Set true for dangerous goods shipments.")
-    cargo_details = CargoDetailsSerializer()
-    quote_date = serializers.DateField(required=False, help_text="Defaults to today")
-    def validate(self, data):
-        return data
 
 
 class ProductCodeCreationRequestSerializer(serializers.ModelSerializer):

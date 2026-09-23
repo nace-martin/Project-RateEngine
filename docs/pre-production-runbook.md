@@ -213,13 +213,6 @@ python manage.py seed_launch_commodity_rules --dry-run
 python manage.py seed_launch_commodity_rules --effective-from 2026-01-01
 ```
 
-Optional, only if you use routing constraints or special lane tooling:
-
-```bash
-python manage.py seed_aircraft_types
-python manage.py seed_syd_pom_lanes
-```
-
 Pass criteria:
 
 - Launch corridors have product codes, sell rows, COGS rows, and any required surcharges.

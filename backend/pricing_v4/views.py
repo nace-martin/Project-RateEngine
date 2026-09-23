@@ -21,11 +21,7 @@ from quotes.completeness import (
 from .serializers import (
     CustomerDiscountBulkUpsertSerializer,
     CustomerDiscountListSerializer,
-    QuoteRequestSerializerV4,
-    scrub_pricing_result_payload,
 )
-from .engine import PricingEngineFactory
-from .engine.export_engine import ExportPricingEngine
 from .services.csv_importer import (
     V4RateCSVImportValidationError,
     import_v4_rate_cards_csv,
@@ -248,94 +244,6 @@ def _build_counterparty_hints(
         ).data,
         "advisory": advisory,
     }
-
-class PricingEngineView(APIView):
-    """
-    V4 Pricing Engine API Endpoint.
-    
-    Path: /api/v4/quote/calculate/
-    """
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def post(self, request):
-        serializer = QuoteRequestSerializerV4(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        payload = serializer.validated_data
-        service_type = payload['service_type']
-        
-        try:
-            # 1. Instantiate Engine
-            engine = PricingEngineFactory.get_engine(service_type, payload)
-            
-            # 2. Calculate Quote
-            result = None
-            
-            if service_type == 'EXPORT':
-                # Export Engine specific: needs list of product codes
-                # Infer scope for get_product_codes
-                scope = payload.get('service_scope', 'P2P')
-                if scope == 'A2A': scope = 'P2P' # Map A2A to P2P for Export; A2D handled in ExportEngine
-                
-                # Retrieve applicable product codes
-                # Assumption: ExportEngine.get_product_codes handles string scope 'P2P', 'D2A', 'D2D'
-                product_codes = ExportPricingEngine.get_product_codes(
-                    is_dg=payload.get('is_dg', False),
-                    service_scope=scope
-                )
-                result = engine.calculate_quote(product_codes)
-                
-            elif service_type == 'DOMESTIC':
-                result = engine.calculate_quote()
-                
-            elif service_type == 'IMPORT':
-                result = engine.calculate_quote()
-                
-            # 3. Serialize Result
-            # For now, just dumping the dataclass as dict
-            # We might want a serializer for the response later
-            response_data = self._serialize_result(result, request)
-            
-            # 4. Check for 'No Rate Found'
-            # If total_sell is zero and we expected charges, or explicit error flags
-            if response_data.get('lines'):
-                missing_rates = [l for l in response_data['lines'] if l.get('is_rate_missing')]
-                if missing_rates:
-                    # Partial success or failure?
-                    # User asked for: "Handle 'No Rate Found' gracefully by returning a specific error code"
-                    # If CRITICAL rates are missing (freight), it's an error.
-                    freight_missing = any('FRT' in l.get('product_code', '') for l in missing_rates)
-                    if freight_missing:
-                         return Response({
-                            "error": "No freight rate found for this route.",
-                            "code": "ERR_NO_ROUTE",
-                            "details": missing_rates
-                        }, status=status.HTTP_400_BAD_REQUEST)
-
-            return Response(response_data, status=status.HTTP_200_OK)
-            
-        except ValueError as e:
-            return Response({"error": str(e), "code": "ERR_VALIDATION"}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception:
-            logger.exception("Pricing Engine Error")
-            return Response({"error": "Internal Pricing Engine Error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def _serialize_result(self, result, request):
-        """
-        Helper to convert Dataclasses to Dict.
-        """
-        if not result:
-            return {}
-            
-        # Recursive conversion or simple dict
-        import dataclasses
-        raw_data = dataclasses.asdict(result)
-        include_internal_fields = IsManagerOrAdmin().has_permission(request, self)
-        return scrub_pricing_result_payload(
-            raw_data,
-            include_internal_fields=include_internal_fields,
-        )
 
 
 # =============================================================================

@@ -1,19 +1,25 @@
-from django.urls import path, include
+from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
-    PricingEngineView, CustomerDiscountViewSet, ProductCodeListViewSet,
+    AgentViewSet,
+    CarrierViewSet,
     CustomerDiscountBulkUpsertAPIView,
+    CustomerDiscountViewSet,
+    DomesticCOGSViewSet,
+    DomesticSellRateViewSet,
+    ExportCOGSViewSet,
+    ExportSellRateViewSet,
+    ImportCOGSViewSet,
+    ImportSellRateViewSet,
+    LocalCOGSRateViewSet,
+    LocalSellRateViewSet,
+    LogicalRateCardsView,
+    ProductCodeCreationRequestViewSet,
+    ProductCodeListViewSet,
     QuoteCounterpartyHintsAPIView,
-    AgentViewSet, CarrierViewSet,
-    ExportCOGSViewSet, ExportSellRateViewSet,
-    ImportCOGSViewSet, ImportSellRateViewSet,
-    DomesticCOGSViewSet, DomesticSellRateViewSet,
-    LocalSellRateViewSet, LocalCOGSRateViewSet,
-    LogicalRateCardsView, V4RateCardUploadView,
-    ProductCodeCreationRequestViewSet
+    V4RateCardUploadView,
 )
-
 
 # Create router for viewsets
 router = DefaultRouter()
@@ -35,7 +41,6 @@ router.register(r'rates/local-cogs', LocalCOGSRateViewSet, basename='local-cogs-
 
 
 urlpatterns = [
-    path('quote/calculate/', PricingEngineView.as_view(), name='pricing-v4-calculate'),
     path('quote/counterparty-hints/', QuoteCounterpartyHintsAPIView.as_view(), name='pricing-v4-counterparty-hints'),
     path('discounts/bulk-upsert/', CustomerDiscountBulkUpsertAPIView.as_view(), name='customer-discounts-bulk-upsert'),
     path('rates/upload/', V4RateCardUploadView.as_view(), name='pricing-v4-rates-upload'),
