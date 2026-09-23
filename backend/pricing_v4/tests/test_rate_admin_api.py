@@ -2,12 +2,10 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
-from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from parties.models import Company
 from pricing_v4.models import (
     Agent,
     Carrier,
@@ -15,7 +13,6 @@ from pricing_v4.models import (
     LocalSellRate,
     ProductCode,
 )
-from ratecards.models import PartnerRateCard
 
 
 class UnifiedRateAdminAPITests(APITestCase):
@@ -299,29 +296,3 @@ class UnifiedRateAdminAPITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('currency', response.data)
-
-    def test_legacy_v3_ratecard_endpoints_are_manager_admin_only(self):
-        supplier = Company.objects.create(name='Legacy Supplier Phase 2', company_type='SUPPLIER')
-        PartnerRateCard.objects.create(
-            supplier=supplier,
-            name='Legacy Phase 2 Card',
-            currency_code='AUD',
-            valid_from=self.today,
-        )
-
-        self.client.force_authenticate(self.sales)
-        list_response = self.client.get('/api/v3/ratecards/')
-        self.assertEqual(list_response.status_code, status.HTTP_403_FORBIDDEN)
-
-        upload = SimpleUploadedFile('legacy.csv', b'header\nvalue\n', content_type='text/csv')
-        upload_response = self.client.post(
-            '/api/v3/ratecards/upload/',
-            {'file': upload, 'supplier_id': str(supplier.id)},
-            format='multipart',
-        )
-        self.assertEqual(upload_response.status_code, status.HTTP_403_FORBIDDEN)
-
-        self.client.force_authenticate(self.manager)
-        manager_response = self.client.get('/api/v3/ratecards/')
-        self.assertEqual(manager_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(manager_response.data), 1)

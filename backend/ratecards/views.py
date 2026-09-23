@@ -1,1 +1,0 @@
-# backend/ratecards/views.py

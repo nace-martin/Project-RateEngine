@@ -1,28 +1,21 @@
 import logging
 from decimal import Decimal
 
-from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import transaction
-from django.db.models.deletion import ProtectedError
-from django.db.models import Q
-from django.shortcuts import get_object_or_404
-from django.utils import timezone
-from rest_framework import status
-from rest_framework.exceptions import ValidationError
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.permissions import IsAuthenticated
-
-from parties.models import Address, Company, Contact, CustomerCommercialProfile
+# RBAC permissions
+from accounts.permissions import IsAdmin, QuoteAccessPermission
 from accounts.scope import customer_register_queryset_for_user
 from core.models import Airport, City, Country, Currency
-from core.security import validate_csv_upload
-from ratecards.models import PartnerRateCard
+from django.db import transaction
+from django.db.models import Q
+from django.db.models.deletion import ProtectedError
+from django.shortcuts import get_object_or_404
+from parties.models import Address, Company, Contact, CustomerCommercialProfile
+from rest_framework import status
+from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
-# RBAC permissions
-from accounts.permissions import QuoteAccessPermission
-from accounts.permissions import IsAdmin, IsManagerOrAdmin
 from quotes.selectors import get_quote_for_user
 
 logger = logging.getLogger(__name__)
@@ -302,73 +295,6 @@ class CustomerDetailAPIView(APIView):
         address.save()
 
 
-class RatecardListAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsManagerOrAdmin]
-
-    def get(self, request):
-        cards = (
-            PartnerRateCard.objects.select_related('supplier')
-            .order_by('-created_at')
-        )
-        data = [self._serialize(card) for card in cards]
-        return Response(data)
-
-    def _serialize(self, card: PartnerRateCard) -> dict:
-        today = timezone.now().date()
-        if card.valid_from and card.valid_from > today:
-            status_label = 'PENDING'
-        elif card.valid_until and card.valid_until < today:
-            status_label = 'EXPIRED'
-        else:
-            status_label = 'ACTIVE'
-        return {
-            'id': str(card.id),
-            'name': card.name,
-            'supplier_name': card.supplier.name,
-            'currency_code': card.currency_code,
-            'valid_from': card.valid_from.isoformat() if card.valid_from else None,
-            'valid_until': card.valid_until.isoformat() if card.valid_until else None,
-            'status': status_label,
-            'created_at': card.created_at.isoformat(),
-            'file_type': 'CSV',
-        }
-
-
-class RatecardUploadAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsManagerOrAdmin]
-    parser_classes = [MultiPartParser, FormParser]
-
-    def post(self, request):
-        upload_file = request.FILES.get('file')
-        supplier_id = request.data.get('supplier_id')
-        if not upload_file:
-            return Response({'detail': 'File is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        if not supplier_id:
-            return Response({'detail': 'supplier_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            validate_csv_upload(upload_file)
-        except DjangoValidationError as exc:
-            return Response({'detail': '; '.join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
-
-        supplier = get_object_or_404(Company, pk=supplier_id)
-        name = upload_file.name or 'Ratecard'
-        unique_name = name
-        counter = 1
-        while PartnerRateCard.objects.filter(name=unique_name).exists():
-            unique_name = f"{name}-{counter}"
-            counter += 1
-
-        card = PartnerRateCard.objects.create(
-            supplier=supplier,
-            name=unique_name,
-            currency_code=request.data.get('currency_code') or 'PGK',
-            valid_from=timezone.now().date(),
-        )
-
-        data = RatecardListAPIView()._serialize(card)
-        return Response(data, status=status.HTTP_201_CREATED)
-
-
 class StationListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -413,7 +339,8 @@ class QuotePDFAPIView(APIView):
     
     def get(self, request, quote_id):
         from django.http import HttpResponse
-        from quotes.pdf_service import generate_quote_pdf, QuotePDFGenerationError
+
+        from quotes.pdf_service import QuotePDFGenerationError, generate_quote_pdf
         
         # Get quote to validate access and get quote number
         # SECURITY FIX: Enforce IDOR protection
