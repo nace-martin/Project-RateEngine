@@ -16,11 +16,12 @@ Key Rules:
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from enum import Enum
 import logging
 
 from core.commodity import DEFAULT_COMMODITY_CODE
+from pricing_v4.services.commercial_policy import MissingCommercialPolicyError
 from pricing_v4.models import (
     ProductCode,
     LocalSellRate
@@ -106,6 +107,9 @@ class ChargeLine:
     rule_family: str = CALCULATION_LOOKUP_RATE
 
 
+_POLICY_DEFAULT = object()
+
+
 class ImportPricingEngine:
     """
     Import Pricing Engine following PricingPolicy.md
@@ -118,9 +122,7 @@ class ImportPricingEngine:
     | COLL | D2D   | PGK   | O+F+D       | O+F: FCY→PGK  |
     """
     
-    # Default rates (should be configurable)
-    DEFAULT_MARGIN = Decimal('0.20')  # 20%
-    DEFAULT_CAF = Decimal('0.05')     # 5%
+    # FSC rates on local handling
     ORIGIN_FSC_RATE = Decimal('0.20') # 20% on Pickup
     DEST_FSC_RATE = Decimal('0.10')   # 10% on Cartage
     
@@ -134,8 +136,9 @@ class ImportPricingEngine:
         service_scope: ServiceScope,
         tt_buy: Optional[Decimal] = None,
         tt_sell: Optional[Decimal] = None,
-        caf_rate: Optional[Decimal] = None,
-        margin_rate: Optional[Decimal] = None,
+        caf_rate: Any = _POLICY_DEFAULT,
+        margin_rate: Any = _POLICY_DEFAULT,
+        margin_method: Optional[str] = None,
         fx_rates: Optional[Dict] = None,
         quote_currency: Optional[str] = None,
         preferred_agent_id: Optional[int] = None,
@@ -151,8 +154,17 @@ class ImportPricingEngine:
         
         self.tt_buy = tt_buy or Decimal('0.35')  # Default TT BUY
         self.tt_sell = tt_sell or Decimal('0.36')  # Default TT SELL
-        self.caf_rate = caf_rate or self.DEFAULT_CAF
-        self.margin_rate = margin_rate or self.DEFAULT_MARGIN
+        if caf_rate is _POLICY_DEFAULT or margin_rate is _POLICY_DEFAULT:
+            from pricing_v4.services.commercial_policy import require_commercial_terms_policy
+            policy = require_commercial_terms_policy(quote_date)
+            if caf_rate is _POLICY_DEFAULT:
+                caf_rate = policy.import_caf_rate
+            if margin_rate is _POLICY_DEFAULT:
+                margin_rate = policy.margin_rate
+                margin_method = policy.margin_method
+        self.caf_rate = caf_rate
+        self.margin_rate = margin_rate
+        self.margin_method = margin_method or 'MARKUP_ON_COST'
         self.fx_rates = fx_rates or {}
         self._warnings: List[str] = []
         self._audit_metadata: Dict[str, List[dict[str, str]]] = {"fx_fallbacks": []}
@@ -242,6 +254,10 @@ class ImportPricingEngine:
         FCY → PGK conversion (Import).
         Uses TT BUY, CAF subtracted, DIVIDE.
         """
+        if self.caf_rate is None:
+            raise MissingCommercialPolicyError(
+                "Import CAF rate is required for FCY conversion; calculation fails closed."
+            )
         rate = self.tt_buy
         if currency:
             rate = self._get_rate_for_currency(currency, 'tt_buy')
@@ -257,6 +273,10 @@ class ImportPricingEngine:
         PGK → FCY conversion.
         Uses TT SELL, CAF subtracted (Import), MULTIPLY.
         """
+        if self.caf_rate is None:
+            raise MissingCommercialPolicyError(
+                "Import CAF rate is required for PGK to FCY conversion; calculation fails closed."
+            )
         rate = self.tt_sell
         if target_currency:
              rate = self._get_rate_for_currency(target_currency, 'tt_sell')
@@ -284,9 +304,26 @@ class ImportPricingEngine:
 
     def _apply_margin(self, amount: Decimal) -> Decimal:
         """Apply margin (always last)."""
-        return (amount * (Decimal('1') + self.margin_rate)).quantize(
-            Decimal('0.01'), rounding=ROUND_HALF_UP
-        )
+        if self.margin_rate is None:
+            raise MissingCommercialPolicyError(
+                "Missing margin in CommercialTermsPolicy for cost-derived calculation; "
+                "calculation fails closed."
+            )
+        if self.margin_method == "TARGET_GROSS_MARGIN":
+            if self.margin_rate >= Decimal(1):
+                from django.core.exceptions import ValidationError
+                raise ValidationError("Target gross margin rate must be < 1.00.")
+            return (amount / (Decimal('1') - self.margin_rate)).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP
+            )
+        elif self.margin_method == "MARKUP_ON_COST":
+            return (amount * (Decimal('1') + self.margin_rate)).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP
+            )
+        else:
+            raise MissingCommercialPolicyError(
+                f"Unsupported margin_method '{self.margin_method}'; calculation fails closed."
+            )
     
     def _calculate_cogs_amount(self, cogs, pc: ProductCode) -> RuleEvaluation:
         """Calculate COGS amount for a rate record."""
@@ -354,8 +391,16 @@ class ImportPricingEngine:
         
         # Calculate effective FX rate
         if self.payment_term == PaymentTerm.COLLECT:
-            result.effective_fx_rate = self.tt_buy * (Decimal('1') - self.caf_rate)
+            result.effective_fx_rate = (
+                self.tt_buy * (Decimal('1') - self.caf_rate)
+                if self.caf_rate is not None
+                else None
+            )
         else:
+            if self.caf_rate is None:
+                raise MissingCommercialPolicyError(
+                    "Import CAF rate is required for PREPAID quote; calculation fails closed."
+                )
             result.effective_fx_rate = self.tt_sell * (Decimal('1') - self.caf_rate)
         
         # Get all Import ProductCodes

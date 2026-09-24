@@ -22,10 +22,11 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from enum import Enum
 
 from core.commodity import DEFAULT_COMMODITY_CODE
+from pricing_v4.services.commercial_policy import MissingCommercialPolicyError
 from pricing_v4.commodity_rules import get_auto_product_code_ids
 from pricing_v4.models import (
     ProductCode, LocalSellRate, Surcharge
@@ -147,6 +148,9 @@ class ChargeLineResult:
 
 
 
+_POLICY_DEFAULT = object()
+
+
 class ExportPricingEngine:
     """
     Calculates Export quotes.
@@ -154,9 +158,6 @@ class ExportPricingEngine:
     Rule 5: Simple queries, rules in code.
     Rule 9: Focused on POM→BNE corridor first.
     """
-    
-    DEFAULT_MARGIN = Decimal('0.20')  # 20%
-    DEFAULT_CAF = Decimal('0.05')     # 5%
     
     def __init__(
         self,
@@ -167,8 +168,9 @@ class ExportPricingEngine:
         payment_term: PaymentTerm = PaymentTerm.PREPAID,
         tt_buy: Optional[Decimal] = None,
         tt_sell: Optional[Decimal] = None,
-        caf_rate: Optional[Decimal] = None,
-        margin_rate: Optional[Decimal] = None,
+        caf_rate: Any = _POLICY_DEFAULT,
+        margin_rate: Any = _POLICY_DEFAULT,
+        margin_method: Optional[str] = None,
         destination_currency: str = 'AUD',
         preferred_agent_id: Optional[int] = None,
         preferred_carrier_id: Optional[int] = None,
@@ -183,8 +185,17 @@ class ExportPricingEngine:
         # FX rates
         self.tt_buy = tt_buy or Decimal('0.35')
         self.tt_sell = tt_sell or Decimal('0.36')
-        self.caf_rate = caf_rate if caf_rate is not None else self.DEFAULT_CAF
-        self.margin_rate = margin_rate if margin_rate is not None else self.DEFAULT_MARGIN
+        if caf_rate is _POLICY_DEFAULT or margin_rate is _POLICY_DEFAULT:
+            from pricing_v4.services.commercial_policy import require_commercial_terms_policy
+            policy = require_commercial_terms_policy(quote_date)
+            if caf_rate is _POLICY_DEFAULT:
+                caf_rate = policy.export_caf_rate
+            if margin_rate is _POLICY_DEFAULT:
+                margin_rate = policy.margin_rate
+                margin_method = policy.margin_method
+        self.caf_rate = caf_rate
+        self.margin_rate = margin_rate
+        self.margin_method = margin_method or 'MARKUP_ON_COST'
         
         # Destination currency used when COLLECT quotes resolve to FCY
         self.destination_currency = destination_currency
@@ -205,6 +216,10 @@ class ExportPricingEngine:
         return 'PGK'
     
     def _convert_pgk_to_fcy(self, amount: Decimal) -> Decimal:
+        if self.caf_rate is None:
+            raise MissingCommercialPolicyError(
+                "Export CAF rate is required for FCY conversion; calculation fails closed."
+            )
         effective_rate = self.tt_sell * (Decimal('1') + self.caf_rate)
         if effective_rate <= 0:
             return amount
@@ -217,10 +232,30 @@ class ExportPricingEngine:
         return fcy.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     
     def _apply_margin(self, amount: Decimal) -> Decimal:
-        return (amount * (Decimal('1') + self.margin_rate)).quantize(
-            Decimal('0.01'), rounding=ROUND_HALF_UP)
+        if self.margin_rate is None:
+            raise MissingCommercialPolicyError(
+                "Missing margin in CommercialTermsPolicy for cost-derived calculation; "
+                "calculation fails closed."
+            )
+        if self.margin_method == "TARGET_GROSS_MARGIN":
+            if self.margin_rate >= Decimal(1):
+                from django.core.exceptions import ValidationError
+                raise ValidationError("Target gross margin rate must be < 1.00.")
+            return (amount / (Decimal('1') - self.margin_rate)).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP)
+        elif self.margin_method == "MARKUP_ON_COST":
+            return (amount * (Decimal('1') + self.margin_rate)).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP)
+        else:
+            raise MissingCommercialPolicyError(
+                f"Unsupported margin_method '{self.margin_method}'; calculation fails closed."
+            )
     
     def _get_effective_fx_rate(self) -> Decimal:
+        if self.caf_rate is None:
+            raise MissingCommercialPolicyError(
+                "Export CAF rate is required; calculation fails closed."
+            )
         return self.tt_sell * (Decimal('1') + self.caf_rate)
     
     # =========================================================================

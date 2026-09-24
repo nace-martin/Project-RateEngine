@@ -667,51 +667,67 @@ class TestCommercialTermsPolicy:
             )
 
     def test_no_universal_or_default_margin(self):
-        # target_gross_margin_percent is nullable and has NO database default
-        margin_field = CommercialTermsPolicy._meta.get_field("target_gross_margin_percent")
+        # margin_percent is nullable and has NO database default
+        margin_field = CommercialTermsPolicy._meta.get_field("margin_percent")
         assert margin_field.null is True
         assert margin_field.default == models.NOT_PROVIDED or margin_field.default is None
 
-        # Policy can be created with null target margin
+        # Policy can be created with null margin
         policy = CommercialTermsPolicy.objects.create(
             policy_code="NO-MARGIN-FALLBACK",
             valid_from=datetime.date(2026, 1, 1),
             gst_standard_percent=Decimal("10.00"),
         )
-        assert policy.target_gross_margin_percent is None
+        assert policy.margin_percent is None
+        assert policy.margin_method == CommercialTermsPolicy.MarginMethod.MARKUP_ON_COST
 
-    def test_target_gross_margin_percent_validation(self):
-        # Valid margin bounds: 0% <= x < 100%
+    def test_margin_percent_and_method_validation(self):
+        # Valid markup bounds: >= 0%
         policy_zero = CommercialTermsPolicy.objects.create(
             policy_code="MARGIN-0",
             valid_from=datetime.date(2026, 1, 1),
-            target_gross_margin_percent=Decimal("0.00"),
+            margin_percent=Decimal("0.00"),
+            margin_method=CommercialTermsPolicy.MarginMethod.MARKUP_ON_COST,
             gst_standard_percent=Decimal("10.00"),
         )
-        assert policy_zero.target_gross_margin_percent == Decimal("0.00")
+        assert policy_zero.margin_percent == Decimal("0.00")
 
-        policy_99 = CommercialTermsPolicy.objects.create(
-            policy_code="MARGIN-99",
+        # Markup on cost can be 100% or greater
+        policy_markup_150 = CommercialTermsPolicy.objects.create(
+            policy_code="MARGIN-MARKUP-150",
             valid_from=datetime.date(2026, 1, 1),
-            target_gross_margin_percent=Decimal("99.99"),
+            margin_percent=Decimal("150.00"),
+            margin_method=CommercialTermsPolicy.MarginMethod.MARKUP_ON_COST,
             gst_standard_percent=Decimal("10.00"),
         )
-        assert policy_99.target_gross_margin_percent == Decimal("99.99")
+        assert policy_markup_150.margin_percent == Decimal("150.00")
 
-        # 100% or greater is rejected at clean() and DB constraint
-        policy_100 = CommercialTermsPolicy(
-            policy_code="MARGIN-100",
+        # Target gross margin: 0% <= x < 100%
+        policy_gm_99 = CommercialTermsPolicy.objects.create(
+            policy_code="MARGIN-GM-99",
             valid_from=datetime.date(2026, 1, 1),
-            target_gross_margin_percent=Decimal("100.00"),
+            margin_percent=Decimal("99.99"),
+            margin_method=CommercialTermsPolicy.MarginMethod.TARGET_GROSS_MARGIN,
+            gst_standard_percent=Decimal("10.00"),
+        )
+        assert policy_gm_99.margin_percent == Decimal("99.99")
+
+        # Target gross margin: 100% or greater is rejected at clean() and DB constraint
+        policy_gm_100 = CommercialTermsPolicy(
+            policy_code="MARGIN-GM-100",
+            valid_from=datetime.date(2026, 1, 1),
+            margin_percent=Decimal("100.00"),
+            margin_method=CommercialTermsPolicy.MarginMethod.TARGET_GROSS_MARGIN,
             gst_standard_percent=Decimal("10.00"),
         )
         with pytest.raises(ValidationError):
-            policy_100.full_clean()
+            policy_gm_100.full_clean()
         with pytest.raises(IntegrityError), transaction.atomic():
             CommercialTermsPolicy.objects.create(
-                policy_code="MARGIN-100-DB",
+                policy_code="MARGIN-GM-100-DB",
                 valid_from=datetime.date(2026, 1, 1),
-                target_gross_margin_percent=Decimal("100.00"),
+                margin_percent=Decimal("100.00"),
+                margin_method=CommercialTermsPolicy.MarginMethod.TARGET_GROSS_MARGIN,
                 gst_standard_percent=Decimal("10.00"),
             )
 
@@ -719,7 +735,7 @@ class TestCommercialTermsPolicy:
         policy_neg = CommercialTermsPolicy(
             policy_code="MARGIN-NEG",
             valid_from=datetime.date(2026, 1, 1),
-            target_gross_margin_percent=Decimal("-0.01"),
+            margin_percent=Decimal("-0.01"),
             gst_standard_percent=Decimal("10.00"),
         )
         with pytest.raises(ValidationError):
@@ -728,7 +744,7 @@ class TestCommercialTermsPolicy:
             CommercialTermsPolicy.objects.create(
                 policy_code="MARGIN-NEG-DB",
                 valid_from=datetime.date(2026, 1, 1),
-                target_gross_margin_percent=Decimal("-0.01"),
+                margin_percent=Decimal("-0.01"),
                 gst_standard_percent=Decimal("10.00"),
             )
 

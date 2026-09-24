@@ -123,9 +123,15 @@ fx_market_rate (pure market exchange rates)
 | `commercial_product_code` | Sole commercial master of billable/payable freight charges | `id` (UUID) | None | `code`, `name`, `category` (FREIGHT, ORIGIN, DESTINATION, CLEARANCE, SERVICE), `sub_category`, `gst_treatment` (FREIGHT_EXPORT, FREIGHT_IMPORT, DOMESTIC_STANDARD, EXEMPT, ZERO_RATED), `charge_basis_default`, `is_active` | `UNIQUE(code)` | Sole Master of Commercial Charges & GST Classification |
 | `commercial_charge_alias` | Known supplier text strings mapped to ProductCodes | `id` (UUID) | `product_code_id → commercial_product_code.id` | `raw_text`, `transport_mode`, `carrier_party_id → party_master.id` (opt), `source_currency` (opt), `confidence_score` | `UNIQUE(raw_text, transport_mode, carrier_party_id)` | Intake Normalization Authority |
 | `fx_market_rate` | Pure historical/market exchange rates | `id` (UUID) | None | `base_currency`, `quote_currency`, `effective_date`, `tt_buy_rate`, `tt_sell_rate`, `mid_rate`, `source` | `UNIQUE(base_currency, quote_currency, effective_date, source)` | Market FX Facts |
-| `policy_commercial_terms` | Versioned commercial terms, margins, CAF, and tax rates | `id` (UUID) | None | `policy_code`, `valid_from`, `valid_until`, `target_gross_margin_percent`, `import_caf_percent`, `export_caf_percent`, `gst_standard_percent`, `is_active` | `CHECK(valid_until IS NULL OR valid_until > valid_from)` | Versioned Commercial Pricing Policy |
+| `policy_commercial_terms` | Versioned commercial terms, margins, CAF, and tax rates | `id` (UUID) | None | `policy_code`, `valid_from`, `valid_until`, `margin_percent`, `margin_method` (MARKUP_ON_COST, TARGET_GROSS_MARGIN), `import_caf_percent`, `export_caf_percent`, `gst_standard_percent`, `is_active` | `CHECK(valid_until IS NULL OR valid_until > valid_from)` | Versioned Commercial Pricing Policy |
 
-*Amendment 2 Governance:* `commercial_product_code.gst_treatment` is the sole owner of GST/tax classification. `policy_commercial_terms` defines only the versioned rate (e.g. 10%) and application formula, eliminating conflicting tax definitions. RateEngine has no universal/default margin: `target_gross_margin_percent` is nullable policy data (< 100%) with no database default; approved SELL rates are not re-margined, and missing applicable commercial policy fails closed.
+*Amendment 2 Governance:* `commercial_product_code.gst_treatment` is the sole owner of GST/tax classification. `policy_commercial_terms` defines only the versioned rate (e.g. 10%) and application formula, eliminating conflicting tax definitions. RateEngine has no universal/default margin: `margin_percent` is nullable policy data with no database default; approved SELL rates are not re-margined, and missing applicable commercial policy fails closed.
+
+*Amendment 3 (Wave 3B2 Architecture Correction — Explicit Margin Representation):*
+To eliminate ambiguity between markup on cost and target gross margin, `policy_commercial_terms` explicitly decouples percentage magnitude (`margin_percent`) from the commercial calculation method (`margin_method`):
+- `MARKUP_ON_COST` (Default / Launch Parity): $\text{SELL} = \text{Cost} \times (1 + \text{margin\_rate})$. Canonical `LAUNCH-POLICY-2026` seeds `margin_percent = 20.00%` and `margin_method = MARKUP_ON_COST` (yielding K120 on K100 cost), preserving exact baseline pricing parity.
+- `TARGET_GROSS_MARGIN` (Supported Target): $\text{SELL} = \frac{\text{Cost}}{1 - \text{margin\_rate}}$ (yielding K125 on K100 cost at 20% margin, where gross margin is strictly $(125 - 100) / 125 = 20\%$).
+- RateEngine enforces that approved direct SELL rates are never re-margined, and cost-derived calculations fail closed if required margin policy is absent.
 
 ---
 
@@ -291,8 +297,11 @@ RateEngine prices all freight lines deterministically without duplicated calcula
 - A `rate_sheet` has `rate_type` of either `BUY` (cost from carrier/vendor) or `SELL` (approved client tariffs).
 - When an explicit `SELL` tariff exists for a customer/commodity/corridor, the engine prices SELL directly from `rate_line.unit_rate` without re-margining.
 - When only a `BUY` tariff exists, the engine calculates:
-  $$\text{SELL} = \frac{\text{CostNative} \times \text{FXAdjusted}}{(1 - \text{MarginTarget})}$$
-  where `MarginTarget` is governed by `policy_commercial_terms` (e.g. 0.15 for 15% target gross margin).
+  - If `margin_method == 'MARKUP_ON_COST'` (Canonical 2026 Launch Policy):
+    $$\text{SELL} = (\text{CostNative} \times \text{FXAdjusted}) \times (1 + \text{margin\_rate})$$
+  - If `margin_method == 'TARGET_GROSS_MARGIN'`:
+    $$\text{SELL} = \frac{\text{CostNative} \times \text{FXAdjusted}}{1 - \text{margin\_rate}}$$
+  where `margin_rate` and `margin_method` are governed by `policy_commercial_terms` (e.g. 20% markup on cost for launch parity).
 
 ### 5.2 Currency & Pure Market FX
 - Cost is evaluated in `rate_line.currency_code`.

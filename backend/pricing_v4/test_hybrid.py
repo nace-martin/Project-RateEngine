@@ -1,24 +1,34 @@
-from django.test import TestCase
-from unittest.mock import MagicMock
-from decimal import Decimal
-from uuid import uuid4
 from datetime import timedelta
-from django.utils import timezone
+from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import MagicMock
+from uuid import uuid4
 
-from pricing_v4.adapter import PricingServiceV4Adapter, PricingMode
-from pricing_v4.models import ProductCode
 from core.dataclasses import CalculatedChargeLine, QuoteInput
-from quotes.models import SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB
+from django.test import TestCase
+from django.utils import timezone
+from quotes.models import SPEAcknowledgementDB, SPEChargeLineDB, SpotPricingEnvelopeDB
 from services.models import ServiceComponent
+
+from pricing_v4.adapter import PricingMode, PricingServiceV4Adapter
+from pricing_v4.commercial_models import CommercialTermsPolicy
+from pricing_v4.models import ProductCode
+
 
 class HybridPricingTest(TestCase):
     def setUp(self):
+        # Configure active commercial policy to match test scenario expectations (15% margin)
+        CommercialTermsPolicy.objects.filter(is_active=True).update(
+            margin_percent=Decimal('15.00'),
+            margin_method=CommercialTermsPolicy.MarginMethod.MARKUP_ON_COST,
+        )
+
         # Create a dummy quote input
         self.quote_input = MagicMock(spec=QuoteInput)
         self.quote_input.output_currency = 'PGK'
         self.quote_input.shipment = MagicMock()
         self.quote_input.shipment.pieces = []
+        self.quote_input.shipment.shipment_type = 'EXPORT'
         
         # Create an SPE in the database
         now = timezone.now()
@@ -61,7 +71,7 @@ class HybridPricingTest(TestCase):
             domain=domain,
             category=category,
             is_gst_applicable=False,
-            gst_rate=Decimal('0'),
+            gst_rate=Decimal(0),
             gst_treatment=ProductCode.GST_TREATMENT_EXEMPT,
             gl_revenue_code='REV',
             gl_cost_code='COS',
@@ -386,9 +396,9 @@ class HybridPricingTest(TestCase):
             cost_amount=Decimal('80.00'),
             sell_amount=Decimal('100.00'),
             sell_incl_gst=Decimal('100.00'),
-            gst_amount=Decimal('0'),
+            gst_amount=Decimal(0),
             gst_category=None,
-            gst_rate=Decimal('0'),
+            gst_rate=Decimal(0),
             cost_currency='AUD',
             sell_currency='AUD',
             is_rate_missing=False,
