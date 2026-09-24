@@ -10,8 +10,13 @@ from parties.models import Company, Contact
 
 from pricing_v4.adapter import PricingServiceV4Adapter
 from pricing_v4.commercial_models import CommercialTermsPolicy
-from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm as ExportPaymentTerm
-from pricing_v4.engine.import_engine import ImportPricingEngine, PaymentTerm, ServiceScope
+from pricing_v4.engine.export_engine import ExportPricingEngine
+from pricing_v4.engine.export_engine import PaymentTerm as ExportPaymentTerm
+from pricing_v4.engine.import_engine import (
+    ImportPricingEngine,
+    PaymentTerm,
+    ServiceScope,
+)
 from pricing_v4.services.commercial_policy import (
     InvalidPolicyEffectiveDateError,
     MissingCommercialPolicyError,
@@ -385,7 +390,11 @@ class AdapterCommercialPolicyCutoverTests(TestCase):
             PricingServiceV4Adapter(qi)
 
     def _create_test_spe(self, shipment_type="IMPORT"):
-        from quotes.models import SPEAcknowledgementDB, SPEChargeLineDB, SpotPricingEnvelopeDB
+        from quotes.models import (
+            SPEAcknowledgementDB,
+            SPEChargeLineDB,
+            SpotPricingEnvelopeDB,
+        )
         from services.models import ServiceComponent
 
         ServiceComponent.objects.get_or_create(
@@ -595,3 +604,74 @@ class AdapterCommercialPolicyCutoverTests(TestCase):
         self.assertEqual(import_engine.caf_rate, Decimal("0.05"))
         self.assertEqual(import_engine.margin_rate, Decimal("0.20"))
         self.assertEqual(import_engine._apply_margin(Decimal("100.00")), Decimal("120.00"))
+
+    def test_direct_export_engine_invalid_quote_date_fails_closed(self):
+        # 1. Invalid date string raises InvalidPolicyEffectiveDateError
+        with self.assertRaises(InvalidPolicyEffectiveDateError) as cm:
+            ExportPricingEngine(
+                quote_date="not-a-date",
+                origin="POM",
+                destination="BNE",
+                chargeable_weight_kg=Decimal("100.0"),
+            )
+        self.assertIn("Invalid effective_date string", str(cm.exception))
+
+        # 2. Unsupported type raises InvalidPolicyEffectiveDateError
+        with self.assertRaises(InvalidPolicyEffectiveDateError) as cm:
+            ExportPricingEngine(
+                quote_date=99999,
+                origin="POM",
+                destination="BNE",
+                chargeable_weight_kg=Decimal("100.0"),
+            )
+        self.assertIn("Unsupported effective_date type", str(cm.exception))
+
+    def test_direct_import_engine_invalid_quote_date_fails_closed(self):
+        # 1. Invalid date string raises InvalidPolicyEffectiveDateError
+        with self.assertRaises(InvalidPolicyEffectiveDateError) as cm:
+            ImportPricingEngine(
+                quote_date="invalid-iso-date",
+                origin="BNE",
+                destination="POM",
+                chargeable_weight_kg=Decimal("100.0"),
+                payment_term=PaymentTerm.COLLECT,
+                service_scope=ServiceScope.A2D,
+            )
+        self.assertIn("Invalid effective_date string", str(cm.exception))
+
+        # 2. Unsupported type raises InvalidPolicyEffectiveDateError
+        with self.assertRaises(InvalidPolicyEffectiveDateError) as cm:
+            ImportPricingEngine(
+                quote_date=["2026-06-01"],
+                origin="BNE",
+                destination="POM",
+                chargeable_weight_kg=Decimal("100.0"),
+                payment_term=PaymentTerm.COLLECT,
+                service_scope=ServiceScope.A2D,
+            )
+        self.assertIn("Unsupported effective_date type", str(cm.exception))
+
+    def test_direct_engines_missing_policy_propagates_without_swallowing(self):
+        # When no active policy covers the quote date, require_commercial_terms_policy must
+        # propagate MissingCommercialPolicyError and not be swallowed by broad except
+        past_date = date(2000, 1, 1)
+        with self.assertRaises(MissingCommercialPolicyError) as cm:
+            ExportPricingEngine(
+                quote_date=past_date,
+                origin="POM",
+                destination="BNE",
+                chargeable_weight_kg=Decimal("100.0"),
+            )
+        self.assertIn("No active CommercialTermsPolicy found", str(cm.exception))
+
+        with self.assertRaises(MissingCommercialPolicyError) as cm:
+            ImportPricingEngine(
+                quote_date=past_date,
+                origin="BNE",
+                destination="POM",
+                chargeable_weight_kg=Decimal("100.0"),
+                payment_term=PaymentTerm.COLLECT,
+                service_scope=ServiceScope.A2D,
+            )
+        self.assertIn("No active CommercialTermsPolicy found", str(cm.exception))
+

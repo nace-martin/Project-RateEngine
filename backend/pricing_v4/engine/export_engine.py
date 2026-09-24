@@ -185,16 +185,12 @@ class ExportPricingEngine:
         self.tt_buy = tt_buy or Decimal('0.35')
         self.tt_sell = tt_sell or Decimal('0.36')
         if caf_rate is _POLICY_DEFAULT or margin_rate is _POLICY_DEFAULT:
-            policy = None
-            try:
-                from pricing_v4.services.commercial_policy import resolve_commercial_terms_policy
-                policy = resolve_commercial_terms_policy(effective_date=quote_date)
-            except Exception:
-                pass
+            from pricing_v4.services.commercial_policy import require_commercial_terms_policy
+            policy = require_commercial_terms_policy(quote_date)
             if caf_rate is _POLICY_DEFAULT:
-                caf_rate = policy.export_caf_rate if policy else None
+                caf_rate = policy.export_caf_rate
             if margin_rate is _POLICY_DEFAULT:
-                margin_rate = policy.target_gross_margin_rate if policy else None
+                margin_rate = policy.target_gross_margin_rate
         self.caf_rate = caf_rate
         self.margin_rate = margin_rate
         
