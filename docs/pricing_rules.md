@@ -7,8 +7,8 @@ Quick reference for RateEngine pricing logic.
 | Parameter | Value | Method / Semantics |
 |-----------|-------|--------------------|
 | Margin | 20% | MARKUP_ON_COST (`Cost × (1 + Margin)`) |
-| CAF Import | 5% | Bank TT BUY deduction |
-| CAF Export | 10% | Bank TT SELL addition |
+| CAF Import | 5% | Bank TT BUY / SELL deduction as applicable to Import conversion |
+| CAF Export | 10% | Bank TT SELL addition for Export customer-currency conversion |
 | Standard GST | 10% | Domestic / taxable scope |
 
 ### Margin Semantics (`CommercialTermsPolicy`)
@@ -36,11 +36,49 @@ RateEngine enforces:
 
 *AU origin → AUD, else → USD for Import Prepaid. Export Collect uses the destination FCY (AUD for AU, otherwise USD under the current policy).
 
-## FX Pipeline
+## FX Market Authority
 
-```
-FCY Cost → × FX_BUY → × (1 + CAF) → apply_margin(Cost) → PGK Sell
-```
+`core.FxMarketRate` is the sole market-FX authority for new quote calculations.
+`FxSnapshot` is retained as historical quote evidence and is not the source of current market rates.
+
+Canonical market facts are stored as **FCY/PGK**:
+
+- `base_currency = FCY`
+- `quote_currency = PGK`
+- the numeric rate means **PGK per 1 FCY**
+
+Example: `AUD/PGK TT SELL = 2.5200` means K2.5200 per AUD 1.
+
+Resolution rules:
+
+1. Use the latest published market fact whose `effective_date <= quote_date`.
+2. Never use a future-dated rate.
+3. If the inverse pair is used, invert mathematically and swap BUY/SELL sides:
+   - inverse BUY = `1 / original SELL`
+   - inverse SELL = `1 / original BUY`
+4. Cross-currency conversion resolves through PGK.
+5. PGK → PGK (or any same-currency conversion) is identity and requires no FX row.
+6. If multiple sources compete for the same latest pair/date and no source priority is approved, fail closed rather than selecting arbitrarily.
+7. Missing required foreign-currency FX fails closed. There are no fabricated `0.35`, `0.36`, `2.50`, `2.78`, or foreign-currency `1.0` defaults.
+8. The current 24-hour age check is an operational warning only. No hard maximum staleness cutoff is assumed until explicitly approved.
+
+Pure market FX and CAF are separate facts. CAF is applied only in the pricing layer after the market rate resolves.
+
+### Import conversion
+
+For FCY cost → PGK using TT BUY:
+
+`PGK = FCY × (TT_BUY × (1 - Import CAF))`
+
+For PGK → FCY using TT SELL:
+
+`FCY = PGK ÷ (TT_SELL × (1 - Import CAF))`
+
+### Export conversion
+
+For PGK → customer FCY using TT SELL:
+
+`FCY = PGK ÷ (TT_SELL × (1 + Export CAF))`
 
 ## Quote Currency Authority
 
