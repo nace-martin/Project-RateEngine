@@ -1,3 +1,4 @@
+from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -103,8 +104,8 @@ class ManualFxUpdateAPITests(APITestCase):
             quote_currency='PGK',
             source='MANUAL',
         )
-        self.assertEqual(rate.tt_buy_rate, 2.45000000)
-        self.assertEqual(rate.tt_sell_rate, 2.52000000)
+        self.assertEqual(rate.tt_buy_rate, Decimal('2.45000000'))
+        self.assertEqual(rate.tt_sell_rate, Decimal('2.52000000'))
 
         snapshot = FxSnapshot.objects.get(id=response.json()['snapshot_id'])
         self.assertEqual(snapshot.rates['AUD']['tt_buy'], '2.45000000')
