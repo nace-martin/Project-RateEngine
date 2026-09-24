@@ -31,6 +31,7 @@ from core.dataclasses import (
     CalculatedTotals,
 )
 from pricing_v4.adapter import PricingServiceV4Adapter
+from pricing_v4.services.fx_resolver import MissingFxMarketRateError
 
 
 class TestRoutingMap(TestCase):
@@ -216,7 +217,7 @@ class TestPricingAdapterNormalization(TestCase):
         self.assertEqual(product_code_kwargs["origin"], "POM")
         self.assertEqual(product_code_kwargs["destination"], "SIN")
 
-    def test_adapter_promotes_fx_fallback_into_persistable_totals_metadata(self):
+    def test_adapter_fails_closed_without_market_fx(self):
         quote_input = QuoteInput(
             customer_id=uuid4(),
             contact_id=uuid4(),
@@ -252,20 +253,8 @@ class TestPricingAdapterNormalization(TestCase):
             "_apply_customer_discounts",
             side_effect=lambda lines: lines,
         ):
-            charges = adapter.calculate_charges()
-
-        self.assertIn(
-            "FX SELL rate missing for AUD; used 1.0 fallback.",
-            charges.totals.warnings,
-        )
-        self.assertEqual(
-            charges.totals.audit_metadata,
-            {
-                "fx_fallbacks": [
-                    {"direction": "SELL", "currency": "AUD", "fallback_rate": "1.0"}
-                ]
-            },
-        )
+            with self.assertRaises(MissingFxMarketRateError):
+                adapter.calculate_charges()
 
 
 class TestPreFlightCheck(TestCase):

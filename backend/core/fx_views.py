@@ -4,7 +4,7 @@ FX Rate Management API Views.
 
 Provides endpoints for:
 1. Manual FX rate updates (Finance/Admin only)
-2. FX status with staleness checking
+2. Market FX status with effective dates and source provenance
 """
 
 from decimal import Decimal
@@ -12,6 +12,7 @@ from io import StringIO
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -19,12 +20,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.permissions import CanEditFXRates
-from .fx_serializers import ManualFxUpdateSerializer, FxStatusSerializer
-from .models import FxSnapshot, FxRate, Currency
+from .fx_serializers import ManualFxUpdateSerializer
+from .models import FxSnapshot
+from core.fx_market_models import FxMarketRate
 
 
-# Default staleness threshold in hours
-FX_STALE_HOURS = 24
 FX_REFRESH_CURRENCIES = (
     "USD",
     "AUD",
@@ -49,10 +49,11 @@ class ManualFxUpdateView(APIView):
     Allows Finance/Admin users to manually enter FX rates when the
     automated BSP scraper fails.
     
-    Creates a new FxSnapshot with source="MANUAL" and updates FxRate records.
+    Creates a new FxSnapshot and writes FxMarketRate facts.
     """
     permission_classes = [IsAuthenticated, CanEditFXRates]
 
+    @transaction.atomic
     def post(self, request):
         serializer = ManualFxUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -77,7 +78,7 @@ class ManualFxUpdateView(APIView):
                 'tt_sell': rate_info['tt_sell'],
             })
             
-            # Update FxRate records for PGK pairs
+            # Update FCY/PGK market facts.
             self._update_fx_rate(currency_code_upper, rate_info, now)
         
         # Create immutable FxSnapshot
@@ -99,88 +100,69 @@ class ManualFxUpdateView(APIView):
         }, status=status.HTTP_201_CREATED)
 
     def _update_fx_rate(self, currency_code: str, rate_info: dict, timestamp):
-        """Update or create FxRate records for the currency pair."""
-        # Get or create currency objects
-        pgk, _ = Currency.objects.get_or_create(
-            code='PGK',
-            defaults={'name': 'Papua New Guinean Kina', 'minor_units': 2}
-        )
-        fcy, _ = Currency.objects.get_or_create(
-            code=currency_code,
-            defaults={'name': currency_code, 'minor_units': 2}
-        )
-        
-        # Update FCY -> PGK rate (e.g., AUD -> PGK = 2.77)
-        FxRate.objects.update_or_create(
-            base_currency=fcy,
-            quote_currency=pgk,
+        """Update or create FxMarketRate records for the currency pair."""
+        from decimal import ROUND_HALF_UP
+
+        tt_buy = Decimal(str(rate_info['tt_buy']))
+        tt_sell = Decimal(str(rate_info['tt_sell']))
+        mid = ((tt_buy + tt_sell) / Decimal('2')).quantize(Decimal('0.00000001'), rounding=ROUND_HALF_UP)
+        effective_date = timestamp.date() if hasattr(timestamp, 'date') else timestamp
+
+        FxMarketRate.objects.update_or_create(
+            base_currency=currency_code.upper(),
+            quote_currency='PGK',
+            effective_date=effective_date,
             source='MANUAL',
             defaults={
-                'tt_buy': rate_info['tt_buy'],
-                'tt_sell': rate_info['tt_sell'],
-                'last_updated': timestamp,
-            }
+                'tt_buy_rate': tt_buy,
+                'tt_sell_rate': tt_sell,
+                'mid_rate': mid,
+            },
         )
 
 
 class FxStatusView(APIView):
-    """
-    GET /api/v4/fx/status/
-    
-    Returns current FX rates with staleness information.
-    Available to all authenticated users.
-    """
+    """Show current market facts without applying an unapproved staleness rule."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # Get the latest FxSnapshot
-        latest_snapshot = FxSnapshot.objects.order_by('-as_of_timestamp').first()
-        
-        if not latest_snapshot:
-            return Response({
-                'rates': [],
-                'last_updated': None,
-                'source': None,
-                'is_stale': True,
-                'staleness_hours': None,
-                'staleness_warning': 'No FX rates available. Please run the FX fetch or enter rates manually.',
-            })
-        
-        # Calculate staleness
-        now = timezone.now()
-        age = now - latest_snapshot.as_of_timestamp
-        staleness_hours = age.total_seconds() / 3600
-        is_stale = staleness_hours > FX_STALE_HOURS
-        
-        # Build rates list from snapshot
+        from pricing_v4.services.fx_resolver import (
+            AmbiguousFxSourceError,
+            resolve_market_fx_pair,
+        )
+
+        today = timezone.localdate()
         rates = []
-        for currency_code, rate_data in (latest_snapshot.rates or {}).items():
+        ambiguous = []
+        for currency in (
+            FxMarketRate.objects.filter(quote_currency='PGK', effective_date__lte=today)
+            .values_list('base_currency', flat=True).distinct()
+        ):
+            try:
+                pair = resolve_market_fx_pair(currency, 'PGK', today)
+            except AmbiguousFxSourceError:
+                ambiguous.append(currency)
+                continue
             rates.append({
-                'currency': currency_code,
-                'tt_buy': Decimal(str(rate_data.get('tt_buy', 0))),
-                'tt_sell': Decimal(str(rate_data.get('tt_sell', 0))),
+                'currency': currency,
+                'tt_buy': pair.tt_buy,
+                'tt_sell': pair.tt_sell,
+                'effective_date': pair.effective_date,
+                'source': pair.source,
             })
-        
-        # Generate warning message if stale
-        staleness_warning = None
-        if is_stale:
-            staleness_warning = (
-                f"FX rates are {staleness_hours:.1f} hours old. "
-                f"This exceeds the 24-hour threshold. "
-                f"Please check the automated FX refresh or enter rates manually."
-            )
-        
-        response_data = {
+
+        dates = [rate['effective_date'] for rate in rates]
+        warning = 'No approved FX staleness threshold; review each effective date.'
+        if ambiguous:
+            warning += f" Ambiguous source for: {', '.join(sorted(ambiguous))}."
+        return Response({
             'rates': rates,
-            'last_updated': latest_snapshot.as_of_timestamp,
-            'source': latest_snapshot.source,
-            'is_stale': is_stale,
-            'staleness_hours': round(staleness_hours, 2),
-            'staleness_warning': staleness_warning,
-        }
-        
-        serializer = FxStatusSerializer(response_data)
-        return Response(serializer.data)
+            'last_updated': max(dates).isoformat() if dates else None,
+            'source': 'FxMarketRate' if dates else None,
+            'is_stale': None,
+            'staleness_hours': None,
+            'staleness_warning': warning if dates or ambiguous else 'No market FX rates available.',
+        })
 
 
 class FxRefreshView(APIView):

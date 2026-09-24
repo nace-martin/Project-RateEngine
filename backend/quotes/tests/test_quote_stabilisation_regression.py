@@ -9,6 +9,7 @@ from rest_framework.test import APITestCase
 
 from accounts.models import Role, UserMembership
 from core.models import Country, Currency
+from core.fx_market_models import FxMarketRate
 from core.tests.helpers import create_location
 from parties.models import Branch, Company, Contact, Department, OperatingEntity, Organization
 from pricing_v4.models import (
@@ -50,6 +51,16 @@ class CoreQuoteStabilisationRegressionTests(APITestCase):
         self.pgk = Currency.objects.get_or_create(code="PGK", defaults={"name": "Papua New Guinean Kina", "minor_units": 2})[0]
         self.usd = Currency.objects.get_or_create(code="USD", defaults={"name": "United States Dollar", "minor_units": 2})[0]
         self.sgd = Currency.objects.get_or_create(code="SGD", defaults={"name": "Singapore Dollar", "minor_units": 2})[0]
+        for currency, buy, sell in (
+            ("AUD", "2.50", "2.78"),
+            ("USD", "3.50", "3.60"),
+            ("SGD", "2.70", "2.80"),
+        ):
+            FxMarketRate.objects.create(
+                base_currency=currency, quote_currency="PGK", effective_date=date.today(),
+                tt_buy_rate=Decimal(buy), tt_sell_rate=Decimal(sell),
+                mid_rate=(Decimal(buy) + Decimal(sell)) / 2, source="TEST",
+            )
 
         self.au = Country.objects.get_or_create(code="AU", defaults={"name": "Australia", "currency": self.aud})[0]
         self.pg = Country.objects.get_or_create(code="PG", defaults={"name": "Papua New Guinea", "currency": self.pgk})[0]

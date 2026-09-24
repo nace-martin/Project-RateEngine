@@ -46,5 +46,10 @@ The `Surcharge` model handles fees that apply broadly across service types, redu
 ## Integration
 The V4 engine exposes computation via the `pricing_v4.engine` module. It is integrated into the API via `/api/v4/`.
 
+## Market FX authority
+New Import, Export, and SPOT calculations resolve TT BUY and TT SELL from `FxMarketRate`. The stored orientation is FCY/PGK (PGK per one FCY). The resolver selects the newest effective date on or before the quote date, swaps BUY and SELL when inverting a pair, and crosses non-PGK currencies through PGK. PGK/PGK needs no market fact. A missing rate or competing sources for the applicable pair and date stop the affected calculation. CAF remains a separate commercial policy adjustment.
+
+Manual entry and `fetch_fx` write complete market facts. `FxRate` was removed by a forward migration. `FxSnapshot` and existing quote/version snapshot references remain for historical evidence; old finalized quote values are not recalculated. No FX staleness limit or source priority has been approved.
+
 ## Migration from V3
 V3 is deprecated. New development should focus exclusively on V4 models and logic.

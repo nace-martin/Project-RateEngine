@@ -8,6 +8,7 @@ from io import StringIO
 from django.core.management import call_command
 from django.test import TestCase
 
+from core.fx_market_models import FxMarketRate
 from pricing_v4.engine.import_engine import ImportPricingEngine, PaymentTerm, ServiceScope
 from pricing_v4.models import Agent, ImportCOGS, LocalCOGSRate, LocalSellRate, ProductCode
 from pricing_v4.services.import_cogs_scope import ImportCOGSScope, classify_import_cogs_scope
@@ -140,6 +141,11 @@ class AuditImportCOGSScopeCommandTests(TestCase):
 
 class ImportCOGSQuoteSnapshotRegressionTests(TestCase):
     def setUp(self):
+        FxMarketRate.objects.create(
+            base_currency="AUD", quote_currency="PGK", effective_date=date.today(),
+            tt_buy_rate=Decimal("2.50"), tt_sell_rate=Decimal("2.78"),
+            mid_rate=Decimal("2.64"), source="TEST",
+        )
         self.valid_from = date.today() - timedelta(days=30)
         self.valid_until = date.today() + timedelta(days=365)
         self.origin_agent = Agent.objects.create(code="EFM-AU", name="EFM Australia", country_code="AU", agent_type="ORIGIN")

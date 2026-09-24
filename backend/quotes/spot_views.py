@@ -2375,19 +2375,22 @@ class SpotEnvelopeComputeAPIView(APIView):
         
         # Get FX rate info for display
         fx_info = None
-        if adapter.fx_snapshot:
-            # Find the charge currency from SPE charges (usually the first one)
-            spe_charges = list(spe_db.charge_lines.all())
-            if spe_charges:
-                charge_currency = spe_charges[0].currency
-                if charge_currency != 'PGK':
-                    fx_rates_dict = adapter._get_fx_rates_dict()
-                    fx_buy_rate = adapter._get_fx_buy_rate(charge_currency, fx_rates_dict)
+        spe_charges = list(spe_db.charge_lines.all())
+        if spe_charges:
+            charge_currency = spe_charges[0].currency
+            if charge_currency and charge_currency != 'PGK':
+                from pricing_v4.services.fx_resolver import FxResolutionError, resolve_market_fx_pair
+                try:
+                    pair = resolve_market_fx_pair(charge_currency, 'PGK', quote_input.quote_date)
+                except FxResolutionError as exc:
+                    logger.warning("FX display metadata unavailable: %s", exc)
+                else:
                     fx_info = {
                         'source_currency': charge_currency,
                         'target_currency': 'PGK',
-                        'rate': str(fx_buy_rate),
-                        'as_of': adapter.fx_snapshot.as_of_timestamp.isoformat() if adapter.fx_snapshot.as_of_timestamp else None,
+                        'rate': str(pair.tt_buy),
+                        'as_of': pair.effective_date.isoformat(),
+                        'source': pair.source,
                     }
         
         from quotes.completeness import evaluate_from_lines

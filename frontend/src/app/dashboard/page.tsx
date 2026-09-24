@@ -40,8 +40,6 @@ interface FxStatusData {
     rates: Array<{ currency: string; tt_buy: string; tt_sell: string }>;
     last_updated: string | null;
     source: string | null;
-    is_stale: boolean;
-    staleness_hours: number | null;
     staleness_warning: string | null;
 }
 
@@ -381,8 +379,8 @@ export default function DashboardPage() {
                         {/* Widget C: FX Rates */}
                         <KPICard
                             title="FX Rates"
-                            value={fxStatus ? (fxStatus.is_stale ? "Stale" : "Current") : <Skeleton className="h-8 w-24" />}
-                            status={fxStatus?.is_stale ? "warning" : "info"}
+                            value={fxStatus ? (fxStatus.rates.length ? "Available" : "Missing") : <Skeleton className="h-8 w-24" />}
+                            status={fxStatus && !fxStatus.rates.length ? "warning" : "info"}
                             icon={TrendingUp}
                         >
                             <div className="mt-4">

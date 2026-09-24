@@ -6,6 +6,7 @@ from datetime import date
 from rest_framework.test import APIClient
 
 from core.models import Airport, City, Country, FxSnapshot, Currency, Policy, Location
+from core.fx_market_models import FxMarketRate
 from parties.models import Company, Contact
 from services.models import ServiceComponent, LEG_CHOICES
 from quotes.models import Quote
@@ -91,6 +92,12 @@ class QuoteFxRecalculationTests(TestCase):
             source="bsp_html",
             rates={"AUD": {"tt_buy": "0.3500", "tt_sell": "0.3500"}}
         )
+        FxMarketRate.objects.create(
+            base_currency="AUD", quote_currency="PGK",
+            effective_date=date.today() - timezone.timedelta(days=1),
+            tt_buy_rate=Decimal("0.3500"), tt_sell_rate=Decimal("0.3500"),
+            mid_rate=Decimal("0.3500"), source="TEST",
+        )
         from django.urls import reverse
         print("REVERSED COMPUTE URL:", reverse("quotes:quote-compute-v3"))
 
@@ -139,6 +146,11 @@ class QuoteFxRecalculationTests(TestCase):
             as_of_timestamp=timezone.now(),
             source="bsp_html",
             rates={"AUD": {"tt_buy": "0.3315", "tt_sell": "0.3315"}}
+        )
+        FxMarketRate.objects.create(
+            base_currency="AUD", quote_currency="PGK", effective_date=date.today(),
+            tt_buy_rate=Decimal("0.3315"), tt_sell_rate=Decimal("0.3315"),
+            mid_rate=Decimal("0.3315"), source="TEST",
         )
 
         # 3. Recalculate using the same quote_id (should pull new rate 0.3315)
@@ -212,12 +224,12 @@ class QuoteFxRecalculationTests(TestCase):
         """
         Verify the exact USD 680 import freight calculation:
         - Buy: USD 680.00
-        - Base FX: 0.235500
+        - Base FX: 4.705000 PGK per USD
         - CAF import: 5%
-        - Effective FX: 0.223725
-        - Cost PGK: 3,039.45
+        - Effective FX: 4.469750
+        - Cost PGK: 3,039.43
         - Expected margin policy: 20% markup on cost (Launch Policy)
-        - Expected Sell PGK: 3,647.34
+        - Expected Sell PGK: 3,647.32
         - Expected Margin PGK: 607.89
         - Expected Gross Margin % shown in UI terms: 16.67%
         """
@@ -228,11 +240,16 @@ class QuoteFxRecalculationTests(TestCase):
         # Ensure USD currency exists
         usd, _ = Currency.objects.get_or_create(code="USD", defaults={"name": "US Dollar"})
 
-        # Create FxSnapshot with USD rate = 0.2355
+        # Keep historical snapshot evidence separate from the current market fact.
         FxSnapshot.objects.create(
             as_of_timestamp=timezone.now(),
             source="bsp_html",
             rates={"USD": {"tt_buy": "0.235500", "tt_sell": "0.235500"}}
+        )
+        FxMarketRate.objects.create(
+            base_currency="USD", quote_currency="PGK", effective_date=date.today(),
+            tt_buy_rate=Decimal("4.70500000"), tt_sell_rate=Decimal("4.70500000"),
+            mid_rate=Decimal("4.70500000"), source="TEST",
         )
 
         # Create Spot Envelope
@@ -314,18 +331,17 @@ class QuoteFxRecalculationTests(TestCase):
         
         # Verify FX details
         fx = adapter._audit_metadata.get("fx_audit", {})
-        self.assertAlmostEqual(Decimal(fx["base_rate"]), Decimal("0.235500"))
+        self.assertAlmostEqual(Decimal(fx["base_rate"]), Decimal("4.705000"))
         self.assertAlmostEqual(Decimal(fx["caf_percent"]), Decimal("0.05"))
-        self.assertAlmostEqual(Decimal(fx["effective_rate_after_caf"]), Decimal("0.223725"))
+        self.assertAlmostEqual(Decimal(fx["effective_rate_after_caf"]), Decimal("4.469750"))
         
         # Verify line level calculations
         lines = result.lines
         freight_line = next(line for line in lines if line.product_code == "IMP-FRT-AIR")
         
-        # Cost PGK: 680 USD / 0.223725 = 3,039.45 PGK
-        self.assertAlmostEqual(Decimal(freight_line.cost_pgk), Decimal("3039.45"), places=2)
-        # Sell PGK: 3039.45 * 1.20 = 3,647.34 PGK (3647.33 after unrounded math)
-        self.assertAlmostEqual(Decimal(freight_line.sell_pgk), Decimal("3647.33"), places=2)
+        # Cost PGK: 680 USD * 4.46975 = 3,039.43 PGK.
+        self.assertAlmostEqual(Decimal(freight_line.cost_pgk), Decimal("3039.43"), places=2)
+        self.assertAlmostEqual(Decimal(freight_line.sell_pgk), Decimal("3647.32"), places=2)
         
         # Margin PGK: 3647.34 - 3039.45 = 607.89 PGK
         margin_amount = freight_line.sell_pgk - freight_line.cost_pgk

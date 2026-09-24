@@ -8,6 +8,7 @@ from rest_framework.test import APITestCase
 from django.test import override_settings
 
 from core.models import Country, Currency
+from core.fx_market_models import FxMarketRate
 from core.tests.helpers import create_location
 from parties.models import Company, Contact
 from pricing_v4.models import (
@@ -58,6 +59,12 @@ class QuoteValidationMatrixRegressionTests(APITestCase):
         self.aud = Currency.objects.get_or_create(code="AUD", defaults={"name": "Australian Dollar"})[0]
         self.pgk = Currency.objects.get_or_create(code="PGK", defaults={"name": "Papua New Guinean Kina"})[0]
         self.usd = Currency.objects.get_or_create(code="USD", defaults={"name": "United States Dollar"})[0]
+        for currency, buy, sell in (("AUD", "2.50", "2.78"), ("USD", "3.50", "3.60")):
+            FxMarketRate.objects.create(
+                base_currency=currency, quote_currency="PGK", effective_date=date.today(),
+                tt_buy_rate=Decimal(buy), tt_sell_rate=Decimal(sell),
+                mid_rate=(Decimal(buy) + Decimal(sell)) / 2, source="TEST",
+            )
 
         self.au = Country.objects.get_or_create(code="AU", defaults={"name": "Australia", "currency": self.aud})[0]
         self.pg = Country.objects.get_or_create(code="PG", defaults={"name": "Papua New Guinea", "currency": self.pgk})[0]

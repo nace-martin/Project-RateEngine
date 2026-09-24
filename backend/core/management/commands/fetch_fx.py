@@ -5,13 +5,10 @@ from typing import List, Tuple
 
 from django.core.management.base import BaseCommand, CommandError
 
-import logging
-from django.utils.timezone import now
-from core.fx import upsert_rate, d, FxUnavailableError
+from django.db import transaction
+from core.fx_market_models import FxMarketRate
 from core.fx_providers import load as load_provider
 from core.models import FxSnapshot
-
-logger = logging.getLogger(__name__)
 
 def parse_pairs(arg: str) -> List[Tuple[str, str]]:
     pairs: List[Tuple[str, str]] = []
@@ -27,7 +24,7 @@ def parse_pairs(arg: str) -> List[Tuple[str, str]]:
 
 
 class Command(BaseCommand):
-    help = "Fetch FX rates from BSP and persist to FxSnapshot."
+    help = "Fetch complete bank TT rates and persist FxMarketRate facts and snapshots."
 
     def add_arguments(self, parser):
         parser.add_argument("--pairs", type=str, help="Comma-separated pairs BASE:QUOTE, e.g., USD:PGK,PGK:USD")
@@ -48,123 +45,67 @@ class Command(BaseCommand):
         
         self.stdout.write(f"Fetching FX rates from {provider_name}...")
         
-        rows = []
         try:
             rows = provider.fetch([f"{b}:{q}" for (b, q) in pairs])
-        except Exception as e:
-            msg = f"CRITICAL: BSP FX Scraper failed: {e}. Attempting fallback to Last Known Good rates."
-            self.stderr.write(self.style.ERROR(msg))
-            logger.error(msg)
-            
-            # --- FALLBACK MECHANISM: Last Known Good (LKG) ---
-            last_good = FxSnapshot.objects.filter(source=provider_name).order_by('-as_of_timestamp').first()
-            if not last_good:
-                # Secondary fallback: any successful snapshot
-                last_good = FxSnapshot.objects.exclude(rates={}).order_by('-as_of_timestamp').first()
-            
-            if last_good:
-                self.stdout.write(self.style.WARNING(f"Falling back to rates from snapshot as of {last_good.as_of_timestamp}"))
-                # Use LKG rates but update the timestamp to now to keep engine running
-                # In a real scenario, you might want to flag these as 'STALE'
-                rows = []
-                from core.fx_providers import RateRow
-                
-                snapshot_rates = {
-                    str(pair).upper(): values
-                    for pair, values in (last_good.rates or {}).items()
-                    if isinstance(values, dict)
-                }
-                missing_pairs: List[str] = []
-                fallback_source = f"{last_good.source}_fallback"
-                fallback_as_of = now()
-
-                def _q4(value: Decimal) -> Decimal:
-                    return value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
-
-                def _candidate_snapshot_keys(base_ccy: str, quote_ccy: str) -> List[str]:
-                    keys = [f"{base_ccy}/{quote_ccy}".upper()]
-                    base_u = (base_ccy or "").upper()
-                    quote_u = (quote_ccy or "").upper()
-                    # Support both pair-format keys (USD/PGK) and legacy bare keys (USD)
-                    # for PGK crosses written by prior snapshots.
-                    if base_u == "PGK" and quote_u != "PGK":
-                        keys.append(quote_u)
-                    elif quote_u == "PGK" and base_u != "PGK":
-                        keys.append(base_u)
-                    return keys
-
-                def _lookup_snapshot_values(base_ccy: str, quote_ccy: str):
-                    for key in _candidate_snapshot_keys(base_ccy, quote_ccy):
-                        values = snapshot_rates.get(key)
-                        if values:
-                            return values
-                    return None
-
-                for base, quote in pairs:
-                    requested_key = f"{base}/{quote}".upper()
-                    values = _lookup_snapshot_values(base, quote)
-                    pair_rows_before = len(rows)
-
-                    if values:
-                        if 'tt_buy' in values:
-                            rows.append(RateRow(fallback_as_of, base, quote, d(values['tt_buy']), "BUY", fallback_source))
-                        if 'tt_sell' in values:
-                            rows.append(RateRow(fallback_as_of, base, quote, d(values['tt_sell']), "SELL", fallback_source))
-                    else:
-                        inverse_values = _lookup_snapshot_values(quote, base)
-                        if inverse_values:
-                            # Reconstruct requested direction from inverse snapshot:
-                            # BUY(base/quote) = 1 / SELL(quote/base)
-                            # SELL(base/quote) = 1 / BUY(quote/base)
-                            inv_sell = inverse_values.get('tt_sell')
-                            inv_buy = inverse_values.get('tt_buy')
-                            if inv_sell not in (None, "", "0", "0.0", "0.0000"):
-                                rows.append(
-                                    RateRow(
-                                        fallback_as_of,
-                                        base,
-                                        quote,
-                                        _q4(Decimal("1") / d(inv_sell)),
-                                        "BUY",
-                                        fallback_source,
-                                    )
-                                )
-                            if inv_buy not in (None, "", "0", "0.0", "0.0000"):
-                                rows.append(
-                                    RateRow(
-                                        fallback_as_of,
-                                        base,
-                                        quote,
-                                        _q4(Decimal("1") / d(inv_buy)),
-                                        "SELL",
-                                        fallback_source,
-                                    )
-                                )
-
-                    if len(rows) == pair_rows_before:
-                        missing_pairs.append(requested_key)
-
-                if missing_pairs:
-                    error_msg = (
-                        "FATAL: FX fallback snapshot does not contain all requested pairs. "
-                        f"Missing: {', '.join(missing_pairs)}"
-                    )
-                    logger.error(error_msg)
-                    raise FxUnavailableError(error_msg)
-            else:
-                # --- FAIL-CLOSED STATE ---
-                error_msg = "FATAL: FX Scraping failed and no historical rates found in database. Quoting engine halted."
-                logger.error(error_msg)
-                raise FxUnavailableError(error_msg)
+        except Exception as exc:
+            raise CommandError(f"FX fetch failed for {provider_name}: {exc}") from exc
 
         if not rows:
-            self.stderr.write(self.style.WARNING("No rates returned from BSP or Fallback"))
-            return
+            raise CommandError("Provider returned no FX rates")
 
-        for r in rows:
-            upsert_rate(r.as_of_ts, r.base_ccy, r.quote_ccy, r.rate, r.rate_type, r.source)
-            self.stdout.write(self.style.SUCCESS(
-                f"Saved {r.base_ccy}->{r.quote_ccy} {r.rate_type} {r.rate} @ {r.as_of_ts.isoformat()} [{r.source}]"
-            ))
+        market_facts = []
+        canonical_facts = {}
+        snapshot_rates = {}
+        for base, quote in pairs:
+            pair_rows = [row for row in rows if row.base_ccy == base and row.quote_ccy == quote]
+            sides = {row.rate_type: row for row in pair_rows}
+            if len(pair_rows) != 2 or set(sides) != {"BUY", "SELL"}:
+                raise CommandError(f"Incomplete or duplicate TT BUY/SELL for {base}/{quote}")
+            buy, sell = sides["BUY"], sides["SELL"]
+            if buy.source != sell.source or buy.as_of_ts.date() != sell.as_of_ts.date():
+                raise CommandError(f"Mismatched FX provenance for {base}/{quote}")
+            if buy.rate <= 0 or sell.rate <= 0:
+                raise CommandError(f"Nonpositive FX rate for {base}/{quote}")
+            if base == 'PGK' and quote != 'PGK':
+                fcy = quote
+                tt_buy, tt_sell = Decimal(1) / sell.rate, Decimal(1) / buy.rate
+            elif quote == 'PGK' and base != 'PGK':
+                fcy = base
+                tt_buy, tt_sell = buy.rate, sell.rate
+            else:
+                raise CommandError(f"Fetch requires a PGK pair: {base}/{quote}")
+            tt_buy = tt_buy.quantize(Decimal('0.00000001'), rounding=ROUND_HALF_UP)
+            tt_sell = tt_sell.quantize(Decimal('0.00000001'), rounding=ROUND_HALF_UP)
+            if tt_sell < tt_buy:
+                raise CommandError(f"TT SELL is below TT BUY for {fcy}/PGK")
+            key = (fcy, buy.as_of_ts.date(), buy.source)
+            rates = (tt_buy, tt_sell)
+            if key in canonical_facts and canonical_facts[key] != rates:
+                raise CommandError(f"Conflicting canonical FX facts for {fcy}/PGK on {key[1]}")
+            if key not in canonical_facts:
+                market_facts.append((fcy, buy.as_of_ts.date(), buy.source, tt_buy, tt_sell))
+            canonical_facts[key] = rates
+            snapshot_rates[fcy] = {'tt_buy': str(tt_buy), 'tt_sell': str(tt_sell)}
+
+        with transaction.atomic():
+            for fcy, effective_date, source, tt_buy, tt_sell in market_facts:
+                FxMarketRate.objects.update_or_create(
+                    base_currency=fcy, quote_currency='PGK',
+                    effective_date=effective_date, source=source,
+                    defaults={
+                        'tt_buy_rate': tt_buy,
+                        'tt_sell_rate': tt_sell,
+                        'mid_rate': ((tt_buy + tt_sell) / 2).quantize(
+                            Decimal('0.00000001'), rounding=ROUND_HALF_UP
+                        ),
+                    },
+                )
+            FxSnapshot.objects.create(
+                as_of_timestamp=max(row.as_of_ts for row in rows),
+                source=provider_name,
+                rates=snapshot_rates,
+                caf_percent=Decimal(0),
+                fx_buffer_percent=Decimal(0),
+            )
 
         self.stdout.write(self.style.SUCCESS(f"Successfully saved {len(rows)} FX rates"))

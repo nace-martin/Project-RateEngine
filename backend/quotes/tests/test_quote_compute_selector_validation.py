@@ -7,6 +7,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from core.models import Country, Currency
+from core.fx_market_models import FxMarketRate
 from core.tests.helpers import create_location
 from parties.models import Company, Contact
 from pricing_v4.models import Agent, Carrier, DomesticCOGS, DomesticSellRate, ImportCOGS, ProductCode, Surcharge
@@ -26,6 +27,11 @@ class QuoteComputeSelectorValidationTests(APITestCase):
 
         aud = Currency.objects.create(code="AUD", name="Australian Dollar", minor_units=2)
         pgk = Currency.objects.create(code="PGK", name="Papua New Guinean Kina", minor_units=2)
+        FxMarketRate.objects.create(
+            base_currency="AUD", quote_currency="PGK", effective_date=date.today(),
+            tt_buy_rate=Decimal("2.50"), tt_sell_rate=Decimal("2.78"),
+            mid_rate=Decimal("2.64"), source="TEST",
+        )
         au = Country.objects.create(code="AU", name="Australia", currency=aud)
         pg = Country.objects.create(code="PG", name="Papua New Guinea", currency=pgk)
 

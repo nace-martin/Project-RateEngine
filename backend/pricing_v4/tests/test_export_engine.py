@@ -9,6 +9,7 @@ from datetime import date, timedelta
 from dataclasses import fields
 from django.test import TestCase
 
+from core.fx_market_models import FxMarketRate
 from core.charge_rules import (
     CALCULATION_LOOKUP_RATE,
     CALCULATION_PERCENT_OF_BASE,
@@ -74,6 +75,11 @@ class ExportEngineTestCase(TestCase):
     @classmethod
     def setUpTestData(cls):
         seed_all_export_product_codes()
+        FxMarketRate.objects.create(
+            base_currency='USD', quote_currency='PGK', effective_date=date.today(),
+            tt_buy_rate=Decimal('1.95'), tt_sell_rate=Decimal('2.00'),
+            mid_rate=Decimal('1.975'), source='TEST',
+        )
 
         cls.pc_clearance = ProductCode.objects.get(code='EXP-CLEAR')
         cls.pc_dest_clearance = ProductCode.objects.get(code='EXP-CLEAR-DEST')

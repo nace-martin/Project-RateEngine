@@ -94,7 +94,7 @@ class BspHtmlProvider:
             html = self._fetch_html()
             table = self._parse_rates(html)
         except Exception as e:
-            # Re-raise to allow the management command/service to handle fallback
+            # The management command rejects failed fetches without an old-rate fallback.
             logger.error(f"BSP FX Scraper: Fetch failed. {e}")
             raise
 

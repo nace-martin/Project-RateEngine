@@ -18,6 +18,7 @@ from core.dataclasses import (
     LocationRef,
 )
 from core.models import Currency, Country, Location
+from core.fx_market_models import FxMarketRate
 from core.tests.helpers import create_location
 from pricing_v4.adapter import PricingServiceV4Adapter, PricingMode
 from pricing_v4.models import ChargeAlias, ProductCode
@@ -175,6 +176,15 @@ def _quote_input(shipment_type: str, service_scope: str, weight_kg: Decimal = De
         quote_date=date.today(),
         shipment=shipment,
     )
+
+
+def _seed_market_fx():
+    for currency, buy, sell in (("AUD", "2.50", "2.78"), ("USD", "3.50", "3.60")):
+        FxMarketRate.objects.create(
+            base_currency=currency, quote_currency="PGK", effective_date=date.today(),
+            tt_buy_rate=Decimal(buy), tt_sell_rate=Decimal(sell),
+            mid_rate=(Decimal(buy) + Decimal(sell)) / 2, source="TEST",
+        )
 
 
 def _analysis_result_with_components():
@@ -1251,6 +1261,7 @@ def test_ai_rule_meta_null_is_accepted_and_persisted(monkeypatch):
 
 
 def test_percentage_only_charge_does_not_satisfy_required_component():
+    _seed_market_fx()
     user = get_user_model().objects.create_user(username="spotpct", password="testpass")
     spe = _create_spe(
         user=user,
@@ -1300,6 +1311,7 @@ def test_percentage_only_charge_does_not_satisfy_required_component():
 
 
 def test_conditional_charge_does_not_satisfy_completeness():
+    _seed_market_fx()
     user = get_user_model().objects.create_user(username="spotcond", password="testpass")
     spe = _create_spe(
         user=user,
@@ -1659,6 +1671,7 @@ def test_ai_autofill_only_adds_ai_charges_and_preserves_existing_standard_lines(
 
 
 def test_spot_min_or_per_unit_uses_minimum_amount():
+    _seed_market_fx()
     user = get_user_model().objects.create_user(username="spotmin", password="testpass")
     spe = _create_spe(
         user=user,
@@ -1699,6 +1712,7 @@ def test_spot_min_or_per_unit_uses_minimum_amount():
 
 
 def test_spot_min_or_per_unit_uses_rate_when_weight_exceeds_minimum():
+    _seed_market_fx()
     user = get_user_model().objects.create_user(username="spotrate", password="testpass")
     spe = _create_spe(
         user=user,

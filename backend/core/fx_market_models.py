@@ -1,4 +1,4 @@
-"""Permanent objective FX market rate facts; legacy pricing still uses core.models.FxRate/FxSnapshot."""
+"""Objective bank TT market facts for new quote calculations."""
 
 import re
 import uuid

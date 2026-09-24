@@ -7,6 +7,7 @@ from io import StringIO
 from django.core.management import call_command
 from django.test import TestCase
 
+from core.fx_market_models import FxMarketRate
 from pricing_v4.models import Agent, ImportCOGS, ProductCode
 from pricing_v4.engine.import_engine import ImportPricingEngine, ServiceScope, PaymentTerm
 
@@ -113,6 +114,16 @@ class ImportCOGSConsolidationPlannerTests(TestCase):
         # This test ensures that running the command doesn't affect pricing logic results
         # which depends on the database remaining exactly the same.
         self._create_cogs(self.doc_origin, "BNE", "POM", Decimal("80.00"))
+        FxMarketRate.objects.create(
+            base_currency="AUD", quote_currency="PGK", effective_date=date.today(),
+            tt_buy_rate=Decimal("2.50"), tt_sell_rate=Decimal("2.78"),
+            mid_rate=Decimal("2.64"), source="TEST",
+        )
+        FxMarketRate.objects.create(
+            base_currency="USD", quote_currency="PGK", effective_date=date.today(),
+            tt_buy_rate=Decimal("3.50"), tt_sell_rate=Decimal("3.60"),
+            mid_rate=Decimal("3.55"), source="TEST",
+        )
         
         engine = ImportPricingEngine(
             quote_date=date.today(),

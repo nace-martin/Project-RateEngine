@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { AlertCircle, CheckCircle2, RefreshCw, AlertTriangle } from 'lucide-react';
+import { AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
 import { API_BASE_URL } from '@/lib/config';
 import { buildFxDisplayRows, compareFxDisplayCurrencies, formatFxDisplayValue, getFxDisplayCurrency } from '@/lib/fx-display';
 
@@ -19,8 +19,6 @@ interface FxStatus {
     rates: CurrencyRate[];
     last_updated: string | null;
     source: string | null;
-    is_stale: boolean;
-    staleness_hours: number | null;
     staleness_warning: string | null;
 }
 
@@ -208,15 +206,13 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
 
     const getStalenessColor = () => {
         if (!status) return 'text-gray-500';
-        if (status.is_stale) return 'text-red-500';
-        if (status.staleness_hours && status.staleness_hours > 12) return 'text-yellow-500';
+        if (!status.rates.length) return 'text-red-500';
         return 'text-green-500';
     };
 
     const getStalenessIcon = () => {
         if (!status) return <AlertCircle className="h-5 w-5" />;
-        if (status.is_stale) return <AlertCircle className="h-5 w-5" />;
-        if (status.staleness_hours && status.staleness_hours > 12) return <AlertTriangle className="h-5 w-5" />;
+        if (!status.rates.length) return <AlertCircle className="h-5 w-5" />;
         return <CheckCircle2 className="h-5 w-5" />;
     };
 
@@ -232,7 +228,7 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
                             </span>
                         </CardTitle>
                         <CardDescription>
-                            Foreign exchange rates for quoting. Updated daily from BSP.
+                            Market FX rates for quoting, with effective date and source.
                         </CardDescription>
                     </div>
                     <Button
@@ -273,7 +269,7 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
                     <>
                         <div className="space-y-4">
                             <div className="text-sm text-muted-foreground">
-                                <span className="font-medium">Last Updated:</span> {formatDate(status.last_updated)}
+                                <span className="font-medium">Latest Effective Date:</span> {formatDate(status.last_updated)}
                                 {status.source && <span className="ml-2">({status.source})</span>}
                             </div>
 
