@@ -6,6 +6,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from core.fx_market_models import FxMarketRate
 from core.models import FxSnapshot
 
 
@@ -49,8 +50,9 @@ class FxRefreshAPITests(APITestCase):
         self.assertEqual(response.json()['status'], 'success')
         self.assertEqual(response.json()['source'], 'bsp_html')
         mock_call_command.assert_called_once()
-        self.assertIn('PGK:SGD', mock_call_command.call_args.kwargs['pairs'])
-        self.assertIn('PGK:CNY', mock_call_command.call_args.kwargs['pairs'])
+        self.assertIn('SGD:PGK', mock_call_command.call_args.kwargs['pairs'])
+        self.assertIn('CNY:PGK', mock_call_command.call_args.kwargs['pairs'])
+        self.assertNotIn('PGK:SGD', mock_call_command.call_args.kwargs['pairs'])
 
     def test_sales_user_cannot_trigger_fx_refresh(self):
         self.client.force_authenticate(user=self.sales_user)
@@ -68,3 +70,59 @@ class FxRefreshAPITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         self.assertIn('BSP unavailable', response.json()['detail'])
+
+
+class ManualFxUpdateAPITests(APITestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.finance_user = user_model.objects.create_user(
+            username='fx-finance',
+            password='pass123',
+            email='fx-finance@example.com',
+            role=user_model.ROLE_FINANCE,
+        )
+        self.url = reverse('core:fx-manual-update')
+
+    def test_manual_update_writes_market_fact_and_snapshot(self):
+        self.client.force_authenticate(user=self.finance_user)
+
+        response = self.client.post(
+            self.url,
+            {
+                'rates': {
+                    'AUD': {'tt_buy': '2.45000000', 'tt_sell': '2.52000000'},
+                },
+                'note': 'Finance confirmed BSP TT board',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        rate = FxMarketRate.objects.get(
+            base_currency='AUD',
+            quote_currency='PGK',
+            source='MANUAL',
+        )
+        self.assertEqual(rate.tt_buy_rate, 2.45000000)
+        self.assertEqual(rate.tt_sell_rate, 2.52000000)
+
+        snapshot = FxSnapshot.objects.get(id=response.json()['snapshot_id'])
+        self.assertEqual(snapshot.rates['AUD']['tt_buy'], '2.45000000')
+        self.assertEqual(snapshot.rates['AUD']['tt_sell'], '2.52000000')
+        self.assertEqual(snapshot.rates['AUD']['source'], 'MANUAL')
+
+    def test_manual_update_rejects_inverted_or_heuristic_orientation(self):
+        self.client.force_authenticate(user=self.finance_user)
+
+        response = self.client.post(
+            self.url,
+            {
+                'rates': {
+                    'AUD': {'tt_buy': '2.52000000', 'tt_sell': '2.45000000'},
+                }
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(FxMarketRate.objects.count(), 0)
