@@ -19,7 +19,8 @@ class HybridPricingTest(TestCase):
     def setUp(self):
         # Configure active commercial policy to match test scenario expectations (15% margin)
         CommercialTermsPolicy.objects.filter(is_active=True).update(
-            target_gross_margin_percent=Decimal('15.00')
+            margin_percent=Decimal('15.00'),
+            margin_method=CommercialTermsPolicy.MarginMethod.MARKUP_ON_COST,
         )
 
         # Create a dummy quote input

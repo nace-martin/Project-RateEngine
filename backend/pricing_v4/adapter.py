@@ -514,7 +514,8 @@ class PricingServiceV4Adapter:
                     "Export CAF rate is missing in CommercialTermsPolicy; calculation fails closed."
                 )
             caf_used = caf_rate
-            margin_rate = self.commercial_terms_policy.target_gross_margin_rate
+            margin_rate = self.commercial_terms_policy.margin_rate
+            margin_method = self.commercial_terms_policy.margin_method
 
             fx_applied = (str(quote_currency or '').upper() != 'PGK') and (export_payment_term == ExportPaymentTerm.PREPAID)
             defaults_used: list[dict[str, str]] = []
@@ -546,6 +547,7 @@ class PricingServiceV4Adapter:
                 tt_sell=tt_sell,
                 caf_rate=caf_rate,
                 margin_rate=margin_rate,
+                margin_method=margin_method,
                 destination_currency=destination_currency,
                 preferred_agent_id=self.quote_input.agent_id,
                 preferred_carrier_id=self.quote_input.carrier_id,
@@ -582,7 +584,8 @@ class PricingServiceV4Adapter:
                     "Import CAF rate is missing in CommercialTermsPolicy; calculation fails closed."
                 )
             caf_used = caf_rate
-            margin_rate = self.commercial_terms_policy.target_gross_margin_rate
+            margin_rate = self.commercial_terms_policy.margin_rate
+            margin_method = self.commercial_terms_policy.margin_method
 
             normalized_quote_currency = str(quote_currency or "").upper() or "PGK"
             normalized_buy_currency = str(getattr(self.quote_input, "buy_currency", None) or "").upper() or None
@@ -626,6 +629,7 @@ class PricingServiceV4Adapter:
                 tt_sell=tt_sell,
                 caf_rate=caf_rate,
                 margin_rate=margin_rate,
+                margin_method=margin_method,
                 fx_rates=fx_rates,
                 quote_currency=quote_currency,
                 preferred_agent_id=self.quote_input.agent_id,
@@ -1347,11 +1351,11 @@ class PricingServiceV4Adapter:
             raise MissingCommercialPolicyError(
                 "No active CommercialTermsPolicy found for SPOT calculation; calculation fails closed."
             )
-        if self.commercial_terms_policy.target_gross_margin_rate is None:
+        if self.commercial_terms_policy.margin_rate is None:
             raise MissingCommercialPolicyError(
-                "Target gross margin is missing in CommercialTermsPolicy for SPOT calculation; calculation fails closed."
+                "Margin is missing in CommercialTermsPolicy for SPOT calculation; calculation fails closed."
             )
-        margin_pct = self.commercial_terms_policy.target_gross_margin_rate
+        margin_pct = self.commercial_terms_policy.margin_rate
 
         shipment_type = getattr(self.quote_input.shipment, "shipment_type", None)
         if shipment_type == "IMPORT":
@@ -1479,7 +1483,7 @@ class PricingServiceV4Adapter:
                 cost_pgk = self._convert_fcy_to_pgk(cost_fcy, fx_buy, caf_pct)
             
             # Apply margin for sell price
-            sell_pgk = cost_pgk * (Decimal('1') + margin_pct)
+            sell_pgk = self.commercial_terms_policy.apply_margin(cost_pgk)
             
             # [FIX] Apply Tax Policy (GST)
             # We map the SPOT bucket/info to the attributes expected by apply_gst_policy

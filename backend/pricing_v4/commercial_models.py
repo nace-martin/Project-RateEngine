@@ -219,15 +219,24 @@ class CommercialChargeAlias(models.Model):
 
 
 class CommercialTermsPolicy(models.Model):
+    class MarginMethod(models.TextChoices):
+        MARKUP_ON_COST = "MARKUP_ON_COST", "Markup on Cost"
+        TARGET_GROSS_MARGIN = "TARGET_GROSS_MARGIN", "Target Gross Margin"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     policy_code = models.CharField(max_length=64, unique=True)
     valid_from = models.DateField()
     valid_until = models.DateField(null=True, blank=True)
-    target_gross_margin_percent = models.DecimalField(
+    margin_percent = models.DecimalField(
         max_digits=5,
         decimal_places=2,
         null=True,
         blank=True,
+    )
+    margin_method = models.CharField(
+        max_length=32,
+        choices=MarginMethod.choices,
+        default=MarginMethod.MARKUP_ON_COST,
     )
     import_caf_percent = models.DecimalField(
         max_digits=5,
@@ -261,12 +270,19 @@ class CommercialTermsPolicy(models.Model):
                 name="comm_policy_valid_window",
             ),
             models.CheckConstraint(
-                condition=models.Q(target_gross_margin_percent__isnull=True)
+                condition=models.Q(margin_percent__isnull=True)
                 | (
-                    models.Q(target_gross_margin_percent__gte=0)
-                    & models.Q(target_gross_margin_percent__lt=100)
+                    models.Q(margin_percent__gte=0)
+                    & (
+                        models.Q(margin_method="MARKUP_ON_COST")
+                        | models.Q(margin_percent__lt=100)
+                    )
                 ),
                 name="comm_policy_margin_valid_range",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(margin_method__in=["MARKUP_ON_COST", "TARGET_GROSS_MARGIN"]),
+                name="comm_policy_margin_method_valid",
             ),
             models.CheckConstraint(
                 condition=models.Q(import_caf_percent__isnull=True)
@@ -301,14 +317,18 @@ class CommercialTermsPolicy(models.Model):
             raise ValidationError(
                 {"valid_until": "valid_until must be strictly greater than valid_from."}
             )
-        if (
-            self.target_gross_margin_percent is not None
-            and (self.target_gross_margin_percent < 0 or self.target_gross_margin_percent >= 100)
-        ):
+        if self.margin_percent is not None:
+            if self.margin_percent < 0:
+                raise ValidationError(
+                    {"margin_percent": "Margin percent must be >= 0%."}
+                )
+            if self.margin_method == self.MarginMethod.TARGET_GROSS_MARGIN and self.margin_percent >= 100:
+                raise ValidationError(
+                    {"margin_percent": "Target gross margin percent must be < 100%."}
+                )
+        if self.margin_method not in [self.MarginMethod.MARKUP_ON_COST, self.MarginMethod.TARGET_GROSS_MARGIN]:
             raise ValidationError(
-                {
-                    "target_gross_margin_percent": "Target gross margin percent must be >= 0% and < 100%."
-                }
+                {"margin_method": f"Invalid margin method '{self.margin_method}'."}
             )
         if self.import_caf_percent is not None and (
             self.import_caf_percent < 0 or self.import_caf_percent > 100
@@ -330,6 +350,10 @@ class CommercialTermsPolicy(models.Model):
             )
 
     @property
+    def margin_rate(self) -> Decimal | None:
+        return (self.margin_percent / Decimal(100)) if self.margin_percent is not None else None
+
+    @property
     def import_caf_rate(self) -> Decimal | None:
         return (self.import_caf_percent / Decimal(100)) if self.import_caf_percent is not None else None
 
@@ -338,12 +362,31 @@ class CommercialTermsPolicy(models.Model):
         return (self.export_caf_percent / Decimal(100)) if self.export_caf_percent is not None else None
 
     @property
-    def target_gross_margin_rate(self) -> Decimal | None:
-        return (self.target_gross_margin_percent / Decimal(100)) if self.target_gross_margin_percent is not None else None
-
-    @property
     def gst_standard_rate(self) -> Decimal | None:
         return (self.gst_standard_percent / Decimal(100)) if self.gst_standard_percent is not None else None
+
+    def apply_margin(self, cost_amount: Decimal) -> Decimal:
+        """
+        Apply margin to cost_amount according to policy margin_method and margin_rate.
+        """
+        from pricing_v4.services.commercial_policy import (
+            MissingCommercialPolicyError,
+        )
+
+        if self.margin_percent is None or self.margin_rate is None:
+            raise MissingCommercialPolicyError(
+                f"CommercialTermsPolicy '{self.policy_code}' has no margin_percent defined."
+            )
+        if self.margin_method == self.MarginMethod.TARGET_GROSS_MARGIN:
+            if self.margin_rate >= Decimal(1):
+                raise ValidationError("Target gross margin rate must be < 1.00.")
+            return cost_amount / (Decimal(1) - self.margin_rate)
+        elif self.margin_method == self.MarginMethod.MARKUP_ON_COST:
+            return cost_amount * (Decimal(1) + self.margin_rate)
+        else:
+            raise MissingCommercialPolicyError(
+                f"Unsupported margin_method '{self.margin_method}'."
+            )
 
     def __str__(self):
         return f"{self.policy_code} (Valid: {self.valid_from} - {self.valid_until or 'Present'})"

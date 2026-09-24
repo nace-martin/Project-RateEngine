@@ -4,11 +4,24 @@ Quick reference for RateEngine pricing logic.
 
 ## Core Parameters
 
-| Parameter | Value |
-|-----------|-------|
-| Margin | 20% |
-| CAF Import | 5% |
-| CAF Export | 10% |
+| Parameter | Value | Method / Semantics |
+|-----------|-------|--------------------|
+| Margin | 20% | MARKUP_ON_COST (`Cost × (1 + Margin)`) |
+| CAF Import | 5% | Bank TT BUY deduction |
+| CAF Export | 10% | Bank TT SELL addition |
+| Standard GST | 10% | Domestic / taxable scope |
+
+### Margin Semantics (`CommercialTermsPolicy`)
+
+RateEngine explicitly separates margin percentage from calculation method:
+- `margin_percent`: Numeric rate (e.g. 20.00%).
+- `margin_method`:
+  - `MARKUP_ON_COST` (Active canonical launch policy): $\text{SELL} = \text{Cost} \times (1 + \text{margin\_rate})$. A K100 cost at 20% markup yields K120 sell.
+  - `TARGET_GROSS_MARGIN` (Supported target): $\text{SELL} = \frac{\text{Cost}}{1 - \text{margin\_rate}}$. A K100 cost at 20% target gross margin yields K125 sell.
+
+RateEngine enforces:
+- Approved direct `SELL` rates are never re-margined.
+- Cost-derived pricing without an active commercial margin fails closed (no silent or hardcoded fallbacks).
 
 ## Scenario Quick Reference
 
@@ -26,7 +39,7 @@ Quick reference for RateEngine pricing logic.
 ## FX Pipeline
 
 ```
-FCY Cost → × FX_BUY → × (1 + CAF) → × (1 + Margin) → PGK Sell
+FCY Cost → × FX_BUY → × (1 + CAF) → apply_margin(Cost) → PGK Sell
 ```
 
 ## Quote Currency Authority

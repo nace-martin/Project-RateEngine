@@ -30,7 +30,7 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"Latest active CommercialTermsPolicy: {latest_comm_active.policy_code} "
                 f"(valid_from={latest_comm_active.valid_from}, valid_until={latest_comm_active.valid_until or 'indefinite'}, "
-                f"margin={latest_comm_active.target_gross_margin_percent}%, "
+                f"margin={latest_comm_active.margin_percent}% ({latest_comm_active.margin_method}), "
                 f"import_caf={latest_comm_active.import_caf_percent}%, "
                 f"export_caf={latest_comm_active.export_caf_percent}%, "
                 f"gst={latest_comm_active.gst_standard_percent}%)"
@@ -41,7 +41,7 @@ class Command(BaseCommand):
         if resolved_comm_policy:
             self.stdout.write(
                 f"Adapter resolved CommercialTermsPolicy: {resolved_comm_policy.policy_code} "
-                f"(ID: {resolved_comm_policy.id}, margin_rate: {resolved_comm_policy.target_gross_margin_rate})"
+                f"(ID: {resolved_comm_policy.id}, margin_rate: {resolved_comm_policy.margin_rate}, margin_method: {resolved_comm_policy.margin_method})"
             )
         else:
             self.stdout.write(self.style.ERROR("Adapter resolved CommercialTermsPolicy: None (CALCULATION WILL FAIL CLOSED)"))

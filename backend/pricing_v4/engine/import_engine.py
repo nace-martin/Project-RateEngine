@@ -138,6 +138,7 @@ class ImportPricingEngine:
         tt_sell: Optional[Decimal] = None,
         caf_rate: Any = _POLICY_DEFAULT,
         margin_rate: Any = _POLICY_DEFAULT,
+        margin_method: Optional[str] = None,
         fx_rates: Optional[Dict] = None,
         quote_currency: Optional[str] = None,
         preferred_agent_id: Optional[int] = None,
@@ -159,9 +160,11 @@ class ImportPricingEngine:
             if caf_rate is _POLICY_DEFAULT:
                 caf_rate = policy.import_caf_rate
             if margin_rate is _POLICY_DEFAULT:
-                margin_rate = policy.target_gross_margin_rate
+                margin_rate = policy.margin_rate
+                margin_method = policy.margin_method
         self.caf_rate = caf_rate
         self.margin_rate = margin_rate
+        self.margin_method = margin_method or 'MARKUP_ON_COST'
         self.fx_rates = fx_rates or {}
         self._warnings: List[str] = []
         self._audit_metadata: Dict[str, List[dict[str, str]]] = {"fx_fallbacks": []}
@@ -303,12 +306,24 @@ class ImportPricingEngine:
         """Apply margin (always last)."""
         if self.margin_rate is None:
             raise MissingCommercialPolicyError(
-                "Missing target gross margin in CommercialTermsPolicy for cost-derived calculation; "
+                "Missing margin in CommercialTermsPolicy for cost-derived calculation; "
                 "calculation fails closed."
             )
-        return (amount * (Decimal('1') + self.margin_rate)).quantize(
-            Decimal('0.01'), rounding=ROUND_HALF_UP
-        )
+        if self.margin_method == "TARGET_GROSS_MARGIN":
+            if self.margin_rate >= Decimal(1):
+                from django.core.exceptions import ValidationError
+                raise ValidationError("Target gross margin rate must be < 1.00.")
+            return (amount / (Decimal('1') - self.margin_rate)).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP
+            )
+        elif self.margin_method == "MARKUP_ON_COST":
+            return (amount * (Decimal('1') + self.margin_rate)).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP
+            )
+        else:
+            raise MissingCommercialPolicyError(
+                f"Unsupported margin_method '{self.margin_method}'; calculation fails closed."
+            )
     
     def _calculate_cogs_amount(self, cogs, pc: ProductCode) -> RuleEvaluation:
         """Calculate COGS amount for a rate record."""

@@ -34,7 +34,8 @@ class CommercialPolicyResolutionTests(TestCase):
             policy_code="POLICY-2026",
             valid_from=date(2026, 1, 1),
             valid_until=date(2026, 12, 31),
-            target_gross_margin_percent=Decimal("20.00"),
+            margin_percent=Decimal("20.00"),
+            margin_method=CommercialTermsPolicy.MarginMethod.MARKUP_ON_COST,
             import_caf_percent=Decimal("5.00"),
             export_caf_percent=Decimal("10.00"),
             gst_standard_percent=Decimal("10.00"),
@@ -42,10 +43,33 @@ class CommercialPolicyResolutionTests(TestCase):
         )
 
     def test_property_rate_conversions(self):
-        self.assertEqual(self.policy_2026.target_gross_margin_rate, Decimal("0.20"))
+        self.assertEqual(self.policy_2026.margin_rate, Decimal("0.20"))
+        self.assertEqual(self.policy_2026.margin_method, CommercialTermsPolicy.MarginMethod.MARKUP_ON_COST)
         self.assertEqual(self.policy_2026.import_caf_rate, Decimal("0.05"))
         self.assertEqual(self.policy_2026.export_caf_rate, Decimal("0.10"))
         self.assertEqual(self.policy_2026.gst_standard_rate, Decimal("0.10"))
+
+    def test_markup_on_cost_k100_equals_k120(self):
+        # Proves MARKUP_ON_COST at K100 = K120
+        self.assertEqual(self.policy_2026.apply_margin(Decimal("100.00")), Decimal("120.00"))
+
+    def test_target_gross_margin_k100_equals_k125(self):
+        # Proves TARGET_GROSS_MARGIN at K100 with 20% margin = K125 (100 / 0.80)
+        policy_gm = CommercialTermsPolicy(
+            policy_code="POLICY-GM",
+            valid_from=date(2026, 1, 1),
+            margin_percent=Decimal("20.00"),
+            margin_method=CommercialTermsPolicy.MarginMethod.TARGET_GROSS_MARGIN,
+            gst_standard_percent=Decimal("10.00"),
+        )
+        self.assertEqual(policy_gm.apply_margin(Decimal("100.00")), Decimal("125.00"))
+
+    def test_policy_method_persisted_and_resolved(self):
+        resolved = resolve_commercial_terms_policy(date(2026, 6, 15))
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.margin_method, CommercialTermsPolicy.MarginMethod.MARKUP_ON_COST)
+        self.assertEqual(resolved.margin_percent, Decimal("20.00"))
+        self.assertEqual(resolved.margin_rate, Decimal("0.20"))
 
     def test_resolve_within_date_window(self):
         resolved = resolve_commercial_terms_policy(date(2026, 6, 15))
@@ -115,7 +139,8 @@ class CommercialPolicyResolutionTests(TestCase):
             policy_code="POLICY-2027",
             valid_from=date(2027, 1, 1),
             valid_until=None,
-            target_gross_margin_percent=Decimal("25.00"),
+            margin_percent=Decimal("25.00"),
+            margin_method=CommercialTermsPolicy.MarginMethod.MARKUP_ON_COST,
             import_caf_percent=Decimal("6.00"),
             export_caf_percent=Decimal("12.00"),
             gst_standard_percent=Decimal("10.00"),
@@ -136,7 +161,8 @@ class AdapterCommercialPolicyCutoverTests(TestCase):
             policy_code="LAUNCH-POLICY-2026",
             valid_from=date(2026, 1, 1),
             valid_until=None,
-            target_gross_margin_percent=Decimal("20.00"),
+            margin_percent=Decimal("20.00"),
+            margin_method=CommercialTermsPolicy.MarginMethod.MARKUP_ON_COST,
             import_caf_percent=Decimal("5.00"),
             export_caf_percent=Decimal("10.00"),
             gst_standard_percent=Decimal("10.00"),
@@ -322,7 +348,7 @@ class AdapterCommercialPolicyCutoverTests(TestCase):
         )
         with self.assertRaises(MissingCommercialPolicyError) as cm:
             import_engine._apply_margin(Decimal("100.00"))
-        self.assertIn("target gross margin", str(cm.exception).lower())
+        self.assertIn("missing margin", str(cm.exception).lower())
 
         # 2. Export engine fails closed on cost-derived calculation when margin is None
         export_engine = ExportPricingEngine(
@@ -336,7 +362,7 @@ class AdapterCommercialPolicyCutoverTests(TestCase):
         )
         with self.assertRaises(MissingCommercialPolicyError) as cm:
             export_engine._apply_margin(Decimal("100.00"))
-        self.assertIn("target gross margin", str(cm.exception).lower())
+        self.assertIn("missing margin", str(cm.exception).lower())
 
     def test_approved_sell_not_remargined(self):
         # When target margin is null, approved direct SELL rates (Export Prepaid or Import A2D)
@@ -469,7 +495,7 @@ class AdapterCommercialPolicyCutoverTests(TestCase):
             adapter._calculate_spot_lines()
 
     def test_spot_null_margin_fails_closed_when_margin_required(self):
-        self.policy.target_gross_margin_percent = None
+        self.policy.margin_percent = None
         self.policy.save()
         spe = self._create_test_spe("IMPORT")
 
@@ -495,7 +521,7 @@ class AdapterCommercialPolicyCutoverTests(TestCase):
         adapter = PricingServiceV4Adapter(qi, spot_envelope_id=spe.id)
         with self.assertRaises(MissingCommercialPolicyError) as cm:
             adapter._calculate_spot_lines()
-        self.assertIn("target gross margin is missing", str(cm.exception).lower())
+        self.assertIn("margin is missing", str(cm.exception).lower())
 
     def test_spot_null_applicable_caf_fails_closed(self):
         # 1. Import SPOT fails closed on missing Import CAF
@@ -560,7 +586,8 @@ class AdapterCommercialPolicyCutoverTests(TestCase):
 
     def test_exact_existing_benchmark_parity(self):
         # Complete launch policy: 20% margin, 5% Import CAF, 10% Export CAF, 10% GST
-        self.policy.target_gross_margin_percent = Decimal("20.00")
+        self.policy.margin_percent = Decimal("20.00")
+        self.policy.margin_method = CommercialTermsPolicy.MarginMethod.MARKUP_ON_COST
         self.policy.import_caf_percent = Decimal("5.00")
         self.policy.export_caf_percent = Decimal("10.00")
         self.policy.gst_standard_percent = Decimal("10.00")
@@ -568,7 +595,8 @@ class AdapterCommercialPolicyCutoverTests(TestCase):
         self.policy.save()
 
         # Verify rate conversions match canonical 2026 baseline
-        self.assertEqual(self.policy.target_gross_margin_rate, Decimal("0.20"))
+        self.assertEqual(self.policy.margin_rate, Decimal("0.20"))
+        self.assertEqual(self.policy.margin_method, CommercialTermsPolicy.MarginMethod.MARKUP_ON_COST)
         self.assertEqual(self.policy.import_caf_rate, Decimal("0.05"))
         self.assertEqual(self.policy.export_caf_rate, Decimal("0.10"))
         self.assertEqual(self.policy.gst_standard_rate, Decimal("0.10"))
@@ -583,7 +611,8 @@ class AdapterCommercialPolicyCutoverTests(TestCase):
             tt_buy=Decimal("0.35"),
             tt_sell=Decimal("0.36"),
             caf_rate=self.policy.export_caf_rate,
-            margin_rate=self.policy.target_gross_margin_rate,
+            margin_rate=self.policy.margin_rate,
+            margin_method=self.policy.margin_method,
         )
         self.assertEqual(export_engine.caf_rate, Decimal("0.10"))
         self.assertEqual(export_engine.margin_rate, Decimal("0.20"))
@@ -599,7 +628,8 @@ class AdapterCommercialPolicyCutoverTests(TestCase):
             tt_buy=Decimal("0.35"),
             tt_sell=Decimal("0.36"),
             caf_rate=self.policy.import_caf_rate,
-            margin_rate=self.policy.target_gross_margin_rate,
+            margin_rate=self.policy.margin_rate,
+            margin_method=self.policy.margin_method,
         )
         self.assertEqual(import_engine.caf_rate, Decimal("0.05"))
         self.assertEqual(import_engine.margin_rate, Decimal("0.20"))
