@@ -1,0 +1,92 @@
+name: Wave 3B3 Snapshot Evidence
+
+on:
+  push:
+    branches:
+      - chore/cleanup-wave-3b3-fx-authority-cutover
+    paths:
+      - .github/workflows/wave3b3-snapshot-evidence.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - name: Patch adapter evidence handling
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('backend/pricing_v4/adapter.py')
+          text = p.read_text()
+
+          old_import = 'from django.db import models\n'
+          new_import = 'from django.db import models\nfrom django.utils import timezone\n'
+          if text.count(old_import) != 1:
+              raise SystemExit('django.db import anchor mismatch')
+          text = text.replace(old_import, new_import, 1)
+
+          old_init = '''        try:
+            self.fx_snapshot = FxSnapshot.objects.latest('as_of_timestamp')
+        except FxSnapshot.DoesNotExist:
+            self.fx_snapshot = None
+'''
+          new_init = '''        # New calculations never attach an unrelated global snapshot.  The exact
+        # resolved market facts are materialized lazily by get_fx_snapshot().
+        self.fx_snapshot = None
+'''
+          if text.count(old_init) != 1:
+              raise SystemExit(f'FX snapshot init anchor mismatch: {text.count(old_init)}')
+          text = text.replace(old_init, new_init, 1)
+
+          old_getter = '''    def get_fx_snapshot(self):
+        return self.fx_snapshot
+'''
+          new_getter = '''    def get_fx_snapshot(self):
+        if self.fx_snapshot is not None:
+            return self.fx_snapshot
+        if not self._resolved_fx_pairs:
+            return None
+
+        rates = {}
+        for key, pair in sorted(self._resolved_fx_pairs.items()):
+            rates[key] = {
+                "base_currency": pair.base_currency,
+                "quote_currency": pair.quote_currency,
+                "tt_buy": str(pair.tt_buy_rate),
+                "tt_sell": str(pair.tt_sell_rate),
+                "effective_date": pair.effective_date.isoformat(),
+                "source": pair.source,
+                "path": list(pair.path),
+            }
+
+        self.fx_snapshot = FxSnapshot.objects.create(
+            as_of_timestamp=timezone.now(),
+            source="FX_MARKET_RESOLVED",
+            rates=rates,
+            caf_percent=Decimal("0.0"),
+            fx_buffer_percent=Decimal("0.0"),
+        )
+        return self.fx_snapshot
+'''
+          if text.count(old_getter) != 1:
+              raise SystemExit(f'get_fx_snapshot anchor mismatch: {text.count(old_getter)}')
+          text = text.replace(old_getter, new_getter, 1)
+
+          p.write_text(text)
+          Path('.github/workflows/wave3b3-snapshot-evidence.yml').unlink()
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/pricing_v4/adapter.py .github/workflows/wave3b3-snapshot-evidence.yml
+          git diff --cached --check
+          git commit -m "fix(fx): snapshot exact resolved market facts [wave3b3-patched]"
+          git push origin HEAD:${{ github.ref_name }}
