@@ -1,4 +1,8 @@
-"""Permanent objective FX market rate facts; legacy pricing still uses core.models.FxRate/FxSnapshot."""
+"""Authoritative objective FX market facts for new RateEngine calculations.
+
+FxSnapshot remains the historical quote-evidence mechanism.  FxMarketRate is
+pure market data: CAF, margins and customer pricing policy do not belong here.
+"""
 
 import re
 import uuid
