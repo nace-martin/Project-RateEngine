@@ -170,27 +170,6 @@ class Location(models.Model):
 
 # --- NEW Models based on the Backend Design Spec ---
 
-class FxRate(models.Model):
-    """
-    Stores the LATEST available foreign exchange rates. This table is for live/indicative
-    rates and is updated daily. Quotes will NOT link to this directly; they will
-    link to an immutable FxSnapshot.
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    base_currency = models.ForeignKey(Currency, related_name='fx_base_rates', on_delete=models.CASCADE)
-    quote_currency = models.ForeignKey(Currency, related_name='fx_quote_rates', on_delete=models.CASCADE)
-    tt_buy = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True, help_text="Telegraphic Transfer Buy Rate")
-    tt_sell = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True, help_text="Telegraphic Transfer Sell Rate")
-    source = models.CharField(max_length=50)
-    last_updated = models.DateTimeField()
-
-    def __str__(self):
-        return f"{self.base_currency}/{self.quote_currency}"
-
-    class Meta:
-        unique_together = ('base_currency', 'quote_currency', 'source')
-
-
 class FxSnapshot(models.Model):
     """
     An immutable snapshot of all FX rates at a specific point in time.
