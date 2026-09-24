@@ -7,7 +7,7 @@ from .models import (
     City,
     Country,
     Currency,
-    FxRate,
+    FxMarketRate,
     FxSnapshot,
     Policy,
 )
@@ -16,6 +16,6 @@ admin.site.register(Currency)
 admin.site.register(Country)
 admin.site.register(City)
 admin.site.register(Airport)
-admin.site.register(FxRate)
+admin.site.register(FxMarketRate)
 admin.site.register(FxSnapshot)
 admin.site.register(Policy)
