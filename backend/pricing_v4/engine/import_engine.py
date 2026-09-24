@@ -21,6 +21,7 @@ from enum import Enum
 import logging
 
 from core.commodity import DEFAULT_COMMODITY_CODE
+from core.fx_resolution import MissingFxRateError, resolve_market_fx_pair
 from pricing_v4.services.commercial_policy import MissingCommercialPolicyError
 from pricing_v4.models import (
     ProductCode,
@@ -152,8 +153,16 @@ class ImportPricingEngine:
         self.payment_term = payment_term
         self.service_scope = service_scope
         
-        self.tt_buy = tt_buy or Decimal('0.35')  # Default TT BUY
-        self.tt_sell = tt_sell or Decimal('0.36')  # Default TT SELL
+        # Determine quote currency before deciding whether an FX fact is required.
+        self.quote_currency = quote_currency or self._determine_quote_currency()
+        self.tt_buy = tt_buy
+        self.tt_sell = tt_sell
+        if self.quote_currency != 'PGK' and (self.tt_buy is None or self.tt_sell is None):
+            pair = resolve_market_fx_pair(self.quote_currency, 'PGK', quote_date)
+            if self.tt_buy is None:
+                self.tt_buy = pair.tt_buy_rate
+            if self.tt_sell is None:
+                self.tt_sell = pair.tt_sell_rate
         if caf_rate is _POLICY_DEFAULT or margin_rate is _POLICY_DEFAULT:
             from pricing_v4.services.commercial_policy import require_commercial_terms_policy
             policy = require_commercial_terms_policy(quote_date)
@@ -167,10 +176,8 @@ class ImportPricingEngine:
         self.margin_method = margin_method or 'MARKUP_ON_COST'
         self.fx_rates = fx_rates or {}
         self._warnings: List[str] = []
-        self._audit_metadata: Dict[str, List[dict[str, str]]] = {"fx_fallbacks": []}
-        
-        # Determine quote currency (prefer explicit override, else derive)
-        self.quote_currency = quote_currency or self._determine_quote_currency()
+        self._audit_metadata: Dict[str, List[dict[str, str]]] = {}
+
         self.preferred_agent_id = preferred_agent_id
         self.preferred_carrier_id = preferred_carrier_id
         self.buy_currency = (buy_currency or "").strip().upper() or None
@@ -223,66 +230,51 @@ class ImportPricingEngine:
         return False
     
     def _get_rate_for_currency(self, currency: str, rate_type: str = 'tt_sell') -> Decimal:
-        """Get FX rate for specific currency."""
+        """Resolve a canonical FCY/PGK rate; no foreign-currency fallback exists."""
+        currency = str(currency or '').upper()
         if currency == 'PGK':
-            return Decimal('1.0')
-        
-        # Check standard rates
+            return Decimal('1')
+
         if currency == self.quote_currency:
-             return self.tt_buy if rate_type == 'tt_buy' else self.tt_sell
-             
-        # Look up in fx_rates
+            explicit = self.tt_buy if rate_type == 'tt_buy' else self.tt_sell
+            if explicit is not None:
+                return explicit
+
         info = self.fx_rates.get(currency)
-        if info and info.get(rate_type):
+        if info and info.get(rate_type) is not None:
             return Decimal(str(info[rate_type]))
-            
-        logger.warning(f"Missing {rate_type} rate for {currency}, defaulting to 1.0")
-        warning = f"FX {rate_type.upper()} rate missing for {currency}; used 1.0 fallback."
-        if warning not in self._warnings:
-            self._warnings.append(warning)
-        self._audit_metadata.setdefault("fx_fallbacks", []).append(
-            {
-                "currency": str(currency or "").upper() or "UNKNOWN",
-                "direction": rate_type.upper(),
-                "fallback_rate": "1.0",
-            }
-        )
-        return Decimal('1.0')
+
+        pair = resolve_market_fx_pair(currency, 'PGK', self.quote_date)
+        return pair.tt_buy_rate if rate_type == 'tt_buy' else pair.tt_sell_rate
 
     def _convert_fcy_to_pgk(self, amount: Decimal, currency: Optional[str] = None) -> Decimal:
-        """
-        FCY → PGK conversion (Import).
-        Uses TT BUY, CAF subtracted, DIVIDE.
-        """
+        """Convert FCY to PGK using canonical TT BUY less Import CAF."""
         if self.caf_rate is None:
             raise MissingCommercialPolicyError(
                 "Import CAF rate is required for FCY conversion; calculation fails closed."
             )
-        rate = self.tt_buy
-        if currency:
-            rate = self._get_rate_for_currency(currency, 'tt_buy')
-            
+        rate = self._get_rate_for_currency(currency, 'tt_buy') if currency else self.tt_buy
+        if rate is None or rate <= 0:
+            raise MissingFxRateError("A positive TT BUY rate is required for FCY to PGK conversion.")
         effective_rate = rate * (Decimal('1') - self.caf_rate)
-        if effective_rate == 0: return amount # Prevent div/0
-        
-        pgk = amount / effective_rate
+        if effective_rate <= 0:
+            raise MissingFxRateError("Effective Import TT BUY rate must be positive.")
+        pgk = amount * effective_rate
         return pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     
     def _convert_pgk_to_fcy(self, amount: Decimal, target_currency: Optional[str] = None) -> Decimal:
-        """
-        PGK → FCY conversion.
-        Uses TT SELL, CAF subtracted (Import), MULTIPLY.
-        """
+        """Convert PGK to FCY using canonical TT SELL less Import CAF."""
         if self.caf_rate is None:
             raise MissingCommercialPolicyError(
                 "Import CAF rate is required for PGK to FCY conversion; calculation fails closed."
             )
-        rate = self.tt_sell
-        if target_currency:
-             rate = self._get_rate_for_currency(target_currency, 'tt_sell')
-             
+        rate = self._get_rate_for_currency(target_currency, 'tt_sell') if target_currency else self.tt_sell
+        if rate is None or rate <= 0:
+            raise MissingFxRateError("A positive TT SELL rate is required for PGK to FCY conversion.")
         effective_rate = rate * (Decimal('1') - self.caf_rate)
-        fcy = amount * effective_rate
+        if effective_rate <= 0:
+            raise MissingFxRateError("Effective Import TT SELL rate must be positive.")
+        fcy = amount / effective_rate
         return fcy.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     
     def _convert_cross_currency(self, amount: Decimal, from_curr: str, to_curr: str) -> Decimal:
@@ -393,7 +385,7 @@ class ImportPricingEngine:
         if self.payment_term == PaymentTerm.COLLECT:
             result.effective_fx_rate = (
                 self.tt_buy * (Decimal('1') - self.caf_rate)
-                if self.caf_rate is not None
+                if self.caf_rate is not None and self.tt_buy is not None
                 else None
             )
         else:

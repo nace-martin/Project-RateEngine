@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 from enum import Enum
 
 from core.commodity import DEFAULT_COMMODITY_CODE
+from core.fx_resolution import MissingFxRateError, resolve_market_fx_pair
 from pricing_v4.services.commercial_policy import MissingCommercialPolicyError
 from pricing_v4.commodity_rules import get_auto_product_code_ids
 from pricing_v4.models import (
@@ -182,9 +183,22 @@ class ExportPricingEngine:
         self.chargeable_weight_kg = chargeable_weight_kg
         self.payment_term = payment_term
         
-        # FX rates
-        self.tt_buy = tt_buy or Decimal('0.35')
-        self.tt_sell = tt_sell or Decimal('0.36')
+        # Destination currency determines COLLECT output before FX resolution.
+        self.destination_currency = destination_currency
+        self.preferred_agent_id = preferred_agent_id
+        self.preferred_carrier_id = preferred_carrier_id
+        self.buy_currency = (buy_currency or "").strip().upper() or None
+        self.quote_currency = self._determine_quote_currency()
+
+        # FX inputs are optional only when no conversion is required.
+        self.tt_buy = tt_buy
+        self.tt_sell = tt_sell
+        if self.quote_currency != 'PGK' and (self.tt_buy is None or self.tt_sell is None):
+            pair = resolve_market_fx_pair(self.quote_currency, 'PGK', quote_date)
+            if self.tt_buy is None:
+                self.tt_buy = pair.tt_buy_rate
+            if self.tt_sell is None:
+                self.tt_sell = pair.tt_sell_rate
         if caf_rate is _POLICY_DEFAULT or margin_rate is _POLICY_DEFAULT:
             from pricing_v4.services.commercial_policy import require_commercial_terms_policy
             policy = require_commercial_terms_policy(quote_date)
@@ -196,15 +210,7 @@ class ExportPricingEngine:
         self.caf_rate = caf_rate
         self.margin_rate = margin_rate
         self.margin_method = margin_method or 'MARKUP_ON_COST'
-        
-        # Destination currency used when COLLECT quotes resolve to FCY
-        self.destination_currency = destination_currency
-        self.preferred_agent_id = preferred_agent_id
-        self.preferred_carrier_id = preferred_carrier_id
-        self.buy_currency = (buy_currency or "").strip().upper() or None
-        
-        # Determine quote currency based on payment term
-        self.quote_currency = self._determine_quote_currency()
+
         
         # Cache for calculated values (needed for percentage surcharges)
         self._sell_cache: Dict[int, Decimal] = {}
@@ -220,15 +226,15 @@ class ExportPricingEngine:
             raise MissingCommercialPolicyError(
                 "Export CAF rate is required for FCY conversion; calculation fails closed."
             )
+        if self.tt_sell is None:
+            raise MissingFxRateError(
+                f"TT SELL is required for PGK/{self.quote_currency} conversion."
+            )
         effective_rate = self.tt_sell * (Decimal('1') + self.caf_rate)
         if effective_rate <= 0:
-            return amount
-        # FX snapshots may store either FCY/PGK (<1) or PGK/FCY (>1).
-        # Use the same orientation heuristic as the adapter conversion helpers.
-        if effective_rate >= 1:
-            fcy = amount / effective_rate
-        else:
-            fcy = amount * effective_rate
+            raise MissingFxRateError("Effective Export FX rate must be positive.")
+        # Canonical market orientation is FCY/PGK = PGK per one FCY.
+        fcy = amount / effective_rate
         return fcy.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     
     def _apply_margin(self, amount: Decimal) -> Decimal:
@@ -255,6 +261,10 @@ class ExportPricingEngine:
         if self.caf_rate is None:
             raise MissingCommercialPolicyError(
                 "Export CAF rate is required; calculation fails closed."
+            )
+        if self.tt_sell is None:
+            raise MissingFxRateError(
+                f"TT SELL is required for {self.quote_currency}/PGK conversion."
             )
         return self.tt_sell * (Decimal('1') + self.caf_rate)
     
@@ -646,17 +656,16 @@ class ExportPricingEngine:
         )
 
     def _convert_amount_to_pgk(self, amount: Decimal, currency: str) -> Decimal:
+        currency = str(currency or 'PGK').upper()
         if currency == 'PGK':
             return amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-        effective_rate = self._get_effective_fx_rate()
-        if effective_rate <= 0:
-            return amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-
-        if effective_rate >= 1:
+        if currency == self.quote_currency:
+            effective_rate = self._get_effective_fx_rate()
             pgk = amount * effective_rate
         else:
-            pgk = amount / effective_rate
+            pair = resolve_market_fx_pair(currency, 'PGK', self.quote_date)
+            pgk = amount * pair.tt_buy_rate
         return pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     @staticmethod

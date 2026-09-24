@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from uuid import UUID
 
 from core.commodity import DEFAULT_COMMODITY_CODE
+from core.fx_resolution import MissingFxRateError, resolve_market_fx_pair
 from core.models import FxSnapshot, Policy
 from django.db import models
 from core.dataclasses import (
@@ -111,6 +112,7 @@ class PricingServiceV4Adapter:
         self._source_result_context: dict[str, object] = {}
         self._audit_warnings: list[str] = []
         self._audit_metadata: dict[str, object] = {}
+        self._resolved_fx_pairs: dict[str, object] = {}
         
         # Resolve active CommercialTermsPolicy for commercial calculations (Wave 3B2 cutover)
         quote_date = getattr(quote_input, "quote_date", None) if quote_input else None
@@ -143,20 +145,19 @@ class PricingServiceV4Adapter:
             ordered.append(normalized)
         return ordered
 
-    def _record_fx_fallback(self, direction: str, currency: str) -> None:
-        curr = str(currency or "").upper() or "UNKNOWN"
-        warning = f"FX {direction.upper()} rate missing for {curr}; used 1.0 fallback."
-        self._audit_warnings.append(warning)
-        self._audit_metadata.setdefault("fx_fallbacks", [])
-        fx_fallbacks = self._audit_metadata["fx_fallbacks"]
-        if isinstance(fx_fallbacks, list):
-            fx_fallbacks.append(
-                {
-                    "direction": direction.upper(),
-                    "currency": curr,
-                    "fallback_rate": "1.0",
-                }
-            )
+    def _record_resolved_fx(self, pair) -> None:
+        key = f"{pair.base_currency}/{pair.quote_currency}"
+        self._resolved_fx_pairs[key] = pair
+        self._audit_metadata.setdefault("fx_market_facts", {})
+        facts = self._audit_metadata["fx_market_facts"]
+        if isinstance(facts, dict):
+            facts[key] = {
+                "effective_date": pair.effective_date.isoformat(),
+                "source": pair.source,
+                "tt_buy": str(pair.tt_buy_rate),
+                "tt_sell": str(pair.tt_sell_rate),
+                "path": list(pair.path),
+            }
 
     def _capture_fx_audit(
         self,
@@ -262,9 +263,6 @@ class PricingServiceV4Adapter:
             return amount
 
         fx_sell = self._get_fx_sell_rate(curr, fx_rates)
-        if fx_sell <= 0:
-            logger.warning("Invalid FX sell rate for discount currency %s; using 1.0", curr)
-            fx_sell = Decimal('1')
         return amount * fx_sell
 
     def _product_code_ids_by_service_component(
@@ -482,10 +480,7 @@ class PricingServiceV4Adapter:
         dest_code = _normalize_station_code(getattr(shipment.destination_location, "code", None))
 
         if shipment.shipment_type == 'EXPORT':
-            # Export Engine - now supports payment term and FCY conversion
-            # Get FX rates from snapshot
-            fx_rates = self._get_fx_rates_dict()
-
+            # Export Engine - market FX resolves from FxMarketRate, never FxSnapshot.
             # Convert payment term string to enum and enforce resolved currency rules:
             # - STANDARD mode: country-based rule output (AUD/USD/PGK)
             # - SPOT mode: PGK
@@ -495,12 +490,13 @@ class PricingServiceV4Adapter:
             # This is critical for SPOT mode where output is forced to PGK.
             destination_currency = quote_currency
             
-            # Get TT rates for the quote currency
-            fx_info = fx_rates.get(quote_currency, {})
-            tt_buy_from_snapshot = bool(fx_info and fx_info.get('tt_buy') is not None)
-            tt_sell_from_snapshot = bool(fx_info and fx_info.get('tt_sell') is not None)
-            tt_buy = Decimal(str(fx_info.get('tt_buy'))) if tt_buy_from_snapshot else Decimal('2.50')
-            tt_sell = Decimal(str(fx_info.get('tt_sell'))) if tt_sell_from_snapshot else Decimal('2.78')
+            tt_buy = None
+            tt_sell = None
+            if str(quote_currency or '').upper() != 'PGK':
+                pair = resolve_market_fx_pair(quote_currency, 'PGK', self.quote_input.quote_date)
+                self._record_resolved_fx(pair)
+                tt_buy = pair.tt_buy_rate
+                tt_sell = pair.tt_sell_rate
             
             # Get CAF and margin from CommercialTermsPolicy (Wave 3B2 cutover)
             if not self.commercial_terms_policy:
@@ -517,12 +513,8 @@ class PricingServiceV4Adapter:
             margin_rate = self.commercial_terms_policy.margin_rate
             margin_method = self.commercial_terms_policy.margin_method
 
-            fx_applied = (str(quote_currency or '').upper() != 'PGK') and (export_payment_term == ExportPaymentTerm.PREPAID)
+            fx_applied = str(quote_currency or '').upper() != 'PGK'
             defaults_used: list[dict[str, str]] = []
-            if not tt_buy_from_snapshot:
-                defaults_used.append({"field": "tt_buy", "currency": str(quote_currency or "").upper() or "UNKNOWN", "default": str(tt_buy)})
-            if not tt_sell_from_snapshot:
-                defaults_used.append({"field": "tt_sell", "currency": str(quote_currency or "").upper() or "UNKNOWN", "default": str(tt_sell)})
 
             self._capture_fx_audit(
                 applied=fx_applied,
@@ -559,18 +551,22 @@ class PricingServiceV4Adapter:
             payment_term_enum = PaymentTerm(shipment.payment_term)
             service_scope_enum = ServiceScope(shipment.service_scope)
             
-            # Prepare FX data
-            fx_rates = self._get_fx_rates_dict()
-            # PRIORITY: Use the currency already determined by the View/User (Customer Preference)
-            # If not set, fallback to adapter logic
+            # Market FX authority is FxMarketRate.
             quote_currency = self.get_output_currency()
-            
-            fx_info = fx_rates.get(quote_currency, {})
-            # Use defaults if missing (same as Export)
-            tt_buy_from_snapshot = bool(fx_info and fx_info.get('tt_buy') is not None)
-            tt_sell_from_snapshot = bool(fx_info and fx_info.get('tt_sell') is not None)
-            tt_buy = Decimal(str(fx_info.get('tt_buy'))) if tt_buy_from_snapshot else Decimal('0.35')
-            tt_sell = Decimal(str(fx_info.get('tt_sell'))) if tt_sell_from_snapshot else Decimal('0.36')
+            normalized_quote_currency = str(quote_currency or 'PGK').upper()
+            normalized_buy_currency = str(getattr(self.quote_input, 'buy_currency', None) or '').upper() or None
+            tt_buy = None
+            tt_sell = None
+            rate_currency = (
+                normalized_quote_currency
+                if normalized_quote_currency != 'PGK'
+                else normalized_buy_currency
+            )
+            if rate_currency and rate_currency != 'PGK':
+                pair = resolve_market_fx_pair(rate_currency, 'PGK', self.quote_input.quote_date)
+                self._record_resolved_fx(pair)
+                tt_buy = pair.tt_buy_rate
+                tt_sell = pair.tt_sell_rate
             
             # Get CAF and margin from CommercialTermsPolicy (Wave 3B2 cutover)
             if not self.commercial_terms_policy:
@@ -587,14 +583,8 @@ class PricingServiceV4Adapter:
             margin_rate = self.commercial_terms_policy.margin_rate
             margin_method = self.commercial_terms_policy.margin_method
 
-            normalized_quote_currency = str(quote_currency or "").upper() or "PGK"
-            normalized_buy_currency = str(getattr(self.quote_input, "buy_currency", None) or "").upper() or None
             fx_applied = (normalized_quote_currency != "PGK") or (normalized_buy_currency not in (None, "", "PGK"))
             defaults_used = []
-            if not tt_buy_from_snapshot:
-                defaults_used.append({"field": "tt_buy", "currency": normalized_quote_currency, "default": str(tt_buy)})
-            if not tt_sell_from_snapshot:
-                defaults_used.append({"field": "tt_sell", "currency": normalized_quote_currency, "default": str(tt_sell)})
 
             if fx_applied:
                 if normalized_quote_currency != "PGK":
@@ -630,7 +620,7 @@ class PricingServiceV4Adapter:
                 caf_rate=caf_rate,
                 margin_rate=margin_rate,
                 margin_method=margin_method,
-                fx_rates=fx_rates,
+                fx_rates={},
                 quote_currency=quote_currency,
                 preferred_agent_id=self.quote_input.agent_id,
                 preferred_carrier_id=self.quote_input.carrier_id,
@@ -1033,59 +1023,37 @@ class PricingServiceV4Adapter:
                 return {}
         return rates or {}
 
-    def _get_fx_buy_rate(self, currency: str, rates: dict) -> Decimal:
+    def _get_fx_buy_rate(self, currency: str, rates: dict | None = None) -> Decimal:
+        currency = str(currency or 'PGK').upper()
         if currency == 'PGK':
             return Decimal('1')
-        info = rates.get(currency, {})
-        if info and info.get('tt_buy'):
-            return Decimal(str(info['tt_buy']))
-        logger.warning("No FX BUY rate found for %s; using 1.0", currency)
-        self._record_fx_fallback("BUY", currency)
-        return Decimal('1')
+        pair = resolve_market_fx_pair(currency, 'PGK', self.quote_input.quote_date)
+        self._record_resolved_fx(pair)
+        return pair.tt_buy_rate
 
-    def _get_fx_sell_rate(self, currency: str, rates: dict) -> Decimal:
+    def _get_fx_sell_rate(self, currency: str, rates: dict | None = None) -> Decimal:
+        currency = str(currency or 'PGK').upper()
         if currency == 'PGK':
             return Decimal('1')
-        info = rates.get(currency, {})
-        if info and info.get('tt_sell'):
-            return Decimal(str(info['tt_sell']))
-        logger.warning("No FX SELL rate found for %s; using 1.0", currency)
-        self._record_fx_fallback("SELL", currency)
-        return Decimal('1')
+        pair = resolve_market_fx_pair(currency, 'PGK', self.quote_input.quote_date)
+        self._record_resolved_fx(pair)
+        return pair.tt_sell_rate
 
     def _convert_fcy_to_pgk(self, amount: Decimal, fx_rate: Decimal, caf_pct: Decimal = Decimal('0')) -> Decimal:
-        """
-        Convert FCY to PGK using the stored TT BUY rate.
-        CAF Rule: When using TT BUY to convert FCY -> PGK, subtract the CAF percentage.
-        """
-        if fx_rate <= 0:
-            return amount
-            
+        if fx_rate is None or fx_rate <= 0:
+            raise MissingFxRateError("A positive TT BUY rate is required for FCY to PGK conversion.")
         rate = fx_rate * (Decimal('1') - caf_pct)
         if rate <= 0:
-            return amount
-            
-        # The system usually stores rates as FCY per PGK (e.g., 0.3342 AUD per 1 PGK),
-        # but may also contain PGK per FCY (>1). Use a safe heuristic:
-        if rate >= 1:
-            return amount * rate
-        return amount / rate
+            raise MissingFxRateError("Effective FX BUY rate must be positive.")
+        return amount * rate
 
     def _convert_pgk_to_fcy(self, amount: Decimal, fx_rate: Decimal, caf_pct: Decimal = Decimal('0')) -> Decimal:
-        """
-        Convert PGK to FCY using the stored TT SELL rate.
-        CAF Rule: When using TT SELL to convert PGK -> FCY, add the CAF percentage.
-        """
-        if fx_rate <= 0:
-            return amount
-            
+        if fx_rate is None or fx_rate <= 0:
+            raise MissingFxRateError("A positive TT SELL rate is required for PGK to FCY conversion.")
         rate = fx_rate * (Decimal('1') + caf_pct)
         if rate <= 0:
-            return amount
-            
-        if rate >= 1:
-            return amount / rate
-        return amount * rate
+            raise MissingFxRateError("Effective FX SELL rate must be positive.")
+        return amount / rate
 
     def _calculate_chargeable_weight(self) -> Decimal:
         total_actual = Decimal('0')
