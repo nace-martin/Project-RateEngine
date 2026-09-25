@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 from core.dataclasses import CalculatedChargeLine, QuoteInput
+from core.fx_market_models import FxMarketRate
 from django.test import TestCase
 from django.utils import timezone
 from quotes.models import SPEAcknowledgementDB, SPEChargeLineDB, SpotPricingEnvelopeDB
@@ -25,6 +26,13 @@ class HybridPricingTest(TestCase):
 
         # Create a dummy quote input
         self.quote_input = MagicMock(spec=QuoteInput)
+        self.quote_input.quote_date = timezone.localdate()
+        # Explicit 1:1 market fixture preserves these non-FX SPOT assertions.
+        FxMarketRate.objects.create(
+            base_currency="USD", quote_currency="PGK", effective_date=self.quote_input.quote_date,
+            tt_buy_rate=Decimal("1.00"), tt_sell_rate=Decimal("1.00"),
+            mid_rate=Decimal("1.00"), source="TEST",
+        )
         self.quote_input.output_currency = 'PGK'
         self.quote_input.shipment = MagicMock()
         self.quote_input.shipment.pieces = []
@@ -348,6 +356,11 @@ class HybridPricingTest(TestCase):
         self.assertEqual(result.lines[0].service_component_desc, 'Spot Origin Charge')
 
     def test_mixed_currency_import_prepaid(self):
+        FxMarketRate.objects.create(
+            base_currency="AUD", quote_currency="PGK", effective_date=self.quote_input.quote_date,
+            tt_buy_rate=Decimal("2.00"), tt_sell_rate=Decimal("2.50"),
+            mid_rate=Decimal("2.25"), source="TEST",
+        )
         """
         [P1 Regression] Verify handling of Import Prepaid where Standard Engine returns FCY (AUD).
         Standard lines are in AUD, totals should be accurately calculated without double conversion.

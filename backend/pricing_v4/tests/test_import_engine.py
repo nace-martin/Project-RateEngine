@@ -89,6 +89,18 @@ class ImportEngineTestCase(TestCase):
         cls.valid_from = date.today() - timedelta(days=30)
         cls.valid_until = date.today() + timedelta(days=365)
 
+        # Market FX fixture for tests
+        from core.fx_market_models import FxMarketRate
+        FxMarketRate.objects.create(
+            base_currency='AUD',
+            quote_currency='PGK',
+            effective_date=cls.valid_from,
+            tt_buy_rate=Decimal('2.4510'),
+            tt_sell_rate=Decimal('2.5210'),
+            mid_rate=Decimal('2.4860'),
+            source='TEST',
+        )
+
 
 class ImportQuoteCurrencyTest(ImportEngineTestCase):
     """Test quote currency determination based on payment term."""
@@ -225,15 +237,13 @@ class ImportFxConversionTest(ImportEngineTestCase):
             chargeable_weight_kg=Decimal('100'),
             payment_term=PaymentTerm.COLLECT,
             service_scope=ServiceScope.D2D,
-            tt_buy=Decimal('0.35'),
             caf_rate=Decimal('0.05')
         )
         
         # 100 AUD should become:
-        # effective_rate = 0.35 * (1 - 0.05) = 0.3325
-        # pgk = 100 / 0.3325 = 300.75
-        result = engine._convert_fcy_to_pgk(Decimal('100'))
-        self.assertEqual(result, Decimal('300.75'))
+        # AUD/PGK TT BUY 2.4510 from the market fixture, less 5% CAF.
+        result = engine._convert_fcy_to_pgk(Decimal('100'), 'AUD')
+        self.assertEqual(result, Decimal('232.85'))
     
     def test_pgk_to_fcy_conversion(self):
         """Test PGK to FCY conversion with CAF."""
@@ -244,15 +254,14 @@ class ImportFxConversionTest(ImportEngineTestCase):
             chargeable_weight_kg=Decimal('100'),
             payment_term=PaymentTerm.PREPAID,
             service_scope=ServiceScope.A2D,
-            tt_sell=Decimal('0.36'),
+            quote_currency='AUD',
             caf_rate=Decimal('0.05')
         )
         
         # 500 PGK should become:
-        # effective_rate = 0.36 * (1 - 0.05) = 0.342
-        # fcy = 500 * 0.342 = 171.00
+        # AUD/PGK TT SELL 2.5210 from the market fixture, less 5% CAF.
         result = engine._convert_pgk_to_fcy(Decimal('500'))
-        self.assertEqual(result, Decimal('171.00'))
+        self.assertEqual(result, Decimal('208.77'))
 
 
 class ImportMarginTest(ImportEngineTestCase):
@@ -381,7 +390,7 @@ class ImportFullQuoteTest(ImportEngineTestCase):
         self.assertGreaterEqual(len(result.line_items), 1)
         self.assertGreaterEqual(result.total_sell_pgk, Decimal('0.00'))
         self.assertIsInstance(result.tax_breakdown, dict)
-        self.assertIsNotNone(result.fx_rate_used)
+        self.assertIsNone(result.fx_rate_used)  # PGK output needs no market FX.
         self.assertIsNotNone(result.caf_rate)
         self.assertEqual(set(result.__dict__.keys()), EXPECTED_QUOTE_RESULT_FIELDS)
         self.assertEqual(set(result.line_items[0].__dict__.keys()), EXPECTED_LINE_ITEM_FIELDS)

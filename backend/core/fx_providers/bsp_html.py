@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from typing import Dict, List
 import logging
@@ -43,7 +43,7 @@ class BspHtmlProvider:
         return d(x).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
 
     @staticmethod
-    def _parse_rates(html: str) -> Dict[str, Dict[str, Decimal]]:
+    def _parse_rates(html: str) -> tuple[date, Dict[str, Dict[str, Decimal]]]:
         try:
             soup = BeautifulSoup(html, "html.parser")
             table = None
@@ -58,6 +58,17 @@ class BspHtmlProvider:
             if table is None:
                 logger.error("BSP FX Scraper: Required exchange rate table not found in HTML structure.")
                 raise AttributeError("Exchange rate table missing")
+
+            section = table.find_parent("section", attrs={"rel": "CBCurrenciesTable"})
+            date_node = section.select_one("header h2 time") if section else None
+            if date_node is None:
+                raise RuntimeError("BSP published FX effective date missing")
+            try:
+                effective_date = datetime.strptime(
+                    date_node.get_text(strip=True), "%a, %d %B %Y"
+                ).date()
+            except ValueError as exc:
+                raise RuntimeError("BSP published FX effective date invalid") from exc
 
             rates: Dict[str, Dict[str, Decimal]] = {}
             # Expect rows with columns: Currency | Code | TT Buy | Notes Buy | A/M Buy | TT Sell | Notes Sell
@@ -84,7 +95,7 @@ class BspHtmlProvider:
                     continue
                 # Keep zeros; decision to skip is made per-direction in fetch()
                 rates[code] = {"TT_BUY": tt_buy, "TT_SELL": tt_sell}
-            return rates
+            return effective_date, rates
         except (AttributeError, TypeError) as e:
             logger.error(f"BSP FX Scraper: HTML parsing failed. The site structure may have changed. Error: {e}")
             raise RuntimeError(f"BSP Parse Error: {e}")
@@ -92,13 +103,13 @@ class BspHtmlProvider:
     def fetch(self, pairs: List[str]) -> List[RateRow]:
         try:
             html = self._fetch_html()
-            table = self._parse_rates(html)
+            effective_date, table = self._parse_rates(html)
         except Exception as e:
-            # Re-raise to allow the management command/service to handle fallback
+            # The management command rejects failed fetches without an old-rate fallback.
             logger.error(f"BSP FX Scraper: Fetch failed. {e}")
             raise
 
-        as_of = datetime.now(timezone.utc)
+        observed_at = datetime.now(timezone.utc)
         out: List[RateRow] = []
         for pair in pairs:
             if ":" not in pair:
@@ -109,9 +120,9 @@ class BspHtmlProvider:
                 if base == "PGK" and quote in table:
                     raw_buy = table[quote]["TT_BUY"]; raw_sell = table[quote]["TT_SELL"]
                     if raw_buy != Decimal("0.0000"):
-                        out.append(RateRow(as_of, base, quote, self._round4(raw_buy), "BUY", "bsp_html"))
+                        out.append(RateRow(observed_at, base, quote, self._round4(raw_buy), "BUY", "bsp_html", effective_date))
                     if raw_sell != Decimal("0.0000"):
-                        out.append(RateRow(as_of, base, quote, self._round4(raw_sell), "SELL", "bsp_html"))
+                        out.append(RateRow(observed_at, base, quote, self._round4(raw_sell), "SELL", "bsp_html", effective_date))
                 elif quote == "PGK" and base in table:
                     # Invert rates and SWAP labels:
                     # BSP TT_BUY = rate when bank buys FCY from you (you SELL FCY) → becomes our SELL
@@ -121,11 +132,11 @@ class BspHtmlProvider:
                     if sell_raw and sell_raw != Decimal("0.0000"):
                         # Customer BUY rate = inverted BSP TT_SELL
                         inv_buy = self._round4(Decimal(1) / sell_raw)
-                        out.append(RateRow(as_of, base, quote, inv_buy, "BUY", "bsp_html"))
+                        out.append(RateRow(observed_at, base, quote, inv_buy, "BUY", "bsp_html", effective_date))
                     if buy_raw and buy_raw != Decimal("0.0000"):
                         # Customer SELL rate = inverted BSP TT_BUY
                         inv_sell = self._round4(Decimal(1) / buy_raw)
-                        out.append(RateRow(as_of, base, quote, inv_sell, "SELL", "bsp_html"))
+                        out.append(RateRow(observed_at, base, quote, inv_sell, "SELL", "bsp_html", effective_date))
             except Exception as e:
                 logger.error(f"BSP FX Scraper: Unexpected error processing pair {base}:{quote}. Error: {e}")
                 continue

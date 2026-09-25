@@ -182,9 +182,9 @@ class ExportPricingEngine:
         self.chargeable_weight_kg = chargeable_weight_kg
         self.payment_term = payment_term
         
-        # FX rates
-        self.tt_buy = tt_buy or Decimal('0.35')
-        self.tt_sell = tt_sell or Decimal('0.36')
+        # FX rates - no fabricated defaults; missing required FX fails closed
+        self.tt_buy = tt_buy
+        self.tt_sell = tt_sell
         if caf_rate is _POLICY_DEFAULT or margin_rate is _POLICY_DEFAULT:
             from pricing_v4.services.commercial_policy import require_commercial_terms_policy
             policy = require_commercial_terms_policy(quote_date)
@@ -216,19 +216,26 @@ class ExportPricingEngine:
         return 'PGK'
     
     def _convert_pgk_to_fcy(self, amount: Decimal) -> Decimal:
+        if amount == Decimal('0'):
+            return Decimal('0.00')
         if self.caf_rate is None:
             raise MissingCommercialPolicyError(
                 "Export CAF rate is required for FCY conversion; calculation fails closed."
             )
+        if self.tt_sell is None and self.quote_currency != 'PGK':
+            from pricing_v4.services.fx_resolver import resolve_market_fx_pair
+            self.tt_sell = resolve_market_fx_pair(self.quote_currency, 'PGK', self.quote_date).tt_sell
+        if self.tt_sell is None:
+            from pricing_v4.services.fx_resolver import MissingFxMarketRateError
+            raise MissingFxMarketRateError(
+                f"Export conversion to '{self.quote_currency}' requires authoritative TT SELL FX rate; "
+                "calculation fails closed."
+            )
         effective_rate = self.tt_sell * (Decimal('1') + self.caf_rate)
         if effective_rate <= 0:
-            return amount
-        # FX snapshots may store either FCY/PGK (<1) or PGK/FCY (>1).
-        # Use the same orientation heuristic as the adapter conversion helpers.
-        if effective_rate >= 1:
-            fcy = amount / effective_rate
-        else:
-            fcy = amount * effective_rate
+            from pricing_v4.services.fx_resolver import MissingFxMarketRateError
+            raise MissingFxMarketRateError("Effective FX rate must be strictly positive.")
+        fcy = amount / effective_rate
         return fcy.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     
     def _apply_margin(self, amount: Decimal) -> Decimal:
@@ -251,12 +258,14 @@ class ExportPricingEngine:
                 f"Unsupported margin_method '{self.margin_method}'; calculation fails closed."
             )
     
-    def _get_effective_fx_rate(self) -> Decimal:
+    def _get_effective_fx_rate(self, currency: str) -> Decimal:
         if self.caf_rate is None:
             raise MissingCommercialPolicyError(
                 "Export CAF rate is required; calculation fails closed."
             )
-        return self.tt_sell * (Decimal('1') + self.caf_rate)
+        from pricing_v4.services.fx_resolver import resolve_market_fx_pair
+        rate = resolve_market_fx_pair(currency, 'PGK', self.quote_date).tt_sell
+        return rate * (Decimal('1') + self.caf_rate)
     
     # =========================================================================
     # PUBLIC API
@@ -411,7 +420,8 @@ class ExportPricingEngine:
             currency=self.quote_currency, quote_currency=self.quote_currency,
             total_margin=total_margin, total_gst=total_gst, total_sell_incl_gst=total_sell_incl_gst,
             fx_rate_used=self.tt_sell if self.payment_term == PaymentTerm.COLLECT else None,
-            effective_fx_rate=self._get_effective_fx_rate() if self.payment_term == PaymentTerm.COLLECT else None,
+            effective_fx_rate=(self.tt_sell * (Decimal('1') + self.caf_rate))
+            if self.quote_currency != 'PGK' and self.tt_sell is not None and self.caf_rate is not None else None,
             caf_rate=self.caf_rate if self.payment_term == PaymentTerm.COLLECT else None,
         )
     
@@ -649,14 +659,12 @@ class ExportPricingEngine:
         if currency == 'PGK':
             return amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-        effective_rate = self._get_effective_fx_rate()
+        effective_rate = self._get_effective_fx_rate(currency)
         if effective_rate <= 0:
-            return amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            from pricing_v4.services.fx_resolver import MissingFxMarketRateError
+            raise MissingFxMarketRateError("Effective FX rate must be strictly positive.")
 
-        if effective_rate >= 1:
-            pgk = amount * effective_rate
-        else:
-            pgk = amount / effective_rate
+        pgk = amount * effective_rate
         return pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     @staticmethod

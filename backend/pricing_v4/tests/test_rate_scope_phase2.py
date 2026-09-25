@@ -7,6 +7,7 @@ from io import StringIO
 from django.core.management import call_command
 from django.test import TestCase
 
+from core.fx_market_models import FxMarketRate
 from pricing_v4.engine.domestic_engine import DomesticPricingEngine
 from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm as ExportPaymentTerm
 from pricing_v4.engine.import_engine import ImportPricingEngine, PaymentTerm, ServiceScope
@@ -34,6 +35,11 @@ from pricing_v4.services.rate_selector import (
 class Phase2QuoteOutputRegressionTests(TestCase):
     @classmethod
     def setUpTestData(cls):
+        FxMarketRate.objects.create(
+            base_currency="USD", quote_currency="PGK", effective_date=date.today(),
+            tt_buy_rate=Decimal("2.50"), tt_sell_rate=Decimal("2.78"),
+            mid_rate=Decimal("2.64"), source="TEST",
+        )
         cls.valid_from = date.today() - timedelta(days=30)
         cls.valid_until = date.today() + timedelta(days=365)
         cls.agent = Agent.objects.create(

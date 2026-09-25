@@ -13,6 +13,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from core.tests.helpers import create_location
+from core.fx_market_models import FxMarketRate
 from pricing_v4.models import (
     Agent,
     Carrier,
@@ -48,6 +49,11 @@ from quotes.spot_models import SpotPricingEnvelopeDB, SPEChargeLineDB
 )
 class SpotEnvelopeFlowAPITest(APITestCase):
     def setUp(self):
+        FxMarketRate.objects.create(
+            base_currency="USD", quote_currency="PGK", effective_date=date.today(),
+            tt_buy_rate=Decimal("3.50"), tt_sell_rate=Decimal("3.60"),
+            mid_rate=Decimal("3.55"), source="TEST",
+        )
         User = get_user_model()
         self.user = User.objects.create_user(
             username="spotflow",

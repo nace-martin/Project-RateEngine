@@ -7,15 +7,15 @@ from .models import (
     City,
     Country,
     Currency,
-    FxRate,
     FxSnapshot,
     Policy,
 )
+from .fx_market_models import FxMarketRate
 
 admin.site.register(Currency)
 admin.site.register(Country)
 admin.site.register(City)
 admin.site.register(Airport)
-admin.site.register(FxRate)
+admin.site.register(FxMarketRate)
 admin.site.register(FxSnapshot)
 admin.site.register(Policy)
