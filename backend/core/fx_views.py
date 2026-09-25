@@ -59,6 +59,7 @@ class ManualFxUpdateView(APIView):
         serializer.is_valid(raise_exception=True)
         
         rates_data = serializer.validated_data['rates']
+        effective_date = serializer.validated_data['effective_date']
         note = serializer.validated_data.get('note', '')
         
         now = timezone.now()
@@ -79,7 +80,7 @@ class ManualFxUpdateView(APIView):
             })
             
             # Update FCY/PGK market facts.
-            self._update_fx_rate(currency_code_upper, rate_info, now)
+            self._update_fx_rate(currency_code_upper, rate_info, effective_date)
         
         # Create immutable FxSnapshot
         snapshot = FxSnapshot.objects.create(
@@ -96,18 +97,17 @@ class ManualFxUpdateView(APIView):
             'snapshot_id': str(snapshot.id),
             'updated_rates': updated_rates,
             'updated_by': request.user.username,
+            'effective_date': effective_date.isoformat(),
             'timestamp': now.isoformat(),
         }, status=status.HTTP_201_CREATED)
 
-    def _update_fx_rate(self, currency_code: str, rate_info: dict, timestamp):
+    def _update_fx_rate(self, currency_code: str, rate_info: dict, effective_date):
         """Update or create FxMarketRate records for the currency pair."""
         from decimal import ROUND_HALF_UP
 
         tt_buy = Decimal(str(rate_info['tt_buy']))
         tt_sell = Decimal(str(rate_info['tt_sell']))
         mid = ((tt_buy + tt_sell) / Decimal('2')).quantize(Decimal('0.00000001'), rounding=ROUND_HALF_UP)
-        effective_date = timestamp.date() if hasattr(timestamp, 'date') else timestamp
-
         FxMarketRate.objects.update_or_create(
             base_currency=currency_code.upper(),
             quote_currency='PGK',

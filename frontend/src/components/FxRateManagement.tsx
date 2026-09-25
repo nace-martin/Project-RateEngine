@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
+import { AlertCircle, Clock3, RefreshCw } from 'lucide-react';
 import { API_BASE_URL } from '@/lib/config';
 import { buildFxDisplayRows, compareFxDisplayCurrencies, formatFxDisplayValue, getFxDisplayCurrency } from '@/lib/fx-display';
 
@@ -46,6 +46,7 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
         USD: { tt_buy: '', tt_sell: '' },
     });
     const [note, setNote] = useState('');
+    const [effectiveDate, setEffectiveDate] = useState('');
 
     const fetchStatus = async () => {
         setLoading(true);
@@ -140,6 +141,9 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
             if (Object.keys(rates).length === 0) {
                 throw new Error('Please enter at least one currency rate');
             }
+            if (!effectiveDate) {
+                throw new Error('Enter the market effective date shown by the bank');
+            }
 
             const response = await fetch(`${API_BASE_URL}/api/v4/fx/manual-update/`, {
                 method: 'POST',
@@ -147,7 +151,7 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
                     'Authorization': token ? `Token ${token}` : '',
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ rates, note }),
+                body: JSON.stringify({ rates, effective_date: effectiveDate, note }),
             });
 
             if (!response.ok) {
@@ -159,6 +163,7 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
             setSuccessMessage(`Successfully updated ${result.updated_rates?.length || 0} currency rates`);
             setShowForm(false);
             setNote('');
+            setEffectiveDate('');
             await fetchStatus();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to update FX rates');
@@ -198,22 +203,16 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
         setError(null);
     };
 
-    const formatDate = (dateStr: string | null) => {
-        if (!dateStr) return 'Never';
-        const date = new Date(dateStr);
-        return date.toLocaleString();
-    };
-
-    const getStalenessColor = () => {
+    const getStatusColor = () => {
         if (!status) return 'text-gray-500';
         if (!status.rates.length) return 'text-red-500';
-        return 'text-green-500';
+        return 'text-slate-500';
     };
 
-    const getStalenessIcon = () => {
+    const getStatusIcon = () => {
         if (!status) return <AlertCircle className="h-5 w-5" />;
         if (!status.rates.length) return <AlertCircle className="h-5 w-5" />;
-        return <CheckCircle2 className="h-5 w-5" />;
+        return <Clock3 className="h-5 w-5" />;
     };
 
     return (
@@ -223,8 +222,8 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
                     <div>
                         <CardTitle className="flex items-center gap-2">
                             FX Rates
-                            <span className={getStalenessColor()}>
-                                {getStalenessIcon()}
+                            <span className={getStatusColor()}>
+                                {getStatusIcon()}
                             </span>
                         </CardTitle>
                         <CardDescription>
@@ -269,7 +268,7 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
                     <>
                         <div className="space-y-4">
                             <div className="text-sm text-muted-foreground">
-                                <span className="font-medium">Latest Effective Date:</span> {formatDate(status.last_updated)}
+                                <span className="font-medium">Latest Effective Date:</span> {status.last_updated || 'Never'}
                                 {status.source && <span className="ml-2">({status.source})</span>}
                             </div>
 
@@ -341,6 +340,17 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
                                         <p className="text-sm text-muted-foreground">
                                             Use this form if the automated BSP scraper has failed or if you need a currency not currently published in the snapshot.
                                         </p>
+
+                                        <div>
+                                            <Label htmlFor="fx-effective-date">Market effective date (bank rate date)</Label>
+                                            <Input
+                                                id="fx-effective-date"
+                                                type="date"
+                                                required
+                                                value={effectiveDate}
+                                                onChange={(e) => setEffectiveDate(e.target.value)}
+                                            />
+                                        </div>
 
                                         <div className="flex flex-col gap-3 rounded-md border border-dashed border-border p-3 md:flex-row md:items-end">
                                             <div className="flex-1">

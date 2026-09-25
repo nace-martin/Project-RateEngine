@@ -62,7 +62,7 @@ class Command(BaseCommand):
             if len(pair_rows) != 2 or set(sides) != {"BUY", "SELL"}:
                 raise CommandError(f"Incomplete or duplicate TT BUY/SELL for {base}/{quote}")
             buy, sell = sides["BUY"], sides["SELL"]
-            if buy.source != sell.source or buy.as_of_ts.date() != sell.as_of_ts.date():
+            if not buy.effective_date or buy.source != sell.source or buy.effective_date != sell.effective_date:
                 raise CommandError(f"Mismatched FX provenance for {base}/{quote}")
             if buy.rate <= 0 or sell.rate <= 0:
                 raise CommandError(f"Nonpositive FX rate for {base}/{quote}")
@@ -78,12 +78,12 @@ class Command(BaseCommand):
             tt_sell = tt_sell.quantize(Decimal('0.00000001'), rounding=ROUND_HALF_UP)
             if tt_sell < tt_buy:
                 raise CommandError(f"TT SELL is below TT BUY for {fcy}/PGK")
-            key = (fcy, buy.as_of_ts.date(), buy.source)
+            key = (fcy, buy.effective_date, buy.source)
             rates = (tt_buy, tt_sell)
             if key in canonical_facts and canonical_facts[key] != rates:
                 raise CommandError(f"Conflicting canonical FX facts for {fcy}/PGK on {key[1]}")
             if key not in canonical_facts:
-                market_facts.append((fcy, buy.as_of_ts.date(), buy.source, tt_buy, tt_sell))
+                market_facts.append((fcy, buy.effective_date, buy.source, tt_buy, tt_sell))
             canonical_facts[key] = rates
             snapshot_rates[fcy] = {'tt_buy': str(tt_buy), 'tt_sell': str(tt_sell)}
 
@@ -101,7 +101,7 @@ class Command(BaseCommand):
                     },
                 )
             FxSnapshot.objects.create(
-                as_of_timestamp=max(row.as_of_ts for row in rows),
+                as_of_timestamp=max(row.observed_at for row in rows),
                 source=provider_name,
                 rates=snapshot_rates,
                 caf_percent=Decimal(0),

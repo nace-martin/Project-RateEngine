@@ -49,7 +49,7 @@ The V4 engine exposes computation via the `pricing_v4.engine` module. It is inte
 ## Market FX authority
 New Import, Export, and SPOT calculations resolve TT BUY and TT SELL from `FxMarketRate`. The stored orientation is FCY/PGK (PGK per one FCY). The resolver selects the newest effective date on or before the quote date, swaps BUY and SELL when inverting a pair, and crosses non-PGK currencies through PGK. PGK/PGK needs no market fact. A missing rate or competing sources for the applicable pair and date stop the affected calculation. CAF remains a separate commercial policy adjustment.
 
-Manual entry and `fetch_fx` write complete market facts. `FxRate` was removed by a forward migration. `FxSnapshot` and existing quote/version snapshot references remain for historical evidence; old finalized quote values are not recalculated. No FX staleness limit or source priority has been approved.
+Manual entry requires the bank's explicit market effective date; BSP ingestion uses the published date on its exchange-rate page and fails closed if that date is unavailable. The snapshot timestamp records when the system observed or entered the rate, not its market effective date. Both paths write complete market facts. `FxRate` was removed by a forward migration. `FxSnapshot` and existing quote/version snapshot references remain for historical evidence; old finalized quote values are not recalculated. No FX staleness limit or source priority has been approved.
 
 ## Migration from V3
 V3 is deprecated. New development should focus exclusively on V4 models and logic.

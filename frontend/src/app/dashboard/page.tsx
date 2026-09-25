@@ -379,7 +379,7 @@ export default function DashboardPage() {
                         {/* Widget C: FX Rates */}
                         <KPICard
                             title="FX Rates"
-                            value={fxStatus ? (fxStatus.rates.length ? "Available" : "Missing") : <Skeleton className="h-8 w-24" />}
+                            value={fxStatus ? (fxStatus.rates.length ? "Rates on file" : "Missing") : <Skeleton className="h-8 w-24" />}
                             status={fxStatus && !fxStatus.rates.length ? "warning" : "info"}
                             icon={TrendingUp}
                         >
@@ -405,8 +405,11 @@ export default function DashboardPage() {
                                             })}
                                         <div className="pt-2 border-t mt-2">
                                             <p className="text-xs text-muted-foreground">
-                                                Source: {fxStatus.source || 'BSP'}
+                                                Source: {fxStatus.source || 'Unknown'}
                                             </p>
+                                            {fxStatus.staleness_warning && (
+                                                <p className="text-xs text-muted-foreground">{fxStatus.staleness_warning}</p>
+                                            )}
                                         </div>
                                     </div>
                                 ) : (

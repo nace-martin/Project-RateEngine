@@ -46,12 +46,16 @@ class ManualFxUpdateSerializer(serializers.Serializer):
             "AUD": {"tt_buy": 2.77, "tt_sell": 2.85},
             "USD": {"tt_buy": 3.85, "tt_sell": 3.95}
         },
+        "effective_date": "2026-09-24",
         "note": "Optional reason for manual update"
     }
     """
     rates = serializers.DictField(
         child=CurrencyRateInputSerializer(),
         help_text="Currency rates to update. Keys are currency codes (e.g., 'AUD', 'USD')."
+    )
+    effective_date = serializers.DateField(
+        help_text="Market/bank date when these rates became effective (YYYY-MM-DD)."
     )
     note = serializers.CharField(
         max_length=500, 

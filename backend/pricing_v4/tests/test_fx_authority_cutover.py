@@ -12,6 +12,7 @@ from rest_framework import status
 from core.dataclasses import LocationRef, Piece, QuoteInput, ShipmentDetails
 from core.fx_market_models import FxMarketRate
 from core.fx_providers import RateRow
+from core.fx_providers.bsp_html import BspHtmlProvider
 from core.models import Country, Currency, Location, Airport, City, FxSnapshot
 from pricing_v4.commercial_models import CommercialTermsPolicy
 from pricing_v4.adapter import PricingServiceV4Adapter
@@ -297,21 +298,27 @@ class FxAuthorityCutoverTests(TestCase):
                 "AUD": {"tt_buy": "2.7700", "tt_sell": "2.8500"},
                 "USD": {"tt_buy": "3.8500", "tt_sell": "3.9500"},
             },
+            "effective_date": "2026-05-29",
             "note": "Manual entry test for Wave 3B3"
         }
-        response = client.post(url, payload, format="json")
+        recorded_at = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+        with patch("core.fx_views.timezone.now", return_value=recorded_at):
+            response = client.post(url, payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["effective_date"], "2026-05-29")
+        self.assertEqual(response.data["timestamp"], recorded_at.isoformat())
 
         # Verify FxMarketRate records created
         aud_market = FxMarketRate.objects.get(base_currency="AUD", quote_currency="PGK")
         self.assertEqual(aud_market.tt_buy_rate, Decimal("2.77000000"))
         self.assertEqual(aud_market.tt_sell_rate, Decimal("2.85000000"))
         self.assertEqual(aud_market.source, "MANUAL")
-        self.assertEqual(aud_market.effective_date, date.today())
+        self.assertEqual(aud_market.effective_date, date(2026, 5, 29))
 
         usd_market = FxMarketRate.objects.get(base_currency="USD", quote_currency="PGK")
         self.assertEqual(usd_market.tt_buy_rate, Decimal("3.85000000"))
         self.assertEqual(usd_market.tt_sell_rate, Decimal("3.95000000"))
+        self.assertEqual(usd_market.effective_date, date(2026, 5, 29))
 
         # Verify FxSnapshot was also created (historical preservation)
         self.assertEqual(FxSnapshot.objects.count(), 1)
@@ -319,6 +326,20 @@ class FxAuthorityCutoverTests(TestCase):
         self.assertIn("AUD", snapshot.rates)
         self.assertIn("USD", snapshot.rates)
         self.assertIn("fin_admin", snapshot.source)
+        self.assertEqual(snapshot.as_of_timestamp, recorded_at)
+
+    def test_manual_fx_update_requires_market_effective_date(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="fin_no_date", password="password", role="finance")
+        client = APIClient()
+        client.force_authenticate(user=user)
+        response = client.post("/api/v4/fx/manual-update/", {
+            "rates": {"AUD": {"tt_buy": "2.77", "tt_sell": "2.85"}},
+        }, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("effective_date", response.data)
+        self.assertFalse(FxMarketRate.objects.exists())
+        self.assertFalse(FxSnapshot.objects.exists())
 
     def test_quote_audit_uses_market_provenance_and_preserves_old_snapshot(self):
         old = FxSnapshot.objects.create(
@@ -373,27 +394,61 @@ class FxAuthorityCutoverTests(TestCase):
             source="HISTORICAL",
             rates={"AUD": {"tt_buy": "2.10", "tt_sell": "2.20"}},
         )
-        fetched_at = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        fetched_at = datetime(2026, 5, 30, 12, tzinfo=timezone.utc)
+        bank_date = date(2026, 5, 29)
         rows = [
-            RateRow(fetched_at, "AUD", "PGK", Decimal("2.45"), "BUY", "BSP"),
-            RateRow(fetched_at, "AUD", "PGK", Decimal("2.52"), "SELL", "BSP"),
+            RateRow(fetched_at, "AUD", "PGK", Decimal("2.45"), "BUY", "BSP", bank_date),
+            RateRow(fetched_at, "AUD", "PGK", Decimal("2.52"), "SELL", "BSP", bank_date),
         ]
         with patch("core.management.commands.fetch_fx.load_provider", return_value=Mock(fetch=Mock(return_value=rows))):
             call_command("fetch_fx", pairs="AUD:PGK")
 
         market = FxMarketRate.objects.get(base_currency="AUD", quote_currency="PGK", source="BSP")
         self.assertEqual((market.tt_buy_rate, market.tt_sell_rate), (Decimal("2.45"), Decimal("2.52")))
+        self.assertEqual(market.effective_date, bank_date)
+        self.assertFalse(FxMarketRate.objects.filter(effective_date=fetched_at.date()).exists())
+        self.assertEqual(resolve_market_fx_pair("AUD", "PGK", date(2026, 5, 30)).effective_date, bank_date)
+        self.assertEqual(resolve_market_fx_pair("AUD", "PGK", date(2026, 5, 31)).effective_date, bank_date)
         old.refresh_from_db()
         self.assertEqual(old.rates["AUD"], {"tt_buy": "2.10", "tt_sell": "2.20"})
         self.assertEqual(FxSnapshot.objects.count(), 2)
+        self.assertEqual(FxSnapshot.objects.exclude(pk=old.pk).get().as_of_timestamp, fetched_at)
 
     def test_fetch_rejects_incomplete_tt_pair_without_writing(self):
         row = RateRow(
             datetime(2026, 6, 1, tzinfo=timezone.utc),
-            "AUD", "PGK", Decimal("2.45"), "BUY", "BSP",
+            "AUD", "PGK", Decimal("2.45"), "BUY", "BSP", date(2026, 6, 1),
         )
         with patch("core.management.commands.fetch_fx.load_provider", return_value=Mock(fetch=Mock(return_value=[row]))):
             with self.assertRaises(CommandError):
                 call_command("fetch_fx", pairs="AUD:PGK")
         self.assertFalse(FxMarketRate.objects.exists())
         self.assertFalse(FxSnapshot.objects.exists())
+
+    def test_bsp_page_date_is_used_instead_of_fetch_date(self):
+        html = """
+        <section rel="CBCurrenciesTable">
+          <header><h2>Exchange rates for Kina<time>Fri, 29 May 2026</time></h2></header>
+          <table><thead><tr><th>Currency</th><th>Code</th><th>TT Buy</th>
+            <th>Notes Buy</th><th>A/M Buy</th><th>TT Sell</th><th>Notes Sell</th></tr></thead>
+            <tbody><tr><td>Australian Dollar</td><td>AUD</td><td>0.4000</td>
+              <td>0</td><td>0</td><td>0.3900</td><td>0</td></tr></tbody>
+          </table>
+        </section>
+        """
+        provider = BspHtmlProvider()
+        with patch.object(provider, "_fetch_html", return_value=html):
+            rows = provider.fetch(["PGK:AUD"])
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({row.effective_date for row in rows}, {date(2026, 5, 29)})
+        self.assertEqual(len({row.observed_at for row in rows}), 1)
+
+    def test_bsp_page_without_published_date_fails_closed(self):
+        html = """
+        <section rel="CBCurrenciesTable"><table><thead><tr>
+          <th>TT Buy</th><th>TT Sell</th></tr></thead></table></section>
+        """
+        provider = BspHtmlProvider()
+        with patch.object(provider, "_fetch_html", return_value=html):
+            with self.assertRaisesRegex(RuntimeError, "effective date missing"):
+                provider.fetch(["PGK:AUD"])
