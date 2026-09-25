@@ -98,10 +98,11 @@ def test_missing_fk_and_structured_mismatch_never_map_by_name_or_code():
 @pytest.mark.django_db
 def test_existing_identified_geography_is_preserved_and_conflicts_roll_back():
     bne = airport_location("BNE", "AU")
-    geo = GeoLocation.objects.create(
+    geo = GeoLocation(
         canonical_name="Existing approved label", country_code="AU",
         location_type="AIRPORT", is_active=True,
     )
+    geo.save()
     GeoLocationIdentifier.objects.create(location=geo, scheme="IATA", code="BNE")
     backfill(apps, None)
     assert resolve_geo_location(bne).id == geo.id
@@ -118,10 +119,11 @@ def test_existing_identified_geography_is_preserved_and_conflicts_roll_back():
 @pytest.mark.django_db
 def test_inactive_clean_geography_fails_closed():
     bne = airport_location("BNE", "AU")
-    geo = GeoLocation.objects.create(
+    geo = GeoLocation(
         canonical_name="Airport BNE", country_code="AU",
         location_type="AIRPORT", is_active=False,
     )
+    geo.save()
     GeoLocationIdentifier.objects.create(location=geo, scheme="IATA", code="BNE")
     with pytest.raises(GeoMappingError, match="inactive_geography"):
         resolve_geo_location(bne)
