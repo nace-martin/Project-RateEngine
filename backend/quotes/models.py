@@ -380,40 +380,6 @@ class QuoteVersion(models.Model):
         return f"{self.quote.quote_number} - v{self.version_number}"
 
 
-class RouteAutomationPolicyDB(models.Model):
-    """Audited dark-mode route automation policy.
-
-    Missing policy means disabled. Phase 16E-A seeds supported patterns as disabled
-    only; no route is enabled by this PR.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    route_pattern = models.CharField(max_length=20, choices=[(item.value, item.value) for item in JourneyPattern], unique=True, db_index=True)
-    enabled = models.BooleanField(default=False, db_index=True)
-    disabled_reason = models.TextField(blank=True, default="")
-    effective_from = models.DateField(null=True, blank=True)
-    effective_until = models.DateField(null=True, blank=True)
-    required_rate_gate_json = models.JSONField(default=dict, blank=True)
-    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'route_automation_policies'
-        ordering = ['route_pattern']
-        verbose_name = 'Route Automation Policy'
-        verbose_name_plural = 'Route Automation Policies'
-
-    def clean(self):
-        super().clean()
-        if self.enabled:
-            raise ValidationError({'enabled': 'Phase 16E-A does not enable route automation.'})
-        if not self.disabled_reason:
-            raise ValidationError({'disabled_reason': 'Disabled route policies require an explicit reason.'})
-
-    def __str__(self):
-        return f"{self.route_pattern}: {'enabled' if self.enabled else 'disabled'}"
-
-
 class ShipmentJourneyDB(models.Model):
     class Status(models.TextChoices):
         PLANNED = 'PLANNED', 'Planned'

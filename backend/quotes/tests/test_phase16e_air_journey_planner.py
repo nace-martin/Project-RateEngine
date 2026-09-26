@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from decimal import Decimal
 from io import StringIO
 from unittest.mock import patch
 
@@ -10,14 +9,16 @@ import json
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.core.management import call_command
 from django.utils import timezone
 
+from core.corridor_models import GeoCorridorPolicy
+from core.geo_models import GeoLocation, GeoLocationIdentifier
 from pricing_v4.contracts.charge_context import JourneyDirection, JourneyPattern, LegRole, ProductCodeDomain, TransportMode
 from quotes.contracts.journey_contracts import JourneyPlannerBlockerCode, JourneyStatus
 from parties.models import Company
-from quotes.models import Quote, RouteAutomationPolicyDB, ShipmentJourneyDB, ShipmentLegDB
+from quotes.models import Quote, ShipmentJourneyDB, ShipmentLegDB
 from quotes.services.air_journey_planner import AirJourneyPlanner
 from quotes.services.journey_persistence import ShipmentJourneyPersistenceService, get_route_policy_state
 from quotes.spot_models import SPEChargeLineDB, SpotPricingEnvelopeDB
@@ -141,7 +142,7 @@ def test_exp_hgu_plans_but_automation_remains_disabled():
 
     assert result.pattern == JourneyPattern.EXP_HGU
     assert [leg.leg_key for leg in result.legs] == ["01:DOMESTIC_PRE_CARRIAGE:HGU:POM", "02:INTERNATIONAL_EXPORT:POM:SIN"]
-    assert JourneyPlannerBlockerCode.ROUTE_AUTOMATION_DISABLED in result.blockers
+    assert get_route_policy_state(result).enabled is False
 
 
 def test_pom_is_always_international_gateway():
@@ -216,23 +217,63 @@ def test_deterministic_leg_keys_and_input_fingerprints():
     assert first.input_fingerprint == second.input_fingerprint
 
 
-def test_missing_policy_means_disabled():
-    RouteAutomationPolicyDB.objects.filter(route_pattern="IMP_POM").delete()
-
-    policy = get_route_policy_state("IMP_POM")
-
-    assert policy.enabled is False
-    assert policy.source == "missing"
+def geo(code, country):
+    location = GeoLocation(canonical_name=code, country_code=country, location_type="AIRPORT")
+    location.save()
+    GeoLocationIdentifier.objects.create(location=location, scheme="IATA", code=code)
+    return location
 
 
-# ARCH-16C-010
-def test_all_seeded_route_policies_are_disabled_and_exp_hgu_has_reason():
-    patterns = set(RouteAutomationPolicyDB.objects.values_list("route_pattern", flat=True))
+def test_direct_corridor_requires_exact_geography_mode_date_and_enablement():
+    route = plan(request_payload())
+    assert get_route_policy_state(route).source == "unresolved"
+    sin, pom = geo("SIN", "SG"), geo("POM", "PG")
+    assert get_route_policy_state(route).source == "missing"
+    corridor = GeoCorridorPolicy.objects.create(origin=sin, destination=pom, transport_mode="SEA", valid_from=date(2026, 1, 1), automation_enabled=True)
+    assert not get_route_policy_state(route).enabled
+    corridor.transport_mode = "AIR"
+    corridor.save()
+    assert get_route_policy_state(route).enabled
+    assert not get_route_policy_state(plan(request_payload(origin_country="AU"))).enabled
+    sin.is_active = False
+    sin.save()
+    assert not get_route_policy_state(route).enabled
+    sin.is_active = True
+    sin.save()
+    for changes in (
+        {"automation_enabled": False},
+        {"is_active": False},
+        {"valid_from": date(2026, 1, 16)},
+        {"valid_from": date(2026, 1, 1), "valid_until": date(2026, 1, 14)},
+    ):
+        corridor.refresh_from_db()
+        for key, value in changes.items():
+            setattr(corridor, key, value)
+        corridor.save()
+        assert not get_route_policy_state(route).enabled
 
-    assert patterns == {pattern.value for pattern in JourneyPattern}
-    assert not RouteAutomationPolicyDB.objects.filter(enabled=True).exists()
-    exp_hgu = RouteAutomationPolicyDB.objects.get(route_pattern="EXP_HGU")
-    assert "HGU to POM readiness" in exp_hgu.disabled_reason
+
+def test_transit_corridor_matches_via_hub_and_lax_stays_unresolved():
+    route = plan(request_payload(destination="LAE"))
+    sin, pom, lae = geo("SIN", "SG"), geo("POM", "PG"), geo("LAE", "PG")
+    direct = GeoCorridorPolicy.objects.create(origin=sin, destination=lae, transport_mode="AIR", valid_from=date(2026, 1, 1), automation_enabled=True)
+    assert not get_route_policy_state(route).enabled
+    direct.via_hub = pom
+    direct.save()
+    assert get_route_policy_state(route).enabled
+    GeoLocation(canonical_name="LAX", country_code="US", location_type="AIRPORT").save()
+    assert not get_route_policy_state(plan(request_payload(origin_country="US", origin="LAX"))).enabled
+
+
+def test_no_corridors_are_seeded_by_current_migrations():
+    assert GeoCorridorPolicy.objects.count() == 0
+    assert "route_automation_policies" not in connection.introspection.table_names()
+
+
+def test_missing_corridor_persists_route_automation_blocker():
+    journey = persist(request_payload())
+    assert journey.status == ShipmentJourneyDB.Status.NEEDS_REVIEW
+    assert JourneyPlannerBlockerCode.ROUTE_AUTOMATION_DISABLED.value in journey.blockers_json
 
 
 def test_multiple_revisions_coexist_and_material_route_change_creates_new_revision():
@@ -325,7 +366,7 @@ def test_read_only_diagnostic_command_performs_no_writes():
     before = {
         "journeys": ShipmentJourneyDB.objects.count(),
         "legs": ShipmentLegDB.objects.count(),
-        "policies": RouteAutomationPolicyDB.objects.count(),
+        "corridors": GeoCorridorPolicy.objects.count(),
     }
     stdout = StringIO()
 
@@ -339,7 +380,7 @@ def test_read_only_diagnostic_command_performs_no_writes():
     after = {
         "journeys": ShipmentJourneyDB.objects.count(),
         "legs": ShipmentLegDB.objects.count(),
-        "policies": RouteAutomationPolicyDB.objects.count(),
+        "corridors": GeoCorridorPolicy.objects.count(),
     }
     payload = json.loads(stdout.getvalue())
     assert payload["pattern"] == "IMP_LAE"
