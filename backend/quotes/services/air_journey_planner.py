@@ -45,7 +45,6 @@ class AirJourneyPlanner:
         if direction and pattern and not blockers:
             legs = self._legs(normalized, pattern)
             blockers.extend(self._validate_gateway(pattern, legs))
-            blockers.extend(self._automation_blockers(pattern))
 
         return JourneyPlan(
             request=normalized,
@@ -203,11 +202,6 @@ class AirJourneyPlanner:
             if not international or international.origin_code != PNG_GATEWAY_CODE:
                 blockers.append(JourneyPlannerBlockerCode.JOURNEY_GATEWAY_INVALID)
         return blockers
-
-    def _automation_blockers(self, pattern: JourneyPattern) -> list[JourneyPlannerBlockerCode]:
-        if pattern == JourneyPattern.EXP_HGU:
-            return [JourneyPlannerBlockerCode.ROUTE_AUTOMATION_DISABLED]
-        return []
 
     @staticmethod
     def _dedupe(blockers: list[JourneyPlannerBlockerCode]) -> list[JourneyPlannerBlockerCode]:

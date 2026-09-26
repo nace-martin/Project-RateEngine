@@ -7,7 +7,7 @@ from django.apps import apps
 from django.core.management import call_command
 from django.db import transaction
 from parties.models import Company
-from quotes.models import Quote, RouteAutomationPolicyDB
+from quotes.models import Quote
 from quotes.services.air_journey_planner import AirJourneyPlanner
 
 from core.corridor_models import GeoCorridorPolicy
@@ -49,7 +49,6 @@ def test_backfill_maps_proven_airports_once_and_preserves_quote_route_state():
         origin_location=bne, destination_location=pom,
     )
     legacy_before = list(Location.objects.order_by("id").values())
-    policy_before = list(RouteAutomationPolicyDB.objects.order_by("route_pattern").values_list("route_pattern", "enabled"))
     request = {
         "origin_country": "AU", "destination_country": "PG",
         "origin_code": "BNE", "destination_code": "POM",
@@ -68,8 +67,6 @@ def test_backfill_maps_proven_airports_once_and_preserves_quote_route_state():
     assert list(Location.objects.order_by("id").values()) == legacy_before
     quote.refresh_from_db()
     assert (quote.origin_location_id, quote.destination_location_id) == (bne.id, pom.id)
-    assert list(RouteAutomationPolicyDB.objects.order_by("route_pattern").values_list("route_pattern", "enabled")) == policy_before
-    assert len(policy_before) == 6 and not any(enabled for _, enabled in policy_before)
     assert GeoCorridorPolicy.objects.count() == 0
     assert AirJourneyPlanner().plan(request).to_dict() == plan_before
 

@@ -109,6 +109,8 @@ geo_location
 
 *Wave 3B4A implementation state:* A forward migration backfills `AIRPORT` geography only where legacy `Location.code`, its Airport FK/IATA code, city, and country agree. `core.geo_mapping.resolve_geo_location` resolves those rows through an IATA identifier and fails closed otherwise; `geo_mapping_health` reports remaining gaps. Legacy quote FKs and route automation remain unchanged. The data-driven corridor behavior above is a target for a later wave, not current runtime behavior.
 
+*Wave 3B4B implementation state:* Journey persistence and diagnostics resolve the customer origin, destination, and planned POM transit hub through exact IATA identifiers, then require one active, date-valid `AIR` `GeoCorridorPolicy` with `automation_enabled=True`. Missing or unresolved geography and corridors yield `ROUTE_AUTOMATION_DISABLED`. The old route-pattern policy table is removed by a forward migration; no corridors are seeded or enabled. Journey history fields and POM leg construction remain unchanged.
+
 ---
 
 ### 3.4 Commercial Products & Policy (Domain 4)

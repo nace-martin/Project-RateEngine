@@ -4,6 +4,7 @@ import json
 
 from django.core.management.base import BaseCommand, CommandError
 
+from quotes.contracts.journey_contracts import JourneyPlannerBlockerCode
 from quotes.services.air_journey_planner import AirJourneyPlanner
 from quotes.services.journey_persistence import get_route_policy_state
 
@@ -22,7 +23,10 @@ class Command(BaseCommand):
             raise CommandError(f"Invalid --request JSON: {exc}") from exc
 
         plan = AirJourneyPlanner().plan(payload)
-        policy = get_route_policy_state(plan.pattern.value if plan.pattern else None)
+        policy = get_route_policy_state(plan)
+        blockers = [blocker.value for blocker in plan.blockers]
+        if not policy.enabled and JourneyPlannerBlockerCode.ROUTE_AUTOMATION_DISABLED.value not in blockers:
+            blockers.append(JourneyPlannerBlockerCode.ROUTE_AUTOMATION_DISABLED.value)
         output = {
             "normalized_request": plan.request.to_dict(),
             "direction": plan.direction.value if plan.direction else None,
@@ -30,7 +34,7 @@ class Command(BaseCommand):
             "gateway": plan.gateway_code,
             "legs": [leg.to_dict() for leg in plan.legs],
             "fingerprint": plan.input_fingerprint,
-            "blockers": [blocker.value for blocker in plan.blockers],
+            "blockers": blockers,
             "route_policy": policy.to_dict(),
             "writes_performed": False,
         }

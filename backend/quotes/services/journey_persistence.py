@@ -1,49 +1,77 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
+from datetime import date
 
+from core.corridor_models import GeoCorridorPolicy, TransportMode
+from core.geo_models import GeoLocation, GeoLocationIdentifier
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
 
 from quotes.contracts.journey_contracts import JourneyPlan, JourneyPlannerBlockerCode
-from quotes.models import Quote, RouteAutomationPolicyDB, ShipmentJourneyDB, ShipmentLegDB
+from quotes.models import Quote, ShipmentJourneyDB, ShipmentLegDB
 from quotes.spot_models import SpotPricingEnvelopeDB
 
 
 @dataclass(frozen=True)
 class RoutePolicyState:
-    route_pattern: str
     enabled: bool
     disabled_reason: str
-    required_rate_gate: dict
     source: str
+    corridor_id: str | None = None
 
     def to_dict(self) -> dict:
         return {
-            "route_pattern": self.route_pattern,
             "enabled": self.enabled,
             "disabled_reason": self.disabled_reason,
-            "required_rate_gate": self.required_rate_gate,
             "source": self.source,
+            "corridor_id": self.corridor_id,
         }
 
 
-def get_route_policy_state(route_pattern: str | None) -> RoutePolicyState:
-    pattern = str(route_pattern or "").strip().upper()
-    if not pattern:
-        return RoutePolicyState("", False, "No route pattern was planned.", {}, "missing")
-    policy = RouteAutomationPolicyDB.objects.filter(route_pattern=pattern).first()
-    if policy is None:
-        return RoutePolicyState(pattern, False, "Missing route automation policy; route automation is disabled by default.", {}, "missing")
-    return RoutePolicyState(
-        route_pattern=policy.route_pattern,
-        enabled=bool(policy.enabled),
-        disabled_reason=policy.disabled_reason,
-        required_rate_gate=policy.required_rate_gate_json or {},
-        source="database",
-    )
+def _geo_for_iata(code: str, country: str) -> GeoLocation | None:
+    try:
+        location = GeoLocationIdentifier.objects.select_related("location").get(
+            scheme=GeoLocationIdentifier.Scheme.IATA, code=code
+        ).location
+    except (GeoLocationIdentifier.DoesNotExist, GeoLocationIdentifier.MultipleObjectsReturned):
+        return None
+    if (location.is_active and location.location_type == GeoLocation.LocationType.AIRPORT
+            and location.country_code == country):
+        return location
+    return None
+
+
+def get_route_policy_state(plan: JourneyPlan) -> RoutePolicyState:
+    request = plan.request
+    if (not plan.pattern or request.service_domain != TransportMode.AIR
+            or request.quote_date == date(1970, 1, 1) or len(plan.legs) not in (1, 2)):
+        return RoutePolicyState(False, "Route geography or date is unresolved.", "unresolved")
+    legs = plan.legs
+    if (legs[0].origin_code != request.customer_origin_code
+            or legs[-1].destination_code != request.customer_destination_code
+            or (len(legs) == 2 and (legs[0].destination_code != plan.gateway_code
+                                   or legs[1].origin_code != plan.gateway_code))):
+        return RoutePolicyState(False, "Planned legs do not match the route.", "unresolved")
+    origin = _geo_for_iata(request.customer_origin_code, request.origin_country)
+    destination = _geo_for_iata(request.customer_destination_code, request.destination_country)
+    via = _geo_for_iata(plan.gateway_code, "PG") if len(plan.legs) == 2 else None
+    if not origin or not destination or (len(plan.legs) == 2 and not via):
+        return RoutePolicyState(False, "Route geography is unresolved.", "unresolved")
+    corridors = list(GeoCorridorPolicy.objects.filter(
+        origin=origin, destination=destination, via_hub=via,
+        transport_mode=TransportMode.AIR,
+    )[:2])
+    if len(corridors) != 1:
+        return RoutePolicyState(False, "Corridor is missing or ambiguous.", "missing" if not corridors else "ambiguous")
+    corridor = corridors[0]
+    enabled = (corridor.is_active and corridor.automation_enabled
+               and corridor.valid_from <= request.quote_date
+               and (corridor.valid_until is None or request.quote_date <= corridor.valid_until))
+    return RoutePolicyState(enabled, "" if enabled else "Corridor automation is disabled or date-invalid.",
+                            "corridor", str(corridor.pk))
 
 
 class ShipmentJourneyPersistenceService:
@@ -183,7 +211,7 @@ class ShipmentJourneyPersistenceService:
 
     def _combined_blockers(self, plan: JourneyPlan) -> list[JourneyPlannerBlockerCode]:
         blockers = list(plan.blockers)
-        policy = get_route_policy_state(plan.pattern.value if plan.pattern else None)
+        policy = get_route_policy_state(plan)
         if not policy.enabled:
             blockers.append(JourneyPlannerBlockerCode.ROUTE_AUTOMATION_DISABLED)
         return self._dedupe(blockers)
