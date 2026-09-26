@@ -3,7 +3,7 @@
 from django.contrib import admin
 from .models import (
     Quote, QuoteVersion, QuoteLine, QuoteTotal,
-    RouteAutomationPolicyDB, ShipmentJourneyDB, ShipmentLegDB,
+    ShipmentJourneyDB, ShipmentLegDB,
 )
 from .spot_models import (
     SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB,
@@ -127,16 +127,6 @@ admin.site.register(Quote, QuoteAdmin)
 admin.site.register(QuoteVersion, QuoteVersionAdmin)
 admin.site.register(SpotPricingEnvelopeDB, SpotPricingEnvelopeAdmin)
 
-
-@admin.register(RouteAutomationPolicyDB)
-class RouteAutomationPolicyAdmin(admin.ModelAdmin):
-    list_display = ('route_pattern', 'enabled', 'disabled_reason', 'effective_from', 'effective_until', 'updated_at')
-    list_filter = ('enabled', 'route_pattern')
-    readonly_fields = ('updated_at',)
-
-    def save_model(self, request, obj, form, change):
-        obj.updated_by = request.user
-        super().save_model(request, obj, form, change)
 
 
 class ShipmentLegInline(admin.TabularInline):
