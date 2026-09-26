@@ -107,6 +107,8 @@ geo_location
 
 *Corridor Rule Governance:* Removes hardcoded POM gateway constraints. Routing rules (such as requiring a transit hub via POM or SIN) are defined dynamically in `geo_corridor_policy`. Corridor automation requires explicit approval: `automation_enabled` defaults to `False`; a corridor's existence in the database does not authorize automated quoting.
 
+*Wave 3B4A implementation state:* A forward migration backfills `AIRPORT` geography only where legacy `Location.code`, its Airport FK/IATA code, city, and country agree. `core.geo_mapping.resolve_geo_location` resolves those rows through an IATA identifier and fails closed otherwise; `geo_mapping_health` reports remaining gaps. Legacy quote FKs and route automation remain unchanged. The data-driven corridor behavior above is a target for a later wave, not current runtime behavior.
+
 ---
 
 ### 3.4 Commercial Products & Policy (Domain 4)
