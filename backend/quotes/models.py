@@ -511,14 +511,16 @@ class ShipmentLegDB(models.Model):
                 raise ValidationError('Finalized shipment journey legs are immutable.')
         if self.sequence < 1:
             raise ValidationError({'sequence': 'Leg sequence starts at 1.'})
-        if self.role == LegRole.INTERNATIONAL_IMPORT.value and self.destination_code != 'POM':
-            raise ValidationError({'destination_code': 'International import legs must end at POM.'})
-        if self.role == LegRole.INTERNATIONAL_EXPORT.value and self.origin_code != 'POM':
-            raise ValidationError({'origin_code': 'International export legs must start at POM.'})
-        if self.role == LegRole.DOMESTIC_ON_FORWARDING.value and self.origin_code != 'POM':
-            raise ValidationError({'origin_code': 'Domestic on-forwarding legs must start at POM.'})
-        if self.role == LegRole.DOMESTIC_PRE_CARRIAGE.value and self.destination_code != 'POM':
-            raise ValidationError({'destination_code': 'Domestic pre-carriage legs must end at POM.'})
+        if self.journey_id:
+            gateway = parent.gateway_code
+            if self.role == LegRole.INTERNATIONAL_IMPORT.value and self.destination_code != gateway:
+                raise ValidationError({'destination_code': 'International import legs must end at the journey gateway.'})
+            if self.role == LegRole.INTERNATIONAL_EXPORT.value and self.origin_code != gateway:
+                raise ValidationError({'origin_code': 'International export legs must start at the journey gateway.'})
+            if self.role == LegRole.DOMESTIC_ON_FORWARDING.value and self.origin_code != gateway:
+                raise ValidationError({'origin_code': 'Domestic on-forwarding legs must start at the journey gateway.'})
+            if self.role == LegRole.DOMESTIC_PRE_CARRIAGE.value and self.destination_code != gateway:
+                raise ValidationError({'destination_code': 'Domestic pre-carriage legs must end at the journey gateway.'})
 
     def save(self, *args, **kwargs):
         self.full_clean()
