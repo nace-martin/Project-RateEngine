@@ -111,6 +111,8 @@ geo_location
 
 *Wave 3B4B implementation state:* Journey persistence and diagnostics resolve the customer origin, destination, and planned POM transit hub through exact IATA identifiers, then require one active, date-valid `AIR` `GeoCorridorPolicy` with `automation_enabled=True`. Missing or unresolved geography and corridors yield `ROUTE_AUTOMATION_DISABLED`. The old route-pattern policy table is removed by a forward migration; no corridors are seeded or enabled. Journey history fields and POM leg construction remain unchanged.
 
+*Wave 3B4C foundation state (2026-09-27):* `CorridorAirJourneyPlanner` builds direct or via-hub air legs from one exact, active, date-valid corridor and IATA geography; it is not wired into quote or SPOT runtime. `ShipmentLegDB` validates leg endpoints against the journey's gateway instead of POM. The inspected dev database has zero corridor rows, and `docs/launch-corridor-matrix.md` explicitly describes rate coverage rather than business-approved corridor topology. Until an authoritative origin/destination/via/mode/date dataset is approved and loaded, the existing Phase 16E planner remains the runtime path. Cutover must also adapt the six-value `JourneyPattern` charge-context contract used by SPOT without changing pricing outcomes. No corridors were inferred or enabled.
+
 ---
 
 ### 3.4 Commercial Products & Policy (Domain 4)

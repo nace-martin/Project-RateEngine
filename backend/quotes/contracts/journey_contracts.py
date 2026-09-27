@@ -78,7 +78,7 @@ class JourneyRequest:
             raw_evidence=dict(self.raw_evidence or {}),
         )
 
-    def fingerprint_payload(self) -> dict[str, Any]:
+    def fingerprint_payload(self, rule_version: str = PHASE_16E_A_RULE_VERSION) -> dict[str, Any]:
         normalized = self.normalized()
         return {
             "origin_country": normalized.origin_country,
@@ -95,11 +95,11 @@ class JourneyRequest:
             "commodity": normalized.commodity,
             "pickup_requested": normalized.pickup_requested,
             "delivery_requested": normalized.delivery_requested,
-            "rule_version": PHASE_16E_A_RULE_VERSION,
+            "rule_version": rule_version,
         }
 
-    def input_fingerprint(self) -> str:
-        payload = json.dumps(self.fingerprint_payload(), sort_keys=True, separators=(",", ":"))
+    def input_fingerprint(self, rule_version: str = PHASE_16E_A_RULE_VERSION) -> str:
+        payload = json.dumps(self.fingerprint_payload(rule_version), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
