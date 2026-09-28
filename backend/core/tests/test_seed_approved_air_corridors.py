@@ -15,9 +15,10 @@ pytestmark = pytest.mark.django_db
 
 
 def airport(code, country):
-    location = GeoLocation.objects.create(
+    location = GeoLocation(
         canonical_name=code, country_code=country, location_type="AIRPORT"
     )
+    location.save()
     GeoLocationIdentifier.objects.create(location=location, scheme="IATA", code=code)
     return location
 
