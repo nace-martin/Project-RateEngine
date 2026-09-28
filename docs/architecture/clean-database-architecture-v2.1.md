@@ -113,6 +113,8 @@ geo_location
 
 *Wave 3B4C foundation state (2026-09-27):* `CorridorAirJourneyPlanner` builds direct or via-hub air legs from one exact, active, date-valid corridor and IATA geography; it is not wired into quote or SPOT runtime. `ShipmentLegDB` validates leg endpoints against the journey's gateway instead of POM. The inspected dev database has zero corridor rows, and `docs/launch-corridor-matrix.md` explicitly describes rate coverage rather than business-approved corridor topology. Until an authoritative origin/destination/via/mode/date dataset is approved and loaded, the existing Phase 16E planner remains the runtime path. Cutover must also adapt the six-value `JourneyPattern` charge-context contract used by SPOT without changing pricing outcomes. No corridors were inferred or enabled.
 
+*Wave 3B4E seed state (2026-09-28):* Business approved only POM→BNE and POM→SYD as direct AIR corridors, valid from 2026-09-28 with no expiry. `seed_approved_air_corridors` checks exact active IATA geography and conflicting corridor rows before its explicit `--apply` mode creates or reuses them. Both rows remain active with `automation_enabled=False`; the command does not create geography or change pricing. It runs after geography is loaded because an empty fresh database has no airport identifiers for a fail-closed data migration. The legacy planner remains wired for quote/SPOT journeys, and corridor approval alone does not authorize automated quoting or runtime cutover.
+
 ---
 
 ### 3.4 Commercial Products & Policy (Domain 4)
