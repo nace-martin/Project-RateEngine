@@ -10,6 +10,7 @@ from pricing_v4.category_rules import (
     is_import_destination_local_code,
     is_import_origin_local_code,
 )
+from pricing_v4.engine.domestic_engine import DOMESTIC_TARIFF_CURRENCY
 from pricing_v4.models import (
     DomesticCOGS,
     ExportCOGS,
@@ -141,7 +142,15 @@ def resolve_quote_rate_dimensions(context: RateResolutionContext) -> ResolvedRat
     component_rows = _apply_row_overrides(component_rows, normalized)
     candidate_paths = _build_candidate_paths(component_rows)
 
-    shared_currency = normalized.override_buy_currency or _shared_currency(component_rows, buy_side_components)
+    currency_override_applied = bool(
+        normalized.override_buy_currency
+        and normalized.shipment_type != "DOMESTIC"
+    )
+    shared_currency = (
+        normalized.override_buy_currency
+        if currency_override_applied
+        else _shared_currency(component_rows, buy_side_components)
+    )
     shared_counterparty = _shared_counterparty(component_rows, buy_side_components)
 
     agent_id = normalized.override_agent_id
@@ -153,7 +162,7 @@ def resolve_quote_rate_dimensions(context: RateResolutionContext) -> ResolvedRat
             carrier_id = shared_counterparty[1]
 
     resolution_basis = "component_level_resolution_only"
-    if normalized.override_buy_currency or normalized.override_agent_id or normalized.override_carrier_id:
+    if currency_override_applied or normalized.override_agent_id or normalized.override_carrier_id:
         resolution_basis = "request_overrides_applied"
     elif shared_currency is not None or shared_counterparty is not None:
         resolution_basis = "derived_shared_dimensions"
@@ -268,7 +277,11 @@ def _buy_side_component_rows(
     if context.shipment_type == "DOMESTIC":
         domestic_rows = (
             _active_queryset(DomesticCOGS, context.quote_date)
-            .filter(origin_zone=context.origin_airport, destination_zone=context.destination_airport)
+            .filter(
+                origin_zone=context.origin_airport,
+                destination_zone=context.destination_airport,
+                currency=DOMESTIC_TARIFF_CURRENCY,
+            )
             .select_related("product_code", "agent", "carrier")
         )
         for row in domestic_rows:
@@ -390,7 +403,7 @@ def _apply_row_overrides(
     filtered_rows: dict[str, list[models.Model]] = {}
     for component, rows in component_rows.items():
         filtered = list(rows)
-        if context.override_buy_currency:
+        if context.override_buy_currency and context.shipment_type != "DOMESTIC":
             filtered = [row for row in filtered if _normalize_text(getattr(row, "currency", None)) == context.override_buy_currency]
         if context.override_agent_id is not None:
             filtered = [row for row in filtered if getattr(row, "agent_id", None) == context.override_agent_id]
