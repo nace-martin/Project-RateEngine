@@ -4,7 +4,8 @@
 > **Effective Date:** 2026-09-13\
 > **Applies To:** Core RateEngine Database, Pricing V4, Quoting Lifecycle, SPOT Intake, Master Data\
 > **Authority:** Commercial Manager & Nas Brain Canonical Policy\
-> **Strategy:** Clean-Cut Pre-Production Implementation (Archive Legacy Pre-Production Quotes; Migrate Master Data)
+> **Strategy:** Clean-Cut Pre-Production Implementation (Archive Legacy Pre-Production Quotes; Migrate Master Data)\
+> **Amendments since freeze:** Pilot Gate B3A — Minimum Pilot Rate Matrix Contract, approved by the Commercial Manager on 2026-10-03 (see §3.5.1). Contract only; no schema, model, migration, or data change accompanies it.
 
 ---
 
@@ -128,7 +129,7 @@ fx_market_rate (pure market exchange rates)
 
 | Table | Purpose | PK | Important FKs | Key Fields | Constraints | Source of Truth Owned |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `commercial_product_code` | Sole commercial master of billable/payable freight charges | `id` (UUID) | None | `code`, `name`, `category` (FREIGHT, ORIGIN, DESTINATION, CLEARANCE, SERVICE), `sub_category`, `gst_treatment` (FREIGHT_EXPORT, FREIGHT_IMPORT, DOMESTIC_STANDARD, EXEMPT, ZERO_RATED), `charge_basis_default`, `is_active` | `UNIQUE(code)` | Sole Master of Commercial Charges & GST Classification |
+| `commercial_product_code` | Sole commercial master of billable/payable freight charges | `id` (UUID) | `legacy_product_code_id → product_codes.id` (opt, 1:1; Pilot Gate B3A, transitional) | `code`, `name`, `category` (FREIGHT, ORIGIN, DESTINATION, CLEARANCE, SERVICE), `sub_category`, `gst_treatment` (STANDARD, ZERO_RATED, EXEMPT; Pilot Gate B3A), `charge_basis_default`, `is_active` | `UNIQUE(code)` | Sole Master of Commercial Charges & GST Classification |
 | `commercial_charge_alias` | Known supplier text strings mapped to ProductCodes | `id` (UUID) | `product_code_id → commercial_product_code.id` | `raw_text`, `transport_mode`, `carrier_party_id → party_master.id` (opt), `source_currency` (opt), `confidence_score` | `UNIQUE(raw_text, transport_mode, carrier_party_id)` | Intake Normalization Authority |
 | `fx_market_rate` | Pure historical/market exchange rates | `id` (UUID) | None | `base_currency`, `quote_currency`, `effective_date`, `tt_buy_rate`, `tt_sell_rate`, `mid_rate`, `source` | `UNIQUE(base_currency, quote_currency, effective_date, source)` | Market FX Facts |
 | `policy_commercial_terms` | Versioned commercial terms, margins, CAF, and tax rates | `id` (UUID) | None | `policy_code`, `valid_from`, `valid_until`, `margin_percent`, `margin_method` (MARKUP_ON_COST, TARGET_GROSS_MARGIN), `import_caf_percent`, `export_caf_percent`, `gst_standard_percent`, `is_active` | `CHECK(valid_until IS NULL OR valid_until > valid_from)` | Versioned Commercial Pricing Policy |
@@ -140,6 +141,11 @@ To eliminate ambiguity between markup on cost and target gross margin, `policy_c
 - `MARKUP_ON_COST` (Default / Launch Parity): $\text{SELL} = \text{Cost} \times (1 + \text{margin\_rate})$. Canonical `LAUNCH-POLICY-2026` seeds `margin_percent = 20.00%` and `margin_method = MARKUP_ON_COST` (yielding K120 on K100 cost), preserving exact baseline pricing parity.
 - `TARGET_GROSS_MARGIN` (Supported Target): $\text{SELL} = \frac{\text{Cost}}{1 - \text{margin\_rate}}$ (yielding K125 on K100 cost at 20% margin, where gross margin is strictly $(125 - 100) / 125 = 20\%$).
 - RateEngine enforces that approved direct SELL rates are never re-margined, and cost-derived calculations fail closed if required margin policy is absent.
+
+*Pilot Gate B3A amendment (approved 2026-10-03; not yet implemented):*
+- **GST classification vocabulary.** `commercial_product_code.gst_treatment` uses only `STANDARD`, `ZERO_RATED`, and `EXEMPT`. This replaces the earlier `FREIGHT_EXPORT`, `FREIGHT_IMPORT`, `DOMESTIC_STANDARD`, `EXEMPT`, `ZERO_RATED` set, which mixed tax class with direction. `OUT_OF_SCOPE` is not added in Pilot v1. The GST percentage and its application policy stay outside both the product-code master and the Rate Matrix, as Amendment 2 already requires.
+- **ProductCode transition.** `commercial_product_code` gains a nullable one-to-one link to the legacy `pricing_v4.ProductCode`. During shadow mode the legacy `ProductCode` remains the runtime authority and `commercial_product_code` is an explicit mirror of it; rows must not be created as an uncontrolled second product-code master. Core Decision 2 remains the target state after cutover.
+- **Implementation state.** The implemented `CommercialProductCode` model still carries the earlier five-value GST set and has no legacy link. Both changes belong to a separate schema change.
 
 ---
 
@@ -154,15 +160,50 @@ rate_sheet
 
 | Table | Purpose | PK | Important FKs | Key Fields | Constraints | Source of Truth Owned |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `rate_sheet` | Grouping of tariff rates for a carrier, customer, or general card | `id` (UUID) | `party_id → party_master.id` (opt), `carrier_id → party_master.id` (opt) | `name`, `rate_type` (BUY, SELL), `transport_mode`, `currency_code`, `valid_from`, `valid_until`, `is_active`, `version` | `CHECK(valid_until IS NULL OR valid_until >= valid_from)` | Tariff Sheet Container |
-| `rate_line` | Individual tariff rate line for a ProductCode | `id` (UUID) | `sheet_id → rate_sheet.id`, `product_code_id → commercial_product_code.id` | `rate_basis` (FLAT, PER_KG, PER_CBM, PER_UNIT, TIERED_WEIGHT, PERCENTAGE), `unit_rate`, `min_charge`, `max_charge`, `percentage_rate`, `percentage_basis_product_code_id` | `CHECK(unit_rate >= 0)`, `CHECK(min_charge <= max_charge)`, Mutual exclusivity CHECKs | Rate Definition |
-| `rate_applicability` | Spatial, corridor, commodity, and service filters for a rate line | `id` (UUID) | `rate_line_id → rate_line.id` (1:1), `origin_id → geo_location.id` (opt), `destination_id → geo_location.id` (opt) | `service_level` (EXPRESS, STANDARD, DEFERRED), `commodity_category`, `direction` (IMPORT, EXPORT, DOMESTIC), `equipment_type` | None | Rate Applicability Scope |
+| `rate_sheet` | Grouping of tariff rates for a carrier, customer, or general card | `id` (UUID) | `party_id → party_master.id` (opt), `carrier_id → party_master.id` (opt) | `name`, `rate_type` (BUY, SELL), `transport_mode`, `currency_code`, `valid_from`, `valid_until`, `is_active`, `version`, `source_reference`, `created_by`, `created_at` (last three: Pilot Gate B3A) | `CHECK(valid_until IS NULL OR valid_until >= valid_from)`, `UNIQUE(name, version)` (Pilot Gate B3A) | Tariff Sheet Container |
+| `rate_line` | Individual tariff rate line for a ProductCode | `id` (UUID) | `sheet_id → rate_sheet.id`, `product_code_id → commercial_product_code.id` | `rate_basis` (FLAT, PER_KG, PER_CBM, PER_UNIT, TIERED_WEIGHT, PERCENTAGE), `unit_rate`, `additive_flat_amount` (opt; Pilot Gate B3A), `min_charge`, `max_charge`, `percentage_rate`, `percentage_basis_product_code_id` | `CHECK(unit_rate >= 0)`, `CHECK(min_charge <= max_charge)`, Mutual exclusivity CHECKs, `CHECK(additive_flat_amount IS NULL OR rate_basis = 'PER_KG')` (Pilot Gate B3A) | Rate Definition |
+| `rate_applicability` | Spatial, corridor, commodity, and service filters for a rate line | `id` (UUID) | `rate_line_id → rate_line.id` (1:1), `origin_id → geo_location.id` (opt), `destination_id → geo_location.id` (opt) | `service_level` (EXPRESS, STANDARD, DEFERRED), `commodity_category`, `direction` (IMPORT, EXPORT, DOMESTIC), `equipment_type`, `payment_term` (PREPAID, COLLECT, blank = ANY; Pilot Gate B3A) | None | Rate Applicability Scope |
 | `rate_tier` | Weight/volume breaks for tiered rates | `id` (UUID) | `rate_line_id → rate_line.id` | `min_quantity`, `max_quantity`, `unit_rate` | `CHECK(max_quantity IS NULL OR max_quantity > min_quantity)`, `CHECK(unit_rate >= 0)`, GiST Exclusion (PG) | Breakpoint Rates |
 
 *Amendment 3 Governance:*
 - Database CHECK constraints enforce mutual exclusivity: if `rate_basis == 'PERCENTAGE'`, `percentage_rate` is non-null and `unit_rate` is null; if `rate_basis == 'TIERED_WEIGHT'`, `unit_rate` is null.
 - PostgreSQL GiST exclusion constraint (`EXCLUDE USING gist (rate_line_id WITH =, numrange(min_quantity, max_quantity, '[)') WITH &&)`) prevents overlapping weight breaks at the database level.
 - Django model validation mirrors this on SQLite, enforcing that `TIERED_WEIGHT` lines must have at least one tier and non-tiered lines cannot have tiers.
+
+#### 3.5.1 Pilot Gate B3A — Minimum Pilot Rate Matrix Contract
+
+**Approval record.** This specification is frozen, and `docs/ARCHITECTURE_PRINCIPLES.md` requires explicit approval for changes to locked architecture. This amendment was approved by the Commercial Manager on 2026-10-03 under Pilot Gate B3A. It records the minimum contract the Rate Matrix needs before Pilot v1 tariff data can be loaded.
+
+**Pilot scope.** International air freight, direct routes only: BNE→POM and SYD→POM (Import), POM→BNE and POM→SYD (Export). Route automation stays disabled.
+
+**Implementation state.** Contract only. None of the fields or constraints below exist in the implemented models yet, the Rate Matrix tables are not read by any pricing path, and no loader or resolver exists. Each follows in its own separately reviewed change.
+
+**Approved schema direction**
+
+1. **Payment term.** `rate_applicability.payment_term` takes `PREPAID`, `COLLECT`, or blank, where blank means ANY. A rate matches when its term equals the requested term or is blank. A specific-term rate and a blank-term rate may not coexist for the same otherwise-identical active rate; if they do, the match is ambiguous and fails closed. BUY rates use blank.
+2. **Additive charges.** `rate_line.additive_flat_amount` is nullable and permitted only when `rate_basis = 'PER_KG'`. It represents charges of the form per-kg plus flat. One commercial charge is never split across multiple rate lines.
+3. **Provenance.** `rate_sheet` gains `source_reference`, `created_by`, and `created_at`. The existing `valid_from`, `valid_until`, and `version` remain.
+4. **Version identity.** `rate_sheet` is unique on (`name`, `version`).
+5. **ProductCode transition.** As recorded in §3.4: a nullable one-to-one link from `commercial_product_code` to the legacy `ProductCode`, with the legacy `ProductCode` as runtime authority and `commercial_product_code` as an explicit mirror during shadow mode.
+6. **GST.** As recorded in §3.4: `STANDARD`, `ZERO_RATED`, `EXEMPT` only. Rate tables are ex-GST and store no GST percentage or classification.
+7. **Geography.** Rate applicability reuses the existing chain IATA code → `geo_location_identifier` → `geo_location`. No airport-code fields are added to the Rate Matrix.
+8. **Currency.** Tariff amounts are stored only in their native currency, held on `rate_sheet.currency_code`. The Rate Matrix holds no converted amounts and no FX fields.
+
+**Resolver principles.** A future Rate Matrix resolver returns exactly one of `EXACT MATCH`, `NO MATCH`, `AMBIGUOUS`, or `INVALID CONTEXT`. It never picks the first of several candidates, never silently falls back, and never converts currency.
+
+**Tier semantics.** A tier's lower bound is inclusive and its upper bound is exclusive. The tiers of a line run contiguously from 0 and end in exactly one open-ended tier. Pricing is whole-weight: the matched tier's rate applies to the full chargeable weight. A weight that no tier covers is not priced; incomplete coverage fails closed.
+
+**Shadow rollout.** Legacy pricing remains live. The Rate Matrix is compared against it in shadow, and cutover happens only after the comparison shows zero unexplained differences and cutover is separately approved.
+
+**Open business and data decisions.** These are not schema blockers and are not decided by this amendment:
+- the import freight rate below 45 kg;
+- the correct import origin cost source;
+- whether import pricing is cost-plus or uses a SELL tariff;
+- the conversion policy for a tariff held in a single currency;
+- the pilot ProductCode categories;
+- detailed validation of GST treatment per charge;
+- whether Pilot v1 is general cargo only;
+- tariff validity beyond 2026-12-31.
 
 ---
 
@@ -318,6 +359,7 @@ RateEngine prices all freight lines deterministically without duplicated calcula
   - **Import CAF Rule:** Deduct 5% from Bank TT BUY rate.
   - **Export CAF Rule:** Add 10% to Bank TT SELL rate.
 - If FX rate is missing for the currency pair on the effective date, calculation fails closed.
+- *Pilot Gate B3A:* the tariff's native currency is `rate_sheet.currency_code`; `rate_line` has no currency field. Conversion is the responsibility of pricing and FX resolution, never of stored tariffs (§3.5.1).
 
 ### 5.3 Rating Calculations
 1. **Flat Fee:** $\text{Amount} = \text{unit\_rate}$
@@ -327,6 +369,8 @@ RateEngine prices all freight lines deterministically without duplicated calcula
 4. **Percentage Surcharge:** Surcharge calculates strictly as:
    $$\text{Amount} = \text{percentage\_rate} \times \sum \text{BaseProductCodes}$$
    where base charges must be resolved before percentage evaluation.
+
+*Pilot Gate B3A (approved, not yet implemented):* a `PER_KG` line with `additive_flat_amount` evaluates the per-kg amount plus the flat amount as one charge. Tiered lines follow the coverage and whole-weight rules in §3.5.1; a weight outside every tier is not priced.
 
 ### 5.4 Granular SPOT Replacement
 - Standard rating executes first for all legs.
@@ -386,6 +430,7 @@ RateEngine operates on **PostgreSQL in Production / Cloud Run** and **SQLite in 
        (rate_basis = 'PERCENTAGE' AND unit_rate IS NULL AND percentage_rate IS NOT NULL AND percentage_basis_product_code_id IS NOT NULL)
    );
    ```
+4. **Pilot Gate B3A constraints (approved, not yet implemented):** `UNIQUE(name, version)` on `rate_sheet`; a CHECK that `additive_flat_amount` is set only on `PER_KG` lines; a CHECK restricting `rate_applicability.payment_term` to `PREPAID`, `COLLECT`, or blank; and the `gst_treatment` CHECK on `commercial_product_code` narrowed to `STANDARD`, `ZERO_RATED`, `EXEMPT`. Each needs matching Django model validation for SQLite parity.
 
 ### 7.2 SQLite Development / CI Parity
 Since SQLite lacks `btree_gist` and GiST exclusion constraints, model validation parity is strictly enforced in Python:
