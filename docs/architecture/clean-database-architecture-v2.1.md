@@ -178,6 +178,14 @@ rate_sheet
 
 **Implementation state (Pilot Gate B3B).** Migration `pricing_v4.0044` adds the fields and constraints in items 1–6 below. It refuses to run, forward or in reverse, if `commercial_product_code`, `commercial_charge_alias`, `rate_sheet`, `rate_line`, `rate_applicability`, or `rate_tier` holds any row, and changes no data. This is schema and model validation only: the Rate Matrix tables remain empty and are not read by any pricing path, and no loader, resolver, or additive or tier calculation exists. Each follows in its own separately reviewed change.
 
+**Payment term: what migration `pricing_v4.0044` does and does not implement.**
+- Implemented: the `rate_applicability.payment_term` field; its allowed values `PREPAID`, `COLLECT`, and blank, enforced by a database CHECK and by model validation; and model validation that a rate line on a BUY sheet must use a blank payment term. The BUY rule spans two tables, so it is model validation only and not a database constraint.
+- Not yet implemented: prevention of a blank (ANY) rate coexisting with a specific-term rate for the same otherwise-identical active rate. Nothing in the schema or model validation stops such a pair from being stored today.
+- Not yet implemented: payment-term matching and any precedence between a specific term and blank.
+- Not yet implemented: resolver behaviour of any kind, including the four outcomes and the fail-closed ambiguity rule below.
+
+The matching, coexistence, and ambiguity rules in item 1 and under "Resolver principles" therefore remain contract only. They belong to the future loader validation and resolver, each in its own separately reviewed change.
+
 **Approved schema direction**
 
 1. **Payment term.** `rate_applicability.payment_term` takes `PREPAID`, `COLLECT`, or blank, where blank means ANY. A rate matches when its term equals the requested term or is blank. A specific-term rate and a blank-term rate may not coexist for the same otherwise-identical active rate; if they do, the match is ambiguous and fails closed. BUY rates use blank.
