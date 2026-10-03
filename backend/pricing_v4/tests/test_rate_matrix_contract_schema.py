@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, connection, transaction
+from django.db import DataError, IntegrityError, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.recorder import MigrationRecorder
 from django.db.models import ProtectedError
@@ -301,7 +301,8 @@ class TestPaymentTerm:
         with pytest.raises(ValidationError) as excinfo:
             applicability.full_clean()
         assert "payment_term" in excinfo.value.message_dict
-        with pytest.raises(IntegrityError), transaction.atomic():
+        # PostgreSQL rejects an over-length value with DataError before the CHECK runs.
+        with pytest.raises((IntegrityError, DataError)), transaction.atomic():
             applicability.save()
 
     @pytest.mark.parametrize("value", ["PREPAID", "COLLECT"])
