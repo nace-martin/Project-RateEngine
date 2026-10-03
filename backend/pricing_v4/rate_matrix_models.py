@@ -6,11 +6,15 @@ RateSheet -> RateLine -> RateApplicability
 
 This is an isolated schema-only foundation. Active pricing runtime continues
 to use legacy COGS/Sell models and RateCard tables.
+
+Pilot Gate B3A contract fields (payment term, additive flat amount, sheet
+provenance and version identity) are schema only; no resolver or loader exists.
 """
 
 import re
 import uuid
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models.functions import Trim
@@ -55,10 +59,29 @@ class RateSheet(models.Model):
     valid_until = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     version = models.PositiveIntegerField(default=1)
+    source_reference = models.CharField(
+        max_length=255,
+        help_text="Reference to the source tariff document this sheet was loaded from",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "rate_sheet"
         constraints = (
+            models.UniqueConstraint(
+                fields=["name", "version"],
+                name="rate_sheet_name_version_uniq",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(source_reference="")
+                & models.Q(source_reference=Trim("source_reference")),
+                name="rate_sheet_source_reference_not_empty",
+            ),
             models.CheckConstraint(
                 condition=~models.Q(name="") & models.Q(name=Trim("name")),
                 name="rate_sheet_name_not_empty",
@@ -93,6 +116,13 @@ class RateSheet(models.Model):
         if not self.name:
             raise ValidationError({"name": "RateSheet name cannot be empty."})
 
+        if self.source_reference:
+            self.source_reference = self.source_reference.strip()
+        if not self.source_reference:
+            raise ValidationError(
+                {"source_reference": "RateSheet source_reference cannot be empty."}
+            )
+
         if self.currency_code:
             self.currency_code = self.currency_code.strip().upper()
         if not self.currency_code or not CURRENCY_CODE_REGEX.match(self.currency_code):
@@ -116,6 +146,8 @@ class RateSheet(models.Model):
     def save(self, *args, **kwargs):
         if self.name:
             self.name = self.name.strip()
+        if self.source_reference:
+            self.source_reference = self.source_reference.strip()
         if self.currency_code:
             self.currency_code = self.currency_code.strip().upper()
         super().save(*args, **kwargs)
@@ -156,6 +188,13 @@ class RateLine(models.Model):
         null=True,
         blank=True,
         help_text="Scalar unit rate for FLAT, PER_KG, PER_CBM, PER_UNIT",
+    )
+    additive_flat_amount = models.DecimalField(
+        max_digits=18,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Flat amount added to the per-kg charge (PER_KG only)",
     )
     min_charge = models.DecimalField(
         max_digits=18,
@@ -206,6 +245,16 @@ class RateLine(models.Model):
             models.CheckConstraint(
                 condition=models.Q(unit_rate__isnull=True) | models.Q(unit_rate__gte=0),
                 name="rate_line_unit_rate_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(additive_flat_amount__isnull=True)
+                | models.Q(additive_flat_amount__gte=0),
+                name="rate_line_additive_flat_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(additive_flat_amount__isnull=True)
+                | models.Q(rate_basis="PER_KG"),
+                name="rate_line_additive_flat_per_kg_only",
             ),
             models.CheckConstraint(
                 condition=models.Q(min_charge__isnull=True) | models.Q(min_charge__gte=0),
@@ -261,6 +310,19 @@ class RateLine(models.Model):
         # Non-negative checks
         if self.unit_rate is not None and self.unit_rate < 0:
             raise ValidationError({"unit_rate": "Unit rate must be non-negative."})
+        if self.additive_flat_amount is not None:
+            if self.additive_flat_amount < 0:
+                raise ValidationError(
+                    {"additive_flat_amount": "Additive flat amount must be non-negative."}
+                )
+            if self.rate_basis != self.RateBasis.PER_KG:
+                raise ValidationError(
+                    {
+                        "additive_flat_amount": (
+                            "Additive flat amount is only permitted for PER_KG rate basis."
+                        )
+                    }
+                )
         if self.min_charge is not None and self.min_charge < 0:
             raise ValidationError({"min_charge": "Min charge must be non-negative."})
         if self.max_charge is not None and self.max_charge < 0:
@@ -400,6 +462,10 @@ class RateApplicability(models.Model):
         EXPORT = "EXPORT", "Export"
         DOMESTIC = "DOMESTIC", "Domestic"
 
+    class PaymentTerm(models.TextChoices):
+        PREPAID = "PREPAID", "Prepaid"
+        COLLECT = "COLLECT", "Collect"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     rate_line = models.OneToOneField(
         RateLine,
@@ -434,10 +500,20 @@ class RateApplicability(models.Model):
         choices=Direction.choices,
     )
     equipment_type = models.CharField(max_length=64, blank=True)
+    payment_term = models.CharField(
+        max_length=8,
+        blank=True,
+        choices=PaymentTerm.choices,
+        help_text="Blank applies to any payment term",
+    )
 
     class Meta:
         db_table = "rate_applicability"
         constraints = (
+            models.CheckConstraint(
+                condition=models.Q(payment_term__in=["", "PREPAID", "COLLECT"]),
+                name="rate_app_payment_term_valid",
+            ),
             models.CheckConstraint(
                 condition=models.Q(direction__in=["", "IMPORT", "EXPORT", "DOMESTIC"]),
                 name="rate_app_direction_valid",
@@ -457,6 +533,18 @@ class RateApplicability(models.Model):
         if self.service_level and self.service_level not in self.ServiceLevel.values:
             raise ValidationError(
                 {"service_level": f"Invalid service_level '{self.service_level}'."}
+            )
+        if self.payment_term and self.payment_term not in self.PaymentTerm.values:
+            raise ValidationError(
+                {"payment_term": f"Invalid payment_term '{self.payment_term}'."}
+            )
+        if (
+            self.payment_term
+            and self.rate_line_id
+            and self.rate_line.sheet.rate_type == RateSheet.RateType.BUY
+        ):
+            raise ValidationError(
+                {"payment_term": "BUY rate sheets must use a blank payment_term."}
             )
 
     def __str__(self):

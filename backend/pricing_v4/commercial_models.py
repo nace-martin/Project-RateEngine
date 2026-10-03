@@ -25,11 +25,9 @@ class CommercialProductCode(models.Model):
         SERVICE = "SERVICE", "Service"
 
     class GstTreatment(models.TextChoices):
-        FREIGHT_EXPORT = "FREIGHT_EXPORT", "Freight Export"
-        FREIGHT_IMPORT = "FREIGHT_IMPORT", "Freight Import"
-        DOMESTIC_STANDARD = "DOMESTIC_STANDARD", "Domestic Standard"
-        EXEMPT = "EXEMPT", "Exempt"
+        STANDARD = "STANDARD", "Standard"
         ZERO_RATED = "ZERO_RATED", "Zero Rated"
+        EXEMPT = "EXEMPT", "Exempt"
 
     class ChargeBasis(models.TextChoices):
         FLAT = "FLAT", "Flat"
@@ -47,6 +45,14 @@ class CommercialProductCode(models.Model):
     gst_treatment = models.CharField(max_length=32, choices=GstTreatment.choices)
     charge_basis_default = models.CharField(max_length=32, choices=ChargeBasis.choices)
     is_active = models.BooleanField(default=True)
+    legacy_product_code = models.OneToOneField(
+        "pricing_v4.ProductCode",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="commercial_product_code",
+        help_text="Legacy ProductCode this row mirrors while legacy remains runtime authority",
+    )
 
     class Meta:
         db_table = "commercial_product_code"
@@ -63,13 +69,7 @@ class CommercialProductCode(models.Model):
             ),
             models.CheckConstraint(
                 condition=models.Q(
-                    gst_treatment__in=[
-                        "FREIGHT_EXPORT",
-                        "FREIGHT_IMPORT",
-                        "DOMESTIC_STANDARD",
-                        "EXEMPT",
-                        "ZERO_RATED",
-                    ]
+                    gst_treatment__in=["STANDARD", "ZERO_RATED", "EXEMPT"]
                 ),
                 name="comm_product_code_gst_valid",
             ),

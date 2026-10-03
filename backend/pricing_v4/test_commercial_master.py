@@ -37,7 +37,7 @@ class TestCommercialProductCode:
             code="FRT-AIR-STD",
             name="Air Freight Standard",
             category=CommercialProductCode.Category.FREIGHT,
-            gst_treatment=CommercialProductCode.GstTreatment.FREIGHT_EXPORT,
+            gst_treatment=CommercialProductCode.GstTreatment.ZERO_RATED,
             charge_basis_default=CommercialProductCode.ChargeBasis.PER_KG,
         )
         assert isinstance(pc1.id, uuid.UUID)
@@ -49,7 +49,7 @@ class TestCommercialProductCode:
                 code="FRT-AIR-STD",
                 name="Duplicate Code",
                 category=CommercialProductCode.Category.FREIGHT,
-                gst_treatment=CommercialProductCode.GstTreatment.FREIGHT_EXPORT,
+                gst_treatment=CommercialProductCode.GstTreatment.ZERO_RATED,
                 charge_basis_default=CommercialProductCode.ChargeBasis.PER_KG,
             )
 
@@ -62,29 +62,21 @@ class TestCommercialProductCode:
                 code=f"TEST-{cat}",
                 name=f"Test {cat}",
                 category=cat,
-                gst_treatment=CommercialProductCode.GstTreatment.DOMESTIC_STANDARD,
+                gst_treatment=CommercialProductCode.GstTreatment.STANDARD,
                 charge_basis_default=CommercialProductCode.ChargeBasis.FLAT,
             )
             pc.full_clean()
             pc.save()
 
     def test_gst_classification_values_and_ownership(self):
-        expected_gst = [
-            "FREIGHT_EXPORT",
-            "FREIGHT_IMPORT",
-            "DOMESTIC_STANDARD",
-            "EXEMPT",
-            "ZERO_RATED",
-        ]
+        expected_gst = ["STANDARD", "ZERO_RATED", "EXEMPT"]
         assert list(CommercialProductCode.GstTreatment.values) == expected_gst
 
         # Labels must not contain hardcoded percentages; ProductCode owns classification, policy owns rate
         labels = dict(CommercialProductCode.GstTreatment.choices)
-        assert labels["FREIGHT_EXPORT"] == "Freight Export"
-        assert labels["FREIGHT_IMPORT"] == "Freight Import"
-        assert labels["DOMESTIC_STANDARD"] == "Domestic Standard"
-        assert labels["EXEMPT"] == "Exempt"
+        assert labels["STANDARD"] == "Standard"
         assert labels["ZERO_RATED"] == "Zero Rated"
+        assert labels["EXEMPT"] == "Exempt"
         for key, label in labels.items():
             assert "%" not in label, f"Label for {key} contains hardcoded percentage: '{label}'"
 
@@ -92,10 +84,10 @@ class TestCommercialProductCode:
             code="CUSTOMS-DOC",
             name="Customs Documentation",
             category=CommercialProductCode.Category.CLEARANCE,
-            gst_treatment=CommercialProductCode.GstTreatment.DOMESTIC_STANDARD,
+            gst_treatment=CommercialProductCode.GstTreatment.STANDARD,
             charge_basis_default=CommercialProductCode.ChargeBasis.FLAT,
         )
-        assert pc.gst_treatment == "DOMESTIC_STANDARD"
+        assert pc.gst_treatment == "STANDARD"
 
     def test_invalid_gst_treatment_rejected(self):
         pc = CommercialProductCode(
@@ -123,7 +115,7 @@ class TestCommercialProductCode:
             code="INVALID-BASIS",
             name="Invalid Basis",
             category=CommercialProductCode.Category.FREIGHT,
-            gst_treatment=CommercialProductCode.GstTreatment.FREIGHT_EXPORT,
+            gst_treatment=CommercialProductCode.GstTreatment.ZERO_RATED,
             charge_basis_default="UNCONTROLLED_BASIS",
         )
         with pytest.raises(ValidationError):
@@ -134,7 +126,7 @@ class TestCommercialProductCode:
             code="  frt-sea-fcl  ",
             name="Ocean Freight FCL",
             category=CommercialProductCode.Category.FREIGHT,
-            gst_treatment=CommercialProductCode.GstTreatment.FREIGHT_EXPORT,
+            gst_treatment=CommercialProductCode.GstTreatment.ZERO_RATED,
             charge_basis_default=CommercialProductCode.ChargeBasis.PER_UNIT,
         )
         pc.clean()
@@ -145,7 +137,7 @@ class TestCommercialProductCode:
             code="HIST-OLD-AIR",
             name="Historical Air Linehaul",
             category=CommercialProductCode.Category.FREIGHT,
-            gst_treatment=CommercialProductCode.GstTreatment.FREIGHT_EXPORT,
+            gst_treatment=CommercialProductCode.GstTreatment.ZERO_RATED,
             charge_basis_default=CommercialProductCode.ChargeBasis.PER_KG,
             is_active=False,
         )
@@ -159,7 +151,7 @@ class TestCommercialProductCode:
                 code="HIST-OLD-AIR",
                 name="New with same code",
                 category=CommercialProductCode.Category.FREIGHT,
-                gst_treatment=CommercialProductCode.GstTreatment.FREIGHT_EXPORT,
+                gst_treatment=CommercialProductCode.GstTreatment.ZERO_RATED,
                 charge_basis_default=CommercialProductCode.ChargeBasis.PER_KG,
             )
 
@@ -172,7 +164,7 @@ class TestCommercialChargeAlias:
             code="SEC-FEE",
             name="Airline Security Fee",
             category=CommercialProductCode.Category.FREIGHT,
-            gst_treatment=CommercialProductCode.GstTreatment.FREIGHT_EXPORT,
+            gst_treatment=CommercialProductCode.GstTreatment.ZERO_RATED,
             charge_basis_default=CommercialProductCode.ChargeBasis.PER_KG,
         )
 
@@ -182,7 +174,7 @@ class TestCommercialChargeAlias:
             code="TER-HAND",
             name="Terminal Handling",
             category=CommercialProductCode.Category.DESTINATION,
-            gst_treatment=CommercialProductCode.GstTreatment.DOMESTIC_STANDARD,
+            gst_treatment=CommercialProductCode.GstTreatment.STANDARD,
             charge_basis_default=CommercialProductCode.ChargeBasis.PER_KG,
         )
 
