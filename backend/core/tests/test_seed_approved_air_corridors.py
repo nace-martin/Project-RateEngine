@@ -75,6 +75,41 @@ def test_missing_or_invalid_effective_date_fails_without_writes():
     assert GeoCorridorPolicy.objects.count() == 0
 
 
+@pytest.mark.parametrize("rejected_date", ["2026-09-28", "2026-10-04"])
+def test_other_valid_effective_dates_fail_without_writes(rejected_date):
+    pom, bne, _ = approved_geography()
+    existing = GeoCorridorPolicy.objects.create(
+        origin=pom, destination=bne, transport_mode="AIR",
+        valid_from=date(2026, 9, 28),
+    )
+    with pytest.raises(CommandError, match="approved Pilot Gate A date 2026-10-03"):
+        run("--apply", "--effective-from", rejected_date)
+    with pytest.raises(CommandError, match="approved Pilot Gate A date 2026-10-03"):
+        run("--effective-from", rejected_date)
+    existing.refresh_from_db()
+    assert existing.valid_from == date(2026, 9, 28)
+    assert GeoCorridorPolicy.objects.count() == 1
+
+
+def test_write_failure_rolls_back_earlier_create(monkeypatch):
+    approved_geography()
+    original_save = GeoCorridorPolicy.save
+    attempts = 0
+
+    def fail_second_save(instance, *args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            raise RuntimeError("simulated second write failure")
+        return original_save(instance, *args, **kwargs)
+
+    monkeypatch.setattr(GeoCorridorPolicy, "save", fail_second_save)
+    with pytest.raises(RuntimeError, match="simulated second write failure"):
+        run("--apply", "--effective-from", TEST_EFFECTIVE_FROM)
+    assert attempts == 2
+    assert GeoCorridorPolicy.objects.count() == 0
+
+
 def test_missing_or_conflicting_geography_fails_without_partial_seed():
     airport("POM", "PG")
     airport("BNE", "AU")

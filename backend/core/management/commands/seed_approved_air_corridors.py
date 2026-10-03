@@ -14,6 +14,7 @@ APPROVED = (
     ("POM", "BNE", "EXPORT"),
     ("POM", "SYD", "EXPORT"),
 )
+APPROVED_EFFECTIVE_FROM = date(2026, 10, 3)
 COUNTRIES = {"POM": "PG", "BNE": "AU", "SYD": "AU"}
 
 
@@ -88,6 +89,11 @@ class Command(BaseCommand):
             raise CommandError("--effective-from must be a valid YYYY-MM-DD date.") from exc
         if effective_from.isoformat() != value:
             raise CommandError("--effective-from must be a valid YYYY-MM-DD date.")
+        if effective_from != APPROVED_EFFECTIVE_FROM:
+            raise CommandError(
+                f"--effective-from must match the approved Pilot Gate A date "
+                f"{APPROVED_EFFECTIVE_FROM.isoformat()}."
+            )
         actions = seed(apply=options["apply"], effective_from=effective_from)
         mode = "APPLY" if options["apply"] else "DRY RUN"
         for action, origin, destination, direction, prior_date in actions:
