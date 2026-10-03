@@ -5,7 +5,7 @@
 > **Applies To:** Core RateEngine Database, Pricing V4, Quoting Lifecycle, SPOT Intake, Master Data\
 > **Authority:** Commercial Manager & Nas Brain Canonical Policy\
 > **Strategy:** Clean-Cut Pre-Production Implementation (Archive Legacy Pre-Production Quotes; Migrate Master Data)\
-> **Amendments since freeze:** Pilot Gate B3A — Minimum Pilot Rate Matrix Contract, approved by the Commercial Manager on 2026-10-03 (see §3.5.1). Contract only; no schema, model, migration, or data change accompanies it.
+> **Amendments since freeze:** Pilot Gate B3A — Minimum Pilot Rate Matrix Contract, approved by the Commercial Manager on 2026-10-03 (see §3.5.1). Its schema is implemented by migration `pricing_v4.0044` (Pilot Gate B3B); no data, resolver, or loader accompanies it.
 
 ---
 
@@ -142,10 +142,10 @@ To eliminate ambiguity between markup on cost and target gross margin, `policy_c
 - `TARGET_GROSS_MARGIN` (Supported Target): $\text{SELL} = \frac{\text{Cost}}{1 - \text{margin\_rate}}$ (yielding K125 on K100 cost at 20% margin, where gross margin is strictly $(125 - 100) / 125 = 20\%$).
 - RateEngine enforces that approved direct SELL rates are never re-margined, and cost-derived calculations fail closed if required margin policy is absent.
 
-*Pilot Gate B3A amendment (approved 2026-10-03; not yet implemented):*
+*Pilot Gate B3A amendment (approved 2026-10-03; schema implemented in Pilot Gate B3B):*
 - **GST classification vocabulary.** `commercial_product_code.gst_treatment` uses only `STANDARD`, `ZERO_RATED`, and `EXEMPT`. This replaces the earlier `FREIGHT_EXPORT`, `FREIGHT_IMPORT`, `DOMESTIC_STANDARD`, `EXEMPT`, `ZERO_RATED` set, which mixed tax class with direction. `OUT_OF_SCOPE` is not added in Pilot v1. The GST percentage and its application policy stay outside both the product-code master and the Rate Matrix, as Amendment 2 already requires.
 - **ProductCode transition.** `commercial_product_code` gains a nullable one-to-one link to the legacy `pricing_v4.ProductCode`. During shadow mode the legacy `ProductCode` remains the runtime authority and `commercial_product_code` is an explicit mirror of it; rows must not be created as an uncontrolled second product-code master. Core Decision 2 remains the target state after cutover.
-- **Implementation state.** The implemented `CommercialProductCode` model still carries the earlier five-value GST set and has no legacy link. Both changes belong to a separate schema change.
+- **Implementation state (Pilot Gate B3B).** Migration `pricing_v4.0044` narrows the GST set to the three classes and adds the nullable legacy link. No mappings are seeded; `commercial_product_code` remains empty.
 
 ---
 
@@ -176,7 +176,7 @@ rate_sheet
 
 **Pilot scope.** International air freight, direct routes only: BNE→POM and SYD→POM (Import), POM→BNE and POM→SYD (Export). Route automation stays disabled.
 
-**Implementation state.** Contract only. None of the fields or constraints below exist in the implemented models yet, the Rate Matrix tables are not read by any pricing path, and no loader or resolver exists. Each follows in its own separately reviewed change.
+**Implementation state (Pilot Gate B3B).** Migration `pricing_v4.0044` adds the fields and constraints in items 1–6 below. It refuses to run, forward or in reverse, if `commercial_product_code`, `commercial_charge_alias`, `rate_sheet`, `rate_line`, `rate_applicability`, or `rate_tier` holds any row, and changes no data. This is schema and model validation only: the Rate Matrix tables remain empty and are not read by any pricing path, and no loader, resolver, or additive or tier calculation exists. Each follows in its own separately reviewed change.
 
 **Approved schema direction**
 
@@ -370,7 +370,7 @@ RateEngine prices all freight lines deterministically without duplicated calcula
    $$\text{Amount} = \text{percentage\_rate} \times \sum \text{BaseProductCodes}$$
    where base charges must be resolved before percentage evaluation.
 
-*Pilot Gate B3A (approved, not yet implemented):* a `PER_KG` line with `additive_flat_amount` evaluates the per-kg amount plus the flat amount as one charge. Tiered lines follow the coverage and whole-weight rules in §3.5.1; a weight outside every tier is not priced.
+*Pilot Gate B3A (approved; the field exists, the calculation is not yet implemented):* a `PER_KG` line with `additive_flat_amount` evaluates the per-kg amount plus the flat amount as one charge. Tiered lines follow the coverage and whole-weight rules in §3.5.1; a weight outside every tier is not priced.
 
 ### 5.4 Granular SPOT Replacement
 - Standard rating executes first for all legs.
@@ -430,7 +430,7 @@ RateEngine operates on **PostgreSQL in Production / Cloud Run** and **SQLite in 
        (rate_basis = 'PERCENTAGE' AND unit_rate IS NULL AND percentage_rate IS NOT NULL AND percentage_basis_product_code_id IS NOT NULL)
    );
    ```
-4. **Pilot Gate B3A constraints (approved, not yet implemented):** `UNIQUE(name, version)` on `rate_sheet`; a CHECK that `additive_flat_amount` is set only on `PER_KG` lines; a CHECK restricting `rate_applicability.payment_term` to `PREPAID`, `COLLECT`, or blank; and the `gst_treatment` CHECK on `commercial_product_code` narrowed to `STANDARD`, `ZERO_RATED`, `EXEMPT`. Each needs matching Django model validation for SQLite parity.
+4. **Pilot Gate B3A constraints (implemented by migration `pricing_v4.0044`):** `UNIQUE(name, version)` on `rate_sheet`; a CHECK that `additive_flat_amount` is set only on `PER_KG` lines; a CHECK restricting `rate_applicability.payment_term` to `PREPAID`, `COLLECT`, or blank; and the `gst_treatment` CHECK on `commercial_product_code` narrowed to `STANDARD`, `ZERO_RATED`, `EXEMPT`. Also a CHECK that `additive_flat_amount` is non-negative and that `rate_sheet.source_reference` is non-empty and trimmed. Django model validation mirrors each for SQLite parity; the rule that BUY sheets use a blank payment term spans two tables and is enforced in model validation only.
 
 ### 7.2 SQLite Development / CI Parity
 Since SQLite lacks `btree_gist` and GiST exclusion constraints, model validation parity is strictly enforced in Python:

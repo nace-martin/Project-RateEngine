@@ -17,6 +17,7 @@ from decimal import Decimal
 import pytest
 from core.geo_models import GeoLocation
 from django.apps import apps
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import DataError, IntegrityError, connection, transaction
 from parties.party_models import PartyMaster
@@ -52,7 +53,7 @@ def product_code_freight():
         code="AF-LINEHAUL-STD",
         name="Air Freight Standard Linehaul",
         category=CommercialProductCode.Category.FREIGHT,
-        gst_treatment=CommercialProductCode.GstTreatment.FREIGHT_IMPORT,
+        gst_treatment=CommercialProductCode.GstTreatment.ZERO_RATED,
         charge_basis_default=CommercialProductCode.ChargeBasis.PER_KG,
     )
 
@@ -63,7 +64,7 @@ def product_code_fsc():
         code="AF-FSC-PERCENT",
         name="Fuel Surcharge (Percentage)",
         category=CommercialProductCode.Category.FREIGHT,
-        gst_treatment=CommercialProductCode.GstTreatment.FREIGHT_IMPORT,
+        gst_treatment=CommercialProductCode.GstTreatment.ZERO_RATED,
         charge_basis_default=CommercialProductCode.ChargeBasis.PERCENTAGE,
     )
 
@@ -74,7 +75,7 @@ def product_code_clearance():
         code="CUST-ENTRY-STD",
         name="Customs Entry Standard",
         category=CommercialProductCode.Category.CLEARANCE,
-        gst_treatment=CommercialProductCode.GstTreatment.DOMESTIC_STANDARD,
+        gst_treatment=CommercialProductCode.GstTreatment.STANDARD,
         charge_basis_default=CommercialProductCode.ChargeBasis.FLAT,
     )
 
@@ -98,8 +99,16 @@ def loc_bne():
 
 
 @pytest.fixture
-def buy_sheet(party_carrier):
+def sheet_audit(db):
+    """Provenance every RateSheet requires, so each test still exercises its own constraint."""
+    user = get_user_model().objects.create_user(username="rate-matrix-loader", password="x")
+    return {"source_reference": "TEST-TARIFF-REF", "created_by": user}
+
+
+@pytest.fixture
+def buy_sheet(party_carrier, sheet_audit):
     return RateSheet.objects.create(
+        **sheet_audit,
         name="Air Niugini Master Tariff 2026",
         carrier=party_carrier,
         rate_type=RateSheet.RateType.BUY,
@@ -112,8 +121,9 @@ def buy_sheet(party_carrier):
 
 
 @pytest.fixture
-def sell_sheet(party_customer):
+def sell_sheet(party_customer, sheet_audit):
     return RateSheet.objects.create(
+        **sheet_audit,
         name="Acme Customer Tariff 2026",
         party=party_customer,
         rate_type=RateSheet.RateType.SELL,
@@ -143,8 +153,9 @@ class TestRateSheet:
         assert sell_sheet.party is not None
         assert sell_sheet.carrier is None
 
-    def test_invalid_rate_type_rejected(self):
+    def test_invalid_rate_type_rejected(self, sheet_audit):
         sheet = RateSheet(
+            **sheet_audit,
             name="Invalid Side Tariff",
             rate_type="MARGIN",
             transport_mode=RateSheet.TransportMode.AIR,
@@ -156,6 +167,7 @@ class TestRateSheet:
 
         with pytest.raises(IntegrityError), transaction.atomic():
             RateSheet.objects.create(
+                **sheet_audit,
                 name="Invalid Side DB",
                 rate_type="MARGIN",
                 transport_mode=RateSheet.TransportMode.AIR,
@@ -163,8 +175,9 @@ class TestRateSheet:
                 valid_from=datetime.date(2026, 1, 1),
             )
 
-    def test_transport_mode_choices_enforced(self):
+    def test_transport_mode_choices_enforced(self, sheet_audit):
         sheet = RateSheet(
+            **sheet_audit,
             name="Invalid Mode",
             rate_type=RateSheet.RateType.BUY,
             transport_mode="RAIL",
@@ -176,6 +189,7 @@ class TestRateSheet:
 
         with pytest.raises(IntegrityError), transaction.atomic():
             RateSheet.objects.create(
+                **sheet_audit,
                 name="Invalid Mode DB",
                 rate_type=RateSheet.RateType.BUY,
                 transport_mode="RAIL",
@@ -183,9 +197,10 @@ class TestRateSheet:
                 valid_from=datetime.date(2026, 1, 1),
             )
 
-    def test_currency_code_exact_three_uppercase_letters(self):
+    def test_currency_code_exact_three_uppercase_letters(self, sheet_audit):
         # Auto-uppercasing
         sheet_usd = RateSheet.objects.create(
+            **sheet_audit,
             name="Lower Currency",
             rate_type=RateSheet.RateType.BUY,
             transport_mode=RateSheet.TransportMode.AIR,
@@ -198,6 +213,7 @@ class TestRateSheet:
         invalid_currencies = ["123", "US1", "US$", "€UR", "US", "USDA", ""]
         for bad in invalid_currencies:
             sheet_bad = RateSheet(
+                **sheet_audit,
                 name=f"Bad Currency {bad}",
                 rate_type=RateSheet.RateType.BUY,
                 transport_mode=RateSheet.TransportMode.AIR,
@@ -209,6 +225,7 @@ class TestRateSheet:
 
             with pytest.raises((IntegrityError, DataError)), transaction.atomic():
                 RateSheet.objects.create(
+                    **sheet_audit,
                     name=f"Bad Currency DB {bad}",
                     rate_type=RateSheet.RateType.BUY,
                     transport_mode=RateSheet.TransportMode.AIR,
@@ -216,9 +233,10 @@ class TestRateSheet:
                     valid_from=datetime.date(2026, 1, 1),
                 )
 
-    def test_validity_window_strict_greater_than(self):
+    def test_validity_window_strict_greater_than(self, sheet_audit):
         # Open-ended allowed
         s_open = RateSheet.objects.create(
+            **sheet_audit,
             name="Open Ended",
             rate_type=RateSheet.RateType.BUY,
             transport_mode=RateSheet.TransportMode.AIR,
@@ -230,6 +248,7 @@ class TestRateSheet:
 
         # Same-day start/end rejected
         s_same = RateSheet(
+            **sheet_audit,
             name="Same Day",
             rate_type=RateSheet.RateType.BUY,
             transport_mode=RateSheet.TransportMode.AIR,
@@ -242,6 +261,7 @@ class TestRateSheet:
 
         with pytest.raises(IntegrityError), transaction.atomic():
             RateSheet.objects.create(
+                **sheet_audit,
                 name="Same Day DB",
                 rate_type=RateSheet.RateType.BUY,
                 transport_mode=RateSheet.TransportMode.AIR,
@@ -252,6 +272,7 @@ class TestRateSheet:
 
         # Reversed dates rejected
         s_rev = RateSheet(
+            **sheet_audit,
             name="Reversed Dates",
             rate_type=RateSheet.RateType.BUY,
             transport_mode=RateSheet.TransportMode.AIR,
@@ -264,6 +285,7 @@ class TestRateSheet:
 
         with pytest.raises(IntegrityError), transaction.atomic():
             RateSheet.objects.create(
+                **sheet_audit,
                 name="Reversed Dates DB",
                 rate_type=RateSheet.RateType.BUY,
                 transport_mode=RateSheet.TransportMode.AIR,
@@ -272,8 +294,9 @@ class TestRateSheet:
                 valid_until=datetime.date(2026, 1, 1),
             )
 
-    def test_version_positive_integer(self):
+    def test_version_positive_integer(self, sheet_audit):
         v0 = RateSheet(
+            **sheet_audit,
             name="Version Zero",
             rate_type=RateSheet.RateType.BUY,
             transport_mode=RateSheet.TransportMode.AIR,
@@ -286,6 +309,7 @@ class TestRateSheet:
 
         with pytest.raises(IntegrityError), transaction.atomic():
             RateSheet.objects.create(
+                **sheet_audit,
                 name="Version Zero DB",
                 rate_type=RateSheet.RateType.BUY,
                 transport_mode=RateSheet.TransportMode.AIR,
