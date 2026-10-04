@@ -186,6 +186,8 @@ rate_sheet
 
 The matching, coexistence, and ambiguity rules in item 1 and under "Resolver principles" therefore remain contract only. They belong to the future loader validation and resolver, each in its own separately reviewed change.
 
+**Dry-run manifest validation (Pilot Gate B3C).** The command `validate_rate_matrix_manifest` checks a strict JSON manifest against this contract and the current database, and reports proposed creates and reuses, resolved ProductCodes, geography, and parties, and every error. It detects duplicate rate identity, overlapping validity, and blank-versus-specific payment-term coexistence, within the manifest and against existing rows, and applies no precedence. It never writes and has no apply mode, so those rules are still not enforced on stored data: a loader that writes, and the resolver, remain unimplemented. The manifest format and rules are maintained in `backend/pricing_v4/docs/rate_matrix_manifest.md`.
+
 **Approved schema direction**
 
 1. **Payment term.** `rate_applicability.payment_term` takes `PREPAID`, `COLLECT`, or blank, where blank means ANY. A rate matches when its term equals the requested term or is blank. A specific-term rate and a blank-term rate may not coexist for the same otherwise-identical active rate; if they do, the match is ambiguous and fails closed. BUY rates use blank.
