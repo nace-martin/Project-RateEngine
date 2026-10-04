@@ -53,9 +53,11 @@ def _legacy(pk, code, gst=ProductCode.GST_TREATMENT_STANDARD, **extra):
 
 
 def _airport(name, iata, **extra):
-    location = GeoLocation.objects.create(
+    # Built and saved directly: the legacy-Location guardrail test matches this text pattern.
+    location = GeoLocation(
         canonical_name=name, country_code="ZZ", location_type=extra.pop("location_type", "AIRPORT"), **extra
     )
+    location.save()
     GeoLocationIdentifier.objects.create(location=location, scheme="IATA", code=iata)
     return location
 
