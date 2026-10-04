@@ -38,7 +38,6 @@ CURRENCY_PATTERN = re.compile(r"^[A-Z]{3}$")
 
 SCALAR_BASES = ("FLAT", "PER_KG", "PER_CBM", "PER_UNIT")
 SUPPLIER_ROLES = ("CARRIER", "AGENT")
-CUSTOMER_ROLES = ("CUSTOMER",)
 
 TOP_KEYS = ("manifest_version", "product_codes", "rate_sheets")
 PRODUCT_CODE_KEYS = (
@@ -66,7 +65,8 @@ WILDCARD_DIMENSIONS = (
     "supplier", "customer", "direction", "origin", "destination",
     "service_level", "commodity_category", "equipment_type", "payment_term",
 )
-EXACT_DIMENSIONS = ("rate_type", "product_code", "transport_mode", "currency_code")
+# Currency is compared separately: exact for SELL, never a disambiguator for BUY.
+EXACT_DIMENSIONS = ("rate_type", "product_code", "transport_mode")
 
 
 class ManifestParseError(ValueError):
@@ -271,6 +271,7 @@ class _Validator:
         self.report = ManifestReport()
         self.proposed_codes: dict[str, str] = {}
         self.resolved_codes: dict[str, dict[str, Any]] = {}
+        self.unusable_codes: dict[str, tuple[str, str]] = {}
         self.geo_cache: dict[str, GeoLocation | None] = {}
         self.party_cache: dict[tuple[str, str, str], PartyMaster | None] = {}
         self.rate_records: list[dict[str, Any]] = []
@@ -552,7 +553,18 @@ class _Validator:
         return "REUSE"
 
     def _resolve_line_code(self, code: str, path: str) -> bool:
+        """Resolve a code referenced by a rate line. An inactive code never resolves."""
+        if code in self.unusable_codes:
+            error_code, message = self.unusable_codes[code]
+            self.report.error(error_code, path, message)
+            return False
         if code in self.resolved_codes:
+            if not self.resolved_codes[code]["is_active"]:
+                self.report.error(
+                    "PRODUCT_CODE_INACTIVE", path,
+                    f"CommercialProductCode '{code}' is inactive; a rate must not reference it.",
+                )
+                return False
             return True
         if code in self.proposed_codes:
             self.report.error(
@@ -560,30 +572,66 @@ class _Validator:
                 f"'{code}' is proposed at {self.proposed_codes[code]} but that proposal has errors.",
             )
             return False
-        existing = CommercialProductCode.objects.using(self.using).filter(code=code).first()
-        if existing is None:
-            self.report.error(
-                "PRODUCT_CODE_UNRESOLVED", path,
-                f"'{code}' is neither proposed in this manifest nor an existing CommercialProductCode.",
-            )
+
+        existing = (
+            CommercialProductCode.objects.using(self.using)
+            .select_related("legacy_product_code").filter(code=code).first()
+        )
+        problem = self._existing_code_problem(code, existing)
+        if problem is not None:
+            self.unusable_codes[code] = problem
+            self.report.error(problem[0], path, problem[1])
             return False
-        if existing.legacy_product_code_id is None:
-            self.report.error(
-                "PRODUCT_CODE_UNMAPPED", path,
-                f"Existing CommercialProductCode '{code}' has no legacy ProductCode mapping.",
-            )
-            return False
-        if not existing.is_active:
-            self.report.error("PRODUCT_CODE_INACTIVE", path, f"Existing CommercialProductCode '{code}' is inactive.")
-            return False
+        legacy = existing.legacy_product_code
         self.resolved_codes[code] = {
             "code": existing.code, "name": existing.name, "category": existing.category,
             "sub_category": existing.sub_category, "gst_treatment": existing.gst_treatment,
             "charge_basis_default": existing.charge_basis_default, "is_active": existing.is_active,
-            "action": "REUSE", "legacy_id": existing.legacy_product_code_id,
-            "legacy_code": existing.legacy_product_code.code, "origin": "existing",
+            "action": "REUSE", "legacy_id": legacy.id, "legacy_code": legacy.code, "origin": "existing",
         }
         return True
+
+    @staticmethod
+    def _existing_code_problem(code: str, existing: CommercialProductCode | None) -> tuple[str, str] | None:
+        """Why an existing CommercialProductCode cannot be used by a rate, or None if it can."""
+        if existing is None:
+            return (
+                "PRODUCT_CODE_UNRESOLVED",
+                f"'{code}' is neither proposed in this manifest nor an existing CommercialProductCode.",
+            )
+        if not existing.is_active:
+            return ("PRODUCT_CODE_INACTIVE", f"Existing CommercialProductCode '{code}' is inactive.")
+        legacy = existing.legacy_product_code
+        if legacy is None:
+            return (
+                "PRODUCT_CODE_UNMAPPED",
+                f"Existing CommercialProductCode '{code}' has no legacy ProductCode mapping.",
+            )
+        if not legacy.is_active or legacy.retired_at is not None:
+            return (
+                "LEGACY_PRODUCT_CODE_INACTIVE",
+                (
+                    f"Existing CommercialProductCode '{code}' is mapped to legacy ProductCode {legacy.id} "
+                    f"({legacy.code}), which is inactive or retired."
+                ),
+            )
+        if legacy.code != existing.code:
+            return (
+                "LEGACY_PRODUCT_CODE_MISMATCH",
+                (
+                    f"Existing CommercialProductCode '{code}' is mapped to legacy ProductCode {legacy.id}, "
+                    f"whose code is now '{legacy.code}'."
+                ),
+            )
+        if legacy.gst_treatment != existing.gst_treatment:
+            return (
+                "GST_TREATMENT_MISMATCH",
+                (
+                    f"Existing CommercialProductCode '{code}' has gst_treatment '{existing.gst_treatment}' but "
+                    f"legacy ProductCode {legacy.id} now has '{legacy.gst_treatment}'."
+                ),
+            )
+        return None
 
     # ------------------------------------------------------ geography, parties
 
@@ -697,16 +745,23 @@ class _Validator:
             valid_until_ok = False
 
         supplier_ok, supplier = self._party(obj["supplier"], f"{path}.supplier", SUPPLIER_ROLES)
-        customer_ok, customer = self._party(obj["customer"], f"{path}.customer", CUSTOMER_ROLES)
+        # Pilot v1: no customer-specific tariffs. A named customer is rejected, not resolved.
+        customer, customer_ok = None, obj["customer"] is None
         if rate_type == "BUY" and obj["customer"] is not None:
             self.report.error("BUY_SHEET_HAS_CUSTOMER", f"{path}.customer", "A BUY sheet must not name a customer.")
+        if rate_type == "SELL" and obj["customer"] is not None:
+            self.report.error(
+                "SELL_SHEET_HAS_CUSTOMER", f"{path}.customer",
+                "Pilot v1 SELL sheets must leave customer blank (null).",
+            )
         if rate_type == "SELL" and obj["supplier"] is not None:
             self.report.error("SELL_SHEET_HAS_SUPPLIER", f"{path}.supplier", "A SELL sheet must not name a supplier.")
         if rate_type == "BUY" and obj["supplier"] is None:
-            self.report.warn(
+            self.report.error(
                 "BUY_SHEET_WITHOUT_SUPPLIER", f"{path}.supplier",
-                "BUY sheet names no carrier or agent; it would apply regardless of supplier.",
+                "A BUY sheet must name its carrier or agent supplier.",
             )
+            supplier_ok = False
 
         if name is not None and version is not None:
             key = (name, version)
@@ -783,7 +838,8 @@ class _Validator:
                 f"additive_flat_amount is only permitted for PER_KG, not {basis}.",
             )
 
-        applicability = self._applicability(obj["applicability"], f"{path}.applicability", sheet)
+        category = self.resolved_codes[code]["category"] if code_ok else None
+        applicability = self._applicability(obj["applicability"], f"{path}.applicability", sheet, category)
         tier_count = self._tiers(obj["tiers"], f"{path}.tiers", basis)
 
         essentials = (sheet["rate_type"], sheet["transport_mode"], sheet["currency_code"], sheet["valid_from"], sheet["is_active"])
@@ -835,7 +891,42 @@ class _Validator:
             if has_unit:
                 self.report.error("BASIS_FIELDS", f"{path}.unit_rate", "PERCENTAGE must not carry unit_rate.")
 
-    def _applicability(self, entry: Any, path: str, sheet: dict[str, Any]) -> dict[str, Any] | None:
+    def _location_rules(self, obj: dict, path: str, category: str | None) -> bool:
+        """Pilot location rules. The category is the resolved CommercialProductCode's, never inferred."""
+        has_origin = obj["origin_iata"] is not None
+        has_destination = obj["destination_iata"] is not None
+        if not has_origin and not has_destination:
+            self.report.error(
+                "LOCATION_REQUIRED", path,
+                "A rate with neither origin nor destination is not permitted.",
+            )
+            return False
+        required_origin = category in ("FREIGHT", "ORIGIN")
+        required_destination = category in ("FREIGHT", "DESTINATION")
+        ok = True
+        if required_origin and not has_origin:
+            self.report.error("ORIGIN_REQUIRED", f"{path}.origin_iata", f"{category} rates require an origin.")
+            ok = False
+        if required_destination and not has_destination:
+            self.report.error(
+                "DESTINATION_REQUIRED", f"{path}.destination_iata", f"{category} rates require a destination.",
+            )
+            ok = False
+        if category == "ORIGIN" and has_destination:
+            self.report.error(
+                "DESTINATION_NOT_ALLOWED", f"{path}.destination_iata", "ORIGIN rates must leave destination blank (null).",
+            )
+            ok = False
+        if category == "DESTINATION" and has_origin:
+            self.report.error(
+                "ORIGIN_NOT_ALLOWED", f"{path}.origin_iata", "DESTINATION rates must leave origin blank (null).",
+            )
+            ok = False
+        return ok
+
+    def _applicability(
+        self, entry: Any, path: str, sheet: dict[str, Any], category: str | None
+    ) -> dict[str, Any] | None:
         obj = self._object(entry, path, APPLICABILITY_KEYS)
         if obj is None:
             return None
@@ -856,12 +947,11 @@ class _Validator:
         if origin is not None and destination is not None and origin.id == destination.id:
             self.report.error("ORIGIN_EQUALS_DESTINATION", path, "Origin and destination resolve to the same location.")
             origin_ok = False
-        if origin_ok and destination_ok and origin is None and destination is None:
-            self.report.warn(
-                "APPLICABILITY_ANY_LOCATION", path,
-                "No origin or destination is set; the rate would apply to every route.",
-            )
-        if None in (direction, payment_term, service_level, commodity, equipment) or not (origin_ok and destination_ok):
+        locations_ok = self._location_rules(obj, path, category)
+        if (
+            None in (direction, payment_term, service_level, commodity, equipment)
+            or not (origin_ok and destination_ok and locations_ok)
+        ):
             return None
         return {
             "direction": direction, "payment_term": payment_term, "service_level": service_level,
@@ -963,6 +1053,10 @@ class _Validator:
         differing = [dim for dim in WILDCARD_DIMENSIONS if a[dim] != b[dim]]
         if any(not (_is_blank(a[dim]) or _is_blank(b[dim])) for dim in differing):
             return None
+        if a["currency_code"] != b["currency_code"]:
+            # A SELL tariff in another currency is a different rate. A BUY cost in another
+            # currency is a competing cost for the same charge: native currency cannot choose.
+            return "RATE_BUY_CURRENCY_AMBIGUOUS" if a["rate_type"] == "BUY" else None
         if not differing:
             return "RATE_DUPLICATE_IDENTITY"
         if differing == ["payment_term"]:
@@ -975,6 +1069,11 @@ class _Validator:
             "RATE_PAYMENT_TERM_COEXISTENCE": (
                 "A blank (any) payment term and a specific payment term coexist for the same "
                 "otherwise-identical active rate with overlapping validity: {other}."
+            ),
+            "RATE_BUY_CURRENCY_AMBIGUOUS": (
+                "Two active BUY rates for the same charge, supplier, and applicability overlap in "
+                "validity but differ in currency: {other}. Currency alone cannot choose between costs; "
+                "nothing is converted and no precedence is applied."
             ),
             "RATE_AMBIGUOUS_MATCH": (
                 "More than one rate could match the same quote context with overlapping validity "

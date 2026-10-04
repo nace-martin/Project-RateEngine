@@ -23,6 +23,23 @@ python manage.py validate_rate_matrix_manifest path/to/manifest.json --format js
 Running it is an inspection. A `PASS` is not approval to load anything; see
 `.codex/skills/seed-data-change/SKILL.md`.
 
+## Approved Pilot ingestion semantics
+
+These were confirmed in the Pilot Gate B3C review (2026-10-04) and are what the validator
+enforces. They do not change the Pilot Gate B3A payment-term contract.
+
+1. Validity end dates are inclusive for overlap detection. A sheet ending on the day another starts
+   overlaps it.
+2. A blank applicability value means ANY.
+3. There is no "specific beats general" precedence. A blank value overlapping a specific one is a
+   conflict, not an ordering.
+4. `direction` is required on every line.
+5. A `PartyMaster` reference is the exact `legal_name` plus `country_code`.
+6. A BUY sheet must name its supplier.
+7. A Pilot v1 SELL sheet must leave `customer` blank.
+8. A rate with neither origin nor destination is prohibited.
+9. BUY currency alone cannot disambiguate competing costs.
+
 ## Manifest format
 
 Strict JSON, UTF-8, `manifest_version` 1. Rules that apply everywhere:
@@ -115,18 +132,22 @@ Each entry proposes a `CommercialProductCode` that mirrors one legacy `ProductCo
   against existing rows.
 - If a `CommercialProductCode` with that code already exists: identical and mapped to the same
   legacy code is reported as `REUSE`; anything else is an error. Existing rows are never updated.
-- A rate line may reference a code proposed in the manifest, or an existing, active
-  `CommercialProductCode` that already has a legacy mapping.
+- A rate line, or a percentage basis, may reference a code proposed in the manifest or an existing
+  `CommercialProductCode`. In both cases the code must be active; an inactive code never resolves.
+- An existing code used by a rate is re-checked against its legacy `ProductCode` on every run: the
+  mapping must exist, the legacy code must be active and not retired, its code must still match,
+  and its `gst_treatment` must still equal the commercial code's. Any drift is an error.
 
 ### Geography and parties
 
 - IATA code → `GeoLocationIdentifier` (scheme `IATA`) → `GeoLocation`. Missing, non-unique, or
   inactive geography is an error. For `AIR` sheets the location must be an airport.
 - A party is matched on exact `legal_name` and `country_code`, must be active, and must hold the
-  stated active role. `supplier` accepts `CARRIER` or `AGENT`; `customer` accepts `CUSTOMER`.
+  stated active role. `supplier` accepts `CARRIER` or `AGENT`.
 - Nothing is created. A missing or ambiguous party or location is an error.
-- A BUY sheet may not name a customer and a SELL sheet may not name a supplier. A BUY sheet with no
-  supplier is reported as a warning.
+- BUY sheet: `supplier` is required and `customer` is prohibited.
+- SELL sheet: `supplier` is prohibited and, for Pilot v1, `customer` must be `null`. A named
+  customer is rejected without being looked up.
 
 ### Sheets and lines
 
@@ -144,6 +165,21 @@ Each entry proposes a `CommercialProductCode` that mirrors one legacy `ProductCo
 - `min_charge` must not exceed `max_charge`.
 - `direction` is required. `payment_term` is `PREPAID`, `COLLECT`, or blank; BUY lines must be blank.
 
+### Locations
+
+A line with neither origin nor destination is rejected. Beyond that, the rule depends on the
+`category` of the resolved `CommercialProductCode`. The category is the one stated in the manifest
+proposal or stored on the existing row; it is never derived from the code or its name.
+
+| Category | Origin | Destination |
+| :--- | :--- | :--- |
+| `FREIGHT` | required | required |
+| `ORIGIN` | required | must be blank |
+| `DESTINATION` | must be blank | required |
+| `CLEARANCE`, `SERVICE` | at least one of the two | at least one of the two |
+
+No further meaning is attached to `CLEARANCE` or `SERVICE` yet.
+
 ### Tiers
 
 Tiers are `[min_quantity, max_quantity)`: lower bound inclusive, upper bound exclusive. They must
@@ -155,9 +191,14 @@ else is rejected as incomplete coverage. No price is calculated.
 Each otherwise-valid line on an active sheet is compared with every other such line in the manifest
 and with every line on an active sheet already in the database.
 
-Two rates are compared only when `rate_type`, product code, `transport_mode`, and `currency_code`
-are equal and their validity windows overlap. End dates are treated as inclusive, so a sheet ending
-on the day another starts counts as overlapping.
+Two rates are compared only when `rate_type`, product code, and `transport_mode` are equal and
+their validity windows overlap. End dates are inclusive, so a sheet ending on the day another
+starts counts as overlapping.
+
+Currency is handled by side. For SELL it is part of the rate identity: tariffs in different
+currencies are different rates. For BUY it is not a selector: two otherwise-matching BUY rates in
+different currencies are competing costs for the same charge and fail as ambiguous. Nothing is
+converted and neither is chosen.
 
 For supplier, customer, direction, origin, destination, service level, commodity category,
 equipment type, and payment term, a blank value means "any". If every one of those is either equal
@@ -169,9 +210,11 @@ fails:
 | `RATE_DUPLICATE_IDENTITY` | Every dimension is equal. |
 | `RATE_PAYMENT_TERM_COEXISTENCE` | Identical except that one payment term is blank and the other specific. |
 | `RATE_AMBIGUOUS_MATCH` | Some other dimension is blank on one side and specific on the other. |
+| `RATE_BUY_CURRENCY_AMBIGUOUS` | BUY rates that match on every dimension but differ in currency. |
 
 No precedence is applied in any of these cases. Two rates that differ on a dimension where both
-sides are specific, such as `PREPAID` and `COLLECT`, do not conflict.
+sides are specific, such as `PREPAID` and `COLLECT`, or two different named suppliers, do not
+conflict. Supplier remains a legitimate way for a future resolver to tell BUY rates apart.
 
 Conflict checks run only on lines that passed every other check. Fix reported errors and run again.
 
@@ -179,5 +222,4 @@ Conflict checks run only on lines that passed every other check. Fix reported er
 
 - Apply or write mode.
 - A resolver, payment-term matching, or any pricing calculation.
-- Detection of BUY rates that differ only by currency or by two specific suppliers. These are
-  distinct rates here; choosing between them is resolver behaviour.
+- Customer-specific SELL tariffs. Pilot v1 rejects them.

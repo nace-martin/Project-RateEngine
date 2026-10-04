@@ -41,6 +41,7 @@ SCREEN = "EXP-SYNTH-SCREEN"
 FSC = "EXP-SYNTH-FSC"
 RETIRED = "EXP-SYNTH-RETIRED"
 INACTIVE = "EXP-SYNTH-INACTIVE"
+SERVICE = "EXP-SYNTH-SERVICE"
 
 
 def _legacy(pk, code, gst=ProductCode.GST_TREATMENT_STANDARD, **extra):
@@ -79,6 +80,7 @@ def world(db):
         "legacy_fsc": _legacy(1903, FSC),
         "legacy_retired": _legacy(1904, RETIRED, is_active=False, retired_at=timezone.now()),
         "legacy_inactive": _legacy(1905, INACTIVE, is_active=False),
+        "legacy_service": _legacy(1906, SERVICE),
         "xaa": _airport("Synthetic Airport A", "XAA"),
         "xbb": _airport("Synthetic Airport B", "XBB"),
         "xcc_inactive": _airport("Synthetic Airport C", "XCC", is_active=False),
@@ -462,6 +464,72 @@ class TestProductCodeRules:
         existing.refresh_from_db()
         assert (existing.name, existing.category) == ("A Different Name", "DESTINATION")
 
+    def test_proposed_inactive_code_cannot_be_used_by_a_rate(self, world):
+        manifest = valid_manifest()
+        manifest["product_codes"][1]["is_active"] = False
+        report = validate_manifest(manifest)
+        assert_error(report, "PRODUCT_CODE_INACTIVE", "$.rate_sheets[1].lines[0].product_code")
+        assert_error(report, "PRODUCT_CODE_INACTIVE", "$.rate_sheets[1].lines[1].percentage_basis_product_code")
+
+    def test_proposed_inactive_code_not_used_by_any_rate_is_allowed(self, world):
+        manifest = valid_manifest()
+        manifest["product_codes"].append({**_code(SERVICE, 1906, category="SERVICE"), "is_active": False})
+        assert validate_manifest(manifest).passed
+
+    def _reference_existing_screen(self):
+        manifest = valid_manifest()
+        manifest["product_codes"] = [pc for pc in manifest["product_codes"] if pc["code"] != SCREEN]
+        return manifest
+
+    def _existing_screen(self, world, **overrides):
+        values = {
+            "code": SCREEN, "name": "Existing", "category": "ORIGIN", "gst_treatment": "STANDARD",
+            "charge_basis_default": "PER_KG", "legacy_product_code": world["legacy_screen"],
+        }
+        values.update(overrides)
+        return CommercialProductCode.objects.create(**values)
+
+    def test_existing_inactive_code_cannot_be_used_by_a_rate(self, world):
+        self._existing_screen(world, is_active=False)
+        report = validate_manifest(self._reference_existing_screen())
+        assert_error(report, "PRODUCT_CODE_INACTIVE", "$.rate_sheets[1].lines[0].product_code")
+        assert_error(report, "PRODUCT_CODE_INACTIVE", "$.rate_sheets[1].lines[1].percentage_basis_product_code")
+        assert SCREEN not in [pc["code"] for pc in report.product_codes]
+
+    @pytest.mark.parametrize(
+        "changes",
+        [{"is_active": False}, {"is_active": False, "retired_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)}],
+        ids=["inactive", "retired"],
+    )
+    def test_existing_code_linked_to_inactive_or_retired_legacy_code(self, world, changes):
+        self._existing_screen(world)
+        ProductCode.objects.filter(pk=1902).update(**changes)
+        report = validate_manifest(self._reference_existing_screen())
+        assert_error(report, "LEGACY_PRODUCT_CODE_INACTIVE", "$.rate_sheets[1].lines[0].product_code")
+
+    def test_existing_code_with_stale_gst_treatment(self, world):
+        self._existing_screen(world)
+        ProductCode.objects.filter(pk=1902).update(gst_treatment=ProductCode.GST_TREATMENT_ZERO_RATED)
+        report = validate_manifest(self._reference_existing_screen())
+        assert_error(report, "GST_TREATMENT_MISMATCH", "$.rate_sheets[1].lines[0].product_code")
+        assert "STANDARD" in report.errors[0].message and "ZERO_RATED" in report.errors[0].message
+
+    def test_existing_code_whose_legacy_code_was_renamed(self, world):
+        self._existing_screen(world)
+        ProductCode.objects.filter(pk=1902).update(code="EXP-SYNTH-SCREEN-RENAMED")
+        report = validate_manifest(self._reference_existing_screen())
+        assert_error(report, "LEGACY_PRODUCT_CODE_MISMATCH", "$.rate_sheets[1].lines[0].product_code")
+
+    def test_existing_unmapped_code_cannot_be_used_by_a_rate(self, world):
+        self._existing_screen(world, legacy_product_code=None)
+        report = validate_manifest(self._reference_existing_screen())
+        assert_error(report, "PRODUCT_CODE_UNMAPPED", "$.rate_sheets[1].lines[0].product_code")
+
+    def test_healthy_existing_code_is_reused(self, world):
+        self._existing_screen(world)
+        report = validate_manifest(self._reference_existing_screen())
+        assert report.passed
+
     def test_line_referencing_unknown_code(self, world):
         manifest = valid_manifest()
         manifest["rate_sheets"][1]["lines"][0]["product_code"] = "EXP-NOT-A-CODE"
@@ -501,15 +569,6 @@ class TestGeographyAndParties:
         manifest["rate_sheets"][0]["lines"][0]["applicability"]["destination_iata"] = "XAA"
         assert_error(validate_manifest(manifest), "ORIGIN_EQUALS_DESTINATION", "$.rate_sheets[0].lines[0].applicability")
 
-    def test_no_location_is_a_warning_not_an_error(self, world):
-        manifest = valid_manifest()
-        manifest["rate_sheets"][0]["lines"][0]["applicability"].update(origin_iata=None, destination_iata=None)
-        report = validate_manifest(manifest)
-        assert report.passed
-        assert [(w.code, w.path) for w in report.warnings] == [
-            ("APPLICABILITY_ANY_LOCATION", "$.rate_sheets[0].lines[0].applicability")
-        ]
-
     def test_geography_tables_are_not_extended(self, world):
         before = (GeoLocation.objects.count(), GeoLocationIdentifier.objects.count())
         manifest = valid_manifest()
@@ -540,12 +599,15 @@ class TestGeographyAndParties:
         assert report.passed
         assert report.parties[0]["role"] == "AGENT"
 
-    def test_customer_resolves_on_sell_sheet(self, world):
+    def test_pilot_sell_sheet_customer_must_be_blank(self, world):
         manifest = valid_manifest()
         manifest["rate_sheets"][1]["customer"] = {"legal_name": "Synthetic Customer Ltd", "country_code": "ZZ", "role": "CUSTOMER"}
         report = validate_manifest(manifest)
-        assert report.passed
-        assert ("CUSTOMER", "Synthetic Customer Ltd") in {(p["role"], p["legal_name"]) for p in report.parties}
+        assert_error(report, "SELL_SHEET_HAS_CUSTOMER", "$.rate_sheets[1].customer")
+        assert report.parties == [{
+            "role": "CARRIER", "legal_name": "Synthetic Carrier Ltd", "country_code": "ZZ",
+            "id": str(world["carrier"].id),
+        }]
 
     def test_party_scope_must_match_sheet_side(self, world):
         manifest = valid_manifest()
@@ -555,12 +617,89 @@ class TestGeographyAndParties:
         assert_error(report, "BUY_SHEET_HAS_CUSTOMER", "$.rate_sheets[0].customer")
         assert_error(report, "SELL_SHEET_HAS_SUPPLIER", "$.rate_sheets[1].supplier")
 
-    def test_buy_sheet_without_supplier_warns(self, world):
+    def test_buy_sheet_requires_supplier(self, world):
         manifest = valid_manifest()
         manifest["rate_sheets"][0]["supplier"] = None
         report = validate_manifest(manifest)
+        assert_error(report, "BUY_SHEET_WITHOUT_SUPPLIER", "$.rate_sheets[0].supplier")
+        assert report.warnings == []
+
+    def test_sell_sheet_needs_no_party(self, world):
+        manifest = valid_manifest()
+        manifest["rate_sheets"] = [manifest["rate_sheets"][1]]
+        report = validate_manifest(manifest)
         assert report.passed
-        assert [w.code for w in report.warnings] == ["BUY_SHEET_WITHOUT_SUPPLIER"]
+        assert report.parties == []
+
+
+def _location_manifest(category, origin, destination):
+    manifest = valid_manifest()
+    manifest["product_codes"] = [_code(SERVICE, 1906, category=category)]
+    manifest["rate_sheets"] = [
+        _sheet(
+            "Synthetic Location Sheet", "SELL",
+            [_line(SERVICE, "FLAT", unit_rate="5.00",
+                   applicability=_applicability(origin_iata=origin, destination_iata=destination))],
+        )
+    ]
+    return manifest
+
+
+APP = "$.rate_sheets[0].lines[0].applicability"
+LOCATION_CASES = [
+    ("FREIGHT", "XAA", "XBB", []),
+    ("FREIGHT", "XAA", None, [("DESTINATION_REQUIRED", f"{APP}.destination_iata")]),
+    ("FREIGHT", None, "XBB", [("ORIGIN_REQUIRED", f"{APP}.origin_iata")]),
+    ("FREIGHT", None, None, [("LOCATION_REQUIRED", APP)]),
+    ("ORIGIN", "XAA", None, []),
+    ("ORIGIN", "XAA", "XBB", [("DESTINATION_NOT_ALLOWED", f"{APP}.destination_iata")]),
+    ("ORIGIN", None, "XBB", [("ORIGIN_REQUIRED", f"{APP}.origin_iata"), ("DESTINATION_NOT_ALLOWED", f"{APP}.destination_iata")]),
+    ("ORIGIN", None, None, [("LOCATION_REQUIRED", APP)]),
+    ("DESTINATION", None, "XBB", []),
+    ("DESTINATION", "XAA", "XBB", [("ORIGIN_NOT_ALLOWED", f"{APP}.origin_iata")]),
+    ("DESTINATION", "XAA", None, [("DESTINATION_REQUIRED", f"{APP}.destination_iata"), ("ORIGIN_NOT_ALLOWED", f"{APP}.origin_iata")]),
+    ("DESTINATION", None, None, [("LOCATION_REQUIRED", APP)]),
+    ("CLEARANCE", "XAA", None, []),
+    ("CLEARANCE", None, "XBB", []),
+    ("CLEARANCE", "XAA", "XBB", []),
+    ("CLEARANCE", None, None, [("LOCATION_REQUIRED", APP)]),
+    ("SERVICE", "XAA", None, []),
+    ("SERVICE", None, "XBB", []),
+    ("SERVICE", "XAA", "XBB", []),
+    ("SERVICE", None, None, [("LOCATION_REQUIRED", APP)]),
+]
+
+
+@pytest.mark.django_db
+class TestPilotLocationRules:
+    @pytest.mark.parametrize(
+        "category, origin, destination, expected", LOCATION_CASES,
+        ids=[f"{c[0]}-{c[1] or 'blank'}-{c[2] or 'blank'}" for c in LOCATION_CASES],
+    )
+    def test_location_rule_by_category(self, world, category, origin, destination, expected):
+        report = validate_manifest(_location_manifest(category, origin, destination))
+        assert codes(report) == expected
+        assert report.passed is (not expected)
+        assert report.warnings == []
+
+    def test_category_comes_from_the_resolved_code_not_its_name(self, world):
+        # Same code text, different declared category, different rule.
+        assert validate_manifest(_location_manifest("ORIGIN", "XAA", None)).passed
+        assert not validate_manifest(_location_manifest("DESTINATION", "XAA", None)).passed
+
+    def test_category_of_existing_code_is_used(self, world):
+        CommercialProductCode.objects.create(
+            code=SERVICE, name="Existing", category="DESTINATION", gst_treatment="STANDARD",
+            charge_basis_default="FLAT", legacy_product_code=world["legacy_service"],
+        )
+        manifest = _location_manifest("DESTINATION", "XAA", "XBB")
+        manifest["product_codes"] = []
+        assert codes(validate_manifest(manifest)) == [("ORIGIN_NOT_ALLOWED", f"{APP}.origin_iata")]
+
+    def test_direction_remains_required(self, world):
+        manifest = _location_manifest("FREIGHT", "XAA", "XBB")
+        manifest["rate_sheets"][0]["lines"][0]["applicability"]["direction"] = ""
+        assert_error(validate_manifest(manifest), "VALUE_REQUIRED", f"{APP}.direction")
 
 
 # --------------------------------------------------------------------------- rate rules
@@ -704,8 +843,8 @@ class TestTierRules:
 # --------------------------------------------------------------------------- ambiguity and overlap
 
 
-def _sell_line(**applicability):
-    return _line(SCREEN, "PER_KG", unit_rate="0.22", applicability=_applicability(**applicability))
+def _sell_line(code=FREIGHT, **applicability):
+    return _line(code, "PER_KG", unit_rate="0.22", applicability=_applicability(**applicability))
 
 
 def _two_sell_sheets(first, second, **second_sheet):
@@ -718,14 +857,21 @@ def _two_sell_sheets(first, second, **second_sheet):
 
 
 def _existing_sell_rate(world, **applicability):
-    code = CommercialProductCode.objects.create(
-        code=SCREEN, name=f"Synthetic {SCREEN}", category="ORIGIN", gst_treatment="STANDARD",
-        charge_basis_default="PER_KG", legacy_product_code=world["legacy_screen"],
+    return _existing_rate(world, "SELL", **applicability)
+
+
+def _existing_rate(world, rate_type, currency_code="XTS", carrier=None, **applicability):
+    code, _ = CommercialProductCode.objects.get_or_create(
+        code=FREIGHT,
+        defaults={
+            "name": f"Synthetic {FREIGHT}", "category": "FREIGHT", "gst_treatment": "ZERO_RATED",
+            "charge_basis_default": "PER_KG", "legacy_product_code": world["legacy_freight"],
+        },
     )
     sheet = RateSheet.objects.create(
-        name="Existing Synthetic SELL", version=1, rate_type="SELL", transport_mode="AIR", currency_code="XTS",
-        valid_from=datetime.date(2030, 6, 1), valid_until=None, source_reference="EXISTING-SYNTHETIC",
-        created_by=world["user"],
+        name=f"Existing Synthetic {rate_type}", version=1, rate_type=rate_type, transport_mode="AIR",
+        currency_code=currency_code, valid_from=datetime.date(2030, 6, 1), valid_until=None,
+        source_reference="EXISTING-SYNTHETIC", created_by=world["user"], carrier=carrier,
     )
     line = RateLine.objects.create(sheet=sheet, product_code=code, rate_basis="PER_KG", unit_rate=Decimal("0.3300"))
     values = {"direction": "EXPORT", "origin": world["xaa"], "destination": world["xbb"]}
@@ -757,7 +903,10 @@ class TestAmbiguityAndOverlap:
         assert report.passed
 
     def test_blank_location_overlapping_specific_location_is_ambiguous(self, world):
-        report = validate_manifest(_two_sell_sheets(_sell_line(destination_iata=None), _sell_line()))
+        # A SERVICE code may be scoped by origin alone or by origin and destination; both would match.
+        manifest = _two_sell_sheets(_sell_line(SERVICE, destination_iata=None), _sell_line(SERVICE))
+        manifest["product_codes"].append(_code(SERVICE, 1906, category="SERVICE"))
+        report = validate_manifest(manifest)
         assert_error(report, "RATE_AMBIGUOUS_MATCH", "$.rate_sheets[1].lines[0]")
         assert "No precedence is applied" in report.errors[0].message
 
@@ -829,6 +978,73 @@ class TestAmbiguityAndOverlap:
         manifest = valid_manifest()
         manifest["product_codes"] = []
         manifest["rate_sheets"] = [_sheet("Synthetic SELL A", "SELL", [_sell_line()])]
+        assert validate_manifest(manifest).passed
+
+
+AGENT_REF = {"legal_name": "Synthetic Agent Pty", "country_code": "ZZ", "role": "AGENT"}
+
+
+def _two_buy_sheets(first_supplier, second_supplier, **second_sheet):
+    manifest = valid_manifest()
+    manifest["rate_sheets"] = [
+        _sheet("Synthetic BUY A", "BUY", [_sell_line()], supplier=dict(first_supplier)),
+        _sheet("Synthetic BUY B", "BUY", [_sell_line()], supplier=dict(second_supplier), **second_sheet),
+    ]
+    return manifest
+
+
+@pytest.mark.django_db
+class TestBuyCurrencyAmbiguity:
+    def test_same_supplier_different_currency_is_ambiguous(self, world):
+        report = validate_manifest(_two_buy_sheets(CARRIER_REF, CARRIER_REF, currency_code="XXA"))
+        assert codes(report) == [("RATE_BUY_CURRENCY_AMBIGUOUS", "$.rate_sheets[1].lines[0]")]
+        message = report.errors[0].message
+        assert "$.rate_sheets[0].lines[0]" in message
+        assert "nothing is converted" in message and "no precedence" in message
+
+    def test_same_supplier_same_currency_is_a_duplicate(self, world):
+        report = validate_manifest(_two_buy_sheets(CARRIER_REF, CARRIER_REF))
+        assert codes(report) == [("RATE_DUPLICATE_IDENTITY", "$.rate_sheets[1].lines[0]")]
+
+    @pytest.mark.parametrize("currency", ["XTS", "XXA"])
+    def test_two_specific_suppliers_may_coexist(self, world, currency):
+        assert validate_manifest(_two_buy_sheets(CARRIER_REF, AGENT_REF, currency_code=currency)).passed
+
+    def test_different_currency_outside_validity_is_not_ambiguous(self, world):
+        manifest = _two_buy_sheets(
+            CARRIER_REF, CARRIER_REF, currency_code="XXA", valid_from="2031-01-01", valid_until="2031-12-31"
+        )
+        assert validate_manifest(manifest).passed
+
+    def test_different_currency_on_a_different_route_is_not_ambiguous(self, world):
+        manifest = _two_buy_sheets(CARRIER_REF, CARRIER_REF, currency_code="XXA")
+        manifest["rate_sheets"][1]["lines"][0]["applicability"].update(origin_iata="XBB", destination_iata="XAA")
+        assert validate_manifest(manifest).passed
+
+    def test_inactive_sheet_in_another_currency_is_not_ambiguous(self, world):
+        assert validate_manifest(
+            _two_buy_sheets(CARRIER_REF, CARRIER_REF, currency_code="XXA", is_active=False)
+        ).passed
+
+    def test_sell_currency_remains_part_of_identity(self, world):
+        assert validate_manifest(_two_sell_sheets(_sell_line(), _sell_line(), currency_code="XXA")).passed
+
+    def test_ambiguous_against_existing_buy_row(self, world):
+        existing = _existing_rate(world, "BUY", currency_code="XXA", carrier=world["carrier"])
+        manifest = valid_manifest()
+        manifest["product_codes"] = []
+        manifest["rate_sheets"] = [_sheet("Synthetic BUY A", "BUY", [_sell_line()], supplier=dict(CARRIER_REF))]
+        before = snapshot()
+        report = validate_manifest(manifest)
+        assert codes(report) == [("RATE_BUY_CURRENCY_AMBIGUOUS", "$.rate_sheets[0].lines[0]")]
+        assert f'existing RateSheet "{existing.name}" v1' in report.errors[0].message
+        assert snapshot() == before
+
+    def test_existing_buy_row_from_another_supplier_does_not_conflict(self, world):
+        _existing_rate(world, "BUY", currency_code="XXA", carrier=world["agent"])
+        manifest = valid_manifest()
+        manifest["product_codes"] = []
+        manifest["rate_sheets"] = [_sheet("Synthetic BUY A", "BUY", [_sell_line()], supplier=dict(CARRIER_REF))]
         assert validate_manifest(manifest).passed
 
 
