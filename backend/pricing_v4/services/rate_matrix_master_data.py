@@ -563,9 +563,9 @@ class _Planner:
             differing = [name for name in COMMERCIAL_COMPARE if getattr(existing, name) != fields[name]]
             if differing:
                 record.conflict(f"Existing CommercialProductCode '{code}' differs in: {', '.join(differing)}. Existing rows are never updated.")
-            if record.action != CONFLICT:
+            if record.action == CREATE:
                 record.action = REUSE
-            return
+        # GST approval is required whether the mirror would be created or an identical one reused.
         if not approved:
             record.block(
                 f"GST treatment {strings['gst_treatment']} is not commercially approved for loading (gst_approval.approved is false)."

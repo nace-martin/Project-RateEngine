@@ -555,8 +555,39 @@ class TestCommercialMirrors:
 
     def test_identical_existing_mirror_is_reused(self, world):
         apply_of(_mirror_only(_mirror(EXISTING, 2981)), world)
-        plan = plan_of(_mirror_only(_mirror(EXISTING, 2981, approved=False)))
-        assert record(plan, "CommercialProductCode").action == "REUSE"
+        plan = plan_of(_mirror_only(_mirror(EXISTING, 2981)))
+        target = record(plan, "CommercialProductCode")
+        assert target.action == "REUSE"
+        assert "GST approval: SYNTHETIC-APPROVAL-1" in target.details
+
+    def test_identical_existing_mirror_without_gst_approval_is_blocked_not_reused(self, world):
+        apply_of(_mirror_only(_mirror(EXISTING, 2981)), world)
+        manifest = _mirror_only(_mirror(EXISTING, 2981, approved=False))
+        plan = plan_of(manifest)
+        target = record(plan, "CommercialProductCode")
+        assert target.action == "BLOCKED"
+        assert "STANDARD is not commercially approved for loading" in target.reasons[0]
+        assert not plan.ready
+
+    def test_existing_zero_rated_mirror_without_gst_approval_is_blocked(self, world):
+        apply_of(_mirror_only(_mirror(ZERO, 2982, gst="ZERO_RATED")), world)
+        plan = plan_of(_mirror_only(_mirror(ZERO, 2982, gst="ZERO_RATED", approved=False)))
+        assert record(plan, "CommercialProductCode").action == "BLOCKED"
+
+    def test_unapproved_reuse_refuses_the_whole_apply(self, world):
+        apply_of(_mirror_only(_mirror(EXISTING, 2981)), world)
+        manifest = _mirror_only(_mirror(EXISTING, 2981, approved=False), _mirror(ZERO, 2982, gst="ZERO_RATED"))
+        before = snapshot()
+        plan = apply_of(manifest, world)
+        assert plan.counts() == {"CREATE": 1, "REUSE": 0, "CONFLICT": 0, "BLOCKED": 1}
+        assert plan.applied is None
+        assert snapshot() == before
+        assert not CommercialProductCode.objects.filter(code=ZERO).exists()
+
+    def test_conflicting_existing_mirror_stays_conflict_when_unapproved(self, world):
+        apply_of(_mirror_only(_mirror(EXISTING, 2981)), world)
+        plan = plan_of(_mirror_only(_mirror(EXISTING, 2981, approved=False, category="CLEARANCE")))
+        assert record(plan, "CommercialProductCode").action == "CONFLICT"
 
     @pytest.mark.parametrize("field, value", [("category", "CLEARANCE"), ("charge_basis_default", "PER_KG"), ("name", "Other")])
     def test_existing_mirror_with_different_fields_conflicts(self, world, field, value):

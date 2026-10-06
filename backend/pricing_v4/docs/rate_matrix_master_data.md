@@ -140,9 +140,10 @@ creates its twin. That is a live-pricing change and is outside this loader.
 - One legacy ProductCode maps to at most one CommercialProductCode, in the manifest and in the database.
 - An identical existing mirror is reused. Any difference in category, basis, GST, name or mapping is a
   conflict.
-- **GST approval.** `gst_approval.approved` must be `true`, with a non-blank `reference`, before a mirror can
-  be created. A mirror whose GST treatment matches legacy but has not been commercially approved is
-  `BLOCKED`, which stops any apply that includes it.
+- **GST approval.** `gst_approval.approved` must be `true`, with a non-blank `reference`, for every mirror in
+  the manifest, whether it would be created or an identical one already exists. A mirror whose GST treatment
+  matches legacy but has not been commercially approved is `BLOCKED`, never `REUSE`, which stops any apply
+  that includes it.
 - A mirror that depends on a legacy record that is `CONFLICT` or `BLOCKED` in the same manifest is `BLOCKED`.
 
 ## Audit
