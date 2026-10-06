@@ -190,6 +190,8 @@ The matching, coexistence, and ambiguity rules in item 1 and under "Resolver pri
 
 *Approved Pilot ingestion semantics (Pilot Gate B3C review, 2026-10-04).* The validator enforces these, and they leave the payment-term contract in item 1 unchanged: validity end dates are inclusive for overlap detection; a blank applicability value means ANY; there is no "specific beats general" precedence; `direction` is required; a `party_master` reference is the exact `legal_name` plus `country_code`; a BUY sheet must name its supplier; a Pilot v1 SELL sheet leaves the customer blank; a rate with neither origin nor destination is prohibited; and BUY currency alone cannot disambiguate competing costs.
 
+**Master-data loader (Pilot Gate B3F).** The command `load_rate_matrix_master_data` plans the creation or reuse of `party_master` rows with their roles and identifiers, genuinely new legacy ProductCodes, and `commercial_product_code` mirrors. It is dry-run by default; apply is atomic, bound to the sha256 of the reviewed dry run, refuses the whole manifest on any conflict or missing approval, and never updates an existing row. It writes no tariff and creates no `ServiceComponent`. A mirror whose GST treatment has not been commercially approved is blocked. Format and rules are maintained in `backend/pricing_v4/docs/rate_matrix_master_data.md`.
+
 **Approved schema direction**
 
 1. **Payment term.** `rate_applicability.payment_term` takes `PREPAID`, `COLLECT`, or blank, where blank means ANY. A rate matches when its term equals the requested term or is blank. A specific-term rate and a blank-term rate may not coexist for the same otherwise-identical active rate; if they do, the match is ambiguous and fails closed. BUY rates use blank.
