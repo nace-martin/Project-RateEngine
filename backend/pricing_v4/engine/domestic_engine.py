@@ -29,6 +29,10 @@ from quotes.quote_result_contract import (
 )
 from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult, build_tax_breakdown
 
+
+DOMESTIC_TARIFF_CURRENCY = 'PGK'
+
+
 @dataclass
 class BillableCharge:
     description: str
@@ -41,12 +45,15 @@ class BillableCharge:
     cost_source: Optional[str] = None
     calculation_notes: Optional[str] = None
 
+
 class DomesticPricingEngine:
     """
     Engine for Domestic Air Freight (within PNG).
-    
+
     Principles:
     - Route-specific Freight Rates (via DomesticCOGS/DomesticSellRate)
+    - Current governed domestic tariff currency is PGK
+    - Caller/international BUY currency does not change domestic tariff selection
     - Global Surcharges (via Surcharge model, filtered by ServiceType)
     - Simple additions (Cost + Surcharges, Sell + Surcharges)
     - GST added at end for Domestic
@@ -73,9 +80,11 @@ class DomesticPricingEngine:
         self.commodity_code = commodity_code
         self.preferred_agent_id = preferred_agent_id
         self.preferred_carrier_id = preferred_carrier_id
-        self.buy_currency = (buy_currency or "").strip().upper() or None
+        # Retained for caller compatibility. International/native BUY currency
+        # must never change selection from the governed PGK domestic tariff set.
+        self.buy_currency = DOMESTIC_TARIFF_CURRENCY
         self._selected_rate_metadata: list[dict] = []
-        
+
         # Validation: Door service only available in specific ports
         self.DOOR_PORTS = ['POM', 'LAE']
         self._validate_service_scope()
@@ -88,10 +97,10 @@ class DomesticPricingEngine:
         """
         is_origin_door = self.service_scope in ['D2D', 'D2A']
         is_dest_door = self.service_scope in ['D2D', 'A2D']
-        
+
         if is_origin_door and self.origin not in self.DOOR_PORTS:
             raise ValueError(f"Pickup not available for {self.origin}. Door service only in {self.DOOR_PORTS}")
-            
+
         if is_dest_door and self.destination not in self.DOOR_PORTS:
             raise ValueError(f"Delivery not available for {self.destination}. Door service only in {self.DOOR_PORTS}")
 
@@ -120,15 +129,15 @@ class DomesticPricingEngine:
     def calculate_quote(self) -> QuoteResult:
         cogs_breakdown: List[BillableCharge] = []
         sell_breakdown: List[BillableCharge] = []
-        
+
         # 1. Calculate Freight (Route Specific)
         self._calculate_freight(cogs_breakdown, sell_breakdown)
-        
+
         # 2. Calculate Surcharges (Global)
         self._calculate_surcharges(cogs_breakdown, sell_breakdown)
 
         line_items = self._build_line_items(cogs_breakdown, sell_breakdown)
-        
+
         return QuoteResult(
             line_items=line_items,
             total_cost_pgk=sum((item.cost_amount for item in line_items), Decimal('0.00')),
@@ -146,8 +155,8 @@ class DomesticPricingEngine:
             chargeable_weight_kg=self.weight,
             direction='DOMESTIC',
             service_scope=self.service_scope,
-            quote_currency='PGK',
-            currency='PGK',
+            quote_currency=DOMESTIC_TARIFF_CURRENCY,
+            currency=DOMESTIC_TARIFF_CURRENCY,
             total_margin=sum((item.margin_amount for item in line_items), Decimal('0.00')),
             total_gst=sum((item.gst_amount for item in line_items), Decimal('0.00')),
             total_sell_incl_gst=sum((item.sell_incl_gst for item in line_items), Decimal('0.00')),
@@ -165,7 +174,7 @@ class DomesticPricingEngine:
                         quote_date=self.quote_date,
                         origin_zone=self.origin,
                         destination_zone=self.destination,
-                        currency=self.buy_currency or 'PGK',
+                        currency=DOMESTIC_TARIFF_CURRENCY,
                         agent_id=self.preferred_agent_id,
                         carrier_id=self.preferred_carrier_id,
                     )
@@ -209,7 +218,7 @@ class DomesticPricingEngine:
                         ),
                     )
                 )
-            
+
         # SELL – deterministic: latest valid_from wins
         sell = None
         if freight_pc:
@@ -220,7 +229,7 @@ class DomesticPricingEngine:
                         quote_date=self.quote_date,
                         origin_zone=self.origin,
                         destination_zone=self.destination,
-                        currency='PGK',
+                        currency=DOMESTIC_TARIFF_CURRENCY,
                     )
                 ).record
             except RateNotFoundError:
@@ -273,8 +282,9 @@ class DomesticPricingEngine:
 
         # COGS Surcharges (prefetch product_code to avoid N+1)
         cogs_surcharges = Surcharge.objects.filter(
-            service_type=self.service_type, 
+            service_type=self.service_type,
             rate_side='COGS',
+            currency=DOMESTIC_TARIFF_CURRENCY,
             is_active=True,
             valid_from__lte=self.quote_date,
         ).filter(
@@ -303,8 +313,9 @@ class DomesticPricingEngine:
 
         # SELL Surcharges (prefetch product_code to avoid N+1)
         sell_surcharges = Surcharge.objects.filter(
-            service_type=self.service_type, 
+            service_type=self.service_type,
             rate_side='SELL',
+            currency=DOMESTIC_TARIFF_CURRENCY,
             is_active=True,
             valid_from__lte=self.quote_date,
         ).filter(
@@ -349,14 +360,14 @@ class DomesticPricingEngine:
                     rule_family=charge.rule_family or CALCULATION_LOOKUP_RATE,
                     unit_type='KG' if charge.product_code == 'DOM-FRT-AIR' else 'SHIPMENT',
                     quantity=Decimal('1.00'),
-                    currency='PGK',
+                    currency=DOMESTIC_TARIFF_CURRENCY,
                     category='FREIGHT' if charge.product_code == 'DOM-FRT-AIR' else 'SURCHARGE',
                     leg='FREIGHT' if charge.product_code == 'DOM-FRT-AIR' else 'ORIGIN',
                     is_rate_missing=charge.is_rate_missing,
                 ),
             )
             item.cost_amount += charge.amount
-            item.cost_currency = 'PGK'
+            item.cost_currency = DOMESTIC_TARIFF_CURRENCY
             item.cost_source = charge.cost_source or (QuoteCostSource.DB_TARIFF if not charge.is_rate_missing else 'N/A')
             item.rate_source = QuoteRateSource.DB_TARIFF if not charge.is_rate_missing else 'N/A'
             item.agent_name = charge.agent_name
@@ -378,14 +389,14 @@ class DomesticPricingEngine:
                     rule_family=charge.rule_family or CALCULATION_LOOKUP_RATE,
                     unit_type='KG' if charge.product_code == 'DOM-FRT-AIR' else 'SHIPMENT',
                     quantity=Decimal('1.00'),
-                    currency='PGK',
+                    currency=DOMESTIC_TARIFF_CURRENCY,
                     category='FREIGHT' if charge.product_code == 'DOM-FRT-AIR' else 'SURCHARGE',
                     leg='FREIGHT' if charge.product_code == 'DOM-FRT-AIR' else 'ORIGIN',
                     is_rate_missing=charge.is_rate_missing,
                 ),
             )
             item.sell_amount += charge.amount
-            item.sell_currency = 'PGK'
+            item.sell_currency = DOMESTIC_TARIFF_CURRENCY
             item.tax_code = 'service_in_PNG'
             item.rule_family = charge.rule_family or item.rule_family
             item.gst_category = 'service_in_PNG'
