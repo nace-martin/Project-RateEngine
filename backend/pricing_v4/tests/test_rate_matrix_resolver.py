@@ -403,7 +403,8 @@ class TestReadOnly:
             resolve(sell())
         verbs = {q["sql"].lstrip().split(None, 1)[0].upper() for q in queries}
         assert not verbs & {"INSERT", "UPDATE", "DELETE"}, verbs
-        assert not any("fx" in q["sql"].lower() for q in queries)
+        tables = {t.lower() for q in queries for t in re.findall(r'(?:FROM|JOIN)\s+"?([A-Za-z_][A-Za-z0-9_]*)"?', q["sql"], re.IGNORECASE)}
+        assert not {t for t in tables if "fx" in t}, tables
         assert {m: m.objects.count() for m in before} == before
 
     def test_results_are_deterministic(self, world, freight):

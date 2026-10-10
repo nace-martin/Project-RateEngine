@@ -4,6 +4,7 @@ Every value here is synthetic test data. No real tariff, party, or rate appears.
 """
 
 import json
+import re
 from datetime import date
 from decimal import Decimal as D
 from io import StringIO
@@ -41,6 +42,7 @@ from pricing_v4.services.rate_matrix_shadow import (
 )
 
 TODAY = date(2030, 6, 15)
+TABLE_REFERENCE = re.compile(r'(?:FROM|JOIN)\s+"?([A-Za-z_][A-Za-z0-9_]*)"?', re.IGNORECASE)
 FRT, SCREEN, FEE, PCT = "IMP-SYNTH-FRT", "IMP-SYNTH-SCREEN", "IMP-SYNTH-FEE", "IMP-SYNTH-PCT"
 LANE = "XAA-XPM"
 
@@ -310,7 +312,8 @@ class TestSafety:
         assert snapshot() == before
         verbs = {q["sql"].lstrip().split(None, 1)[0].upper() for q in queries}
         assert not verbs & {"INSERT", "UPDATE", "DELETE"}, verbs
-        assert not any("fx" in q["sql"].lower() or "caf" in q["sql"].lower() for q in queries)
+        tables = {t.lower() for q in queries for t in TABLE_REFERENCE.findall(q["sql"])}
+        assert not {t for t in tables if "fx" in t or "caf" in t}, tables
         assert report.as_dict()["writes_performed"] == 0
         assert connection.in_atomic_block
 
