@@ -580,14 +580,27 @@ class _Shadow:
                 origin, destination = lane.split("-")
                 resolved = self._resolve_buy(code, origin, destination, supplier, weight)
             else:
-                resolved = None
+                term, _, currency = context.partition("/")
+                resolved = resolver.resolve(
+                    resolver.ResolutionContext(
+                        rate_type=resolver.SELL, direction="IMPORT", effective_date=self.quote_date,
+                        product_code=code, origin_iata=self.lanes[0][0], destination_iata=lane.split("-")[1],
+                        payment_term=term, quote_currency=currency, chargeable_weight=weight,
+                    ),
+                    using=self.using,
+                )
             tier = resolved.tariff.selected_tier if resolved is not None and resolved.matched else None
             matrix_rate = _fmt(tier.unit_rate) if tier else None
-            aspect = f"rate@{_fmt(weight)}kg"
+            aspect = weight_aspect(weight)
             if legacy_rate == matrix_rate:
                 self._emit(lane, side, code, aspect, MATCH, legacy_rate, matrix_rate, context)
             else:
                 self._emit(lane, side, code, aspect, UNEXPLAINED_DIFFERENCE, legacy_rate, matrix_rate, context)
+
+
+def weight_aspect(weight: Decimal) -> str:
+    """The aspect name of the selected-rate comparison at a chargeable weight."""
+    return f"rate@{_fmt(weight)}kg"
 
 
 def _render_tiers(tiers: tuple[tuple[str, str], ...]) -> str:

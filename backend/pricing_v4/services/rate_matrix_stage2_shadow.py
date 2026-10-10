@@ -43,10 +43,11 @@ from pricing_v4.engine.import_engine import (
     PaymentTerm,
     ServiceScope,
 )
+from pricing_v4.models import ProductCode
 from pricing_v4.services import rate_matrix_resolver as resolver
 from pricing_v4.services.fx_resolver import FxResolutionError, resolve_market_fx_pair
 from pricing_v4.services.rate_matrix_manifest import read_only_database
-from pricing_v4.services.rate_matrix_shadow import run_shadow
+from pricing_v4.services.rate_matrix_shadow import run_shadow, weight_aspect
 from quotes.currency_rules import determine_quote_currency
 
 MATCH = "MATCH"
@@ -61,6 +62,12 @@ DEFAULT_WEIGHTS = tuple(Decimal(w) for w in ("30", "45", "100", "250", "500", "9
 DEFAULT_TERMS = ("COLLECT", "PREPAID")
 DEFAULT_SCOPES = ("A2D", "D2D")
 NOT_APPROVED = "LEGACY OBSERVED POLICY. NOT APPROVED FOR CUTOVER."
+# Stage-1 aspects that can change a priced amount. Validity, origin, destination and the static tier
+# table are metadata: the tier effect is the selected rate at the scenario weight.
+PRICING_ASPECTS = (
+    "presence", "currency", "basis", "unit_rate", "additive_flat_amount", "min_charge", "max_charge",
+    "percentage_rate", "percentage_basis",
+)
 GST_SOURCE = "quotes.tax_policy.PNG_GST_RATE_DECIMAL (code constant) via get_png_gst_category"
 
 
@@ -83,6 +90,7 @@ class Line:
     cost_currency: str
     gst_amount: Decimal
     gst_category: str
+    gst_rate: Decimal
     sell_incl_gst: Decimal
     fx_applied: bool
     caf_applied: bool
@@ -318,27 +326,43 @@ class _MatrixLookup:
 
 
 class MatrixShadowImportEngine(ImportPricingEngine):
-    """The production import engine with only its four rate lookups redirected to the Rate Matrix."""
+    """The production import engine with only its rate lookups redirected to the Rate Matrix.
 
-    def __init__(self, *, matrix: _MatrixLookup, **kwargs):
+    ``legacy_codes`` names ProductCodes whose rate lookups stay on the legacy path. It is used only
+    for the counterfactual proof that an explained native difference accounts for an amount
+    difference: substitute the legacy native facts for exactly those charges and re-price.
+    """
+
+    def __init__(self, *, matrix: _MatrixLookup, legacy_codes=frozenset(), **kwargs):
         super().__init__(**kwargs)
         self._matrix = matrix
+        self._legacy_codes = frozenset(legacy_codes)
 
     def _get_cogs(self, pc, leg=None):
+        if pc.code in self._legacy_codes:
+            return super()._get_cogs(pc, leg)
         if leg == "DESTINATION" and is_local_rate_category(pc.category):
             return None  # The Rate Matrix holds no destination BUY tariff.
         return self._matrix.buy(pc)
 
     def _get_local_cogs(self, pc, leg):
+        if pc.code in self._legacy_codes:
+            return super()._get_local_cogs(pc, leg)
         return None
 
     def _get_sell_rate(self, pc, leg):
+        if pc.code in self._legacy_codes:
+            return super()._get_sell_rate(pc, leg)
         return None  # Origin and freight sell is cost-plus, as in legacy (no import sell rows).
 
     def _get_destination_sell_rate(self, pc):
+        if pc.code in self._legacy_codes:
+            return super()._get_destination_sell_rate(pc)
         return self._matrix.sell(pc)
 
     def _calculate_cogs_amount(self, cogs, pc) -> RuleEvaluation:
+        if pc.code in self._legacy_codes and not isinstance(cogs, ShadowRate):
+            return super()._calculate_cogs_amount(cogs, pc)
         # The production first pass reads legacy rows to seed the surcharge-basis cache. Ignore the
         # legacy record and use the Rate Matrix so no legacy value leaks into the shadow.
         record = cogs if isinstance(cogs, ShadowRate) else self._matrix.buy(pc)
@@ -442,7 +466,7 @@ class _Stage2:
         return out
 
     def _lane(self, origin: str, destination: str, policy) -> None:
-        stage1 = self._stage1_index(origin, destination)
+        stage1 = self._stage1_records(origin, destination)
         for scenario in self._scenarios(origin, destination):
             try:
                 legacy = self._price(ImportPricingEngine, scenario, origin, destination, policy)
@@ -461,9 +485,10 @@ class _Stage2:
             except FxResolutionError as exc:
                 self._emit(scenario, "-", "scenario", BLOCKED, reason=f"{type(exc).__name__}: {exc}")
                 continue
-            self._compare(scenario, legacy, shadow, stage1, destination)
+            self._compare(scenario, legacy, shadow, stage1, origin, destination, policy)
 
-    def _price(self, engine_class, scenario: Scenario, origin, destination, policy, *, matrix: bool = False) -> Priced:
+    def _price(self, engine_class, scenario: Scenario, origin, destination, policy, *, matrix: bool = False,
+               legacy_codes=frozenset()) -> Priced:
         quote_currency = scenario.quote_currency
         tt_buy = tt_sell = None
         if quote_currency != "PGK":  # Same pre-resolution as the production adapter.
@@ -478,13 +503,15 @@ class _Stage2:
         }
         if matrix:
             kwargs["matrix"] = _MatrixLookup(scenario, origin, destination, self.quote_date, self.using)
+            kwargs["legacy_codes"] = legacy_codes
         result = engine_class(**kwargs).calculate_quote()
         lines = {}
         for item in result.line_items:
             lines[item.product_code] = Line(
                 product_code=item.product_code, leg=item.leg, sell_amount=item.sell_amount,
                 sell_currency=item.sell_currency, cost_amount=item.cost_amount, cost_currency=item.cost_currency,
-                gst_amount=item.gst_amount, gst_category=item.gst_category, sell_incl_gst=item.sell_incl_gst,
+                gst_amount=item.gst_amount, gst_category=item.gst_category, gst_rate=item.gst_rate,
+                sell_incl_gst=item.sell_incl_gst,
                 fx_applied=item.fx_applied, caf_applied=item.caf_applied, margin_applied=item.margin_applied,
                 is_rate_missing=bool(getattr(item, "is_rate_missing", False)),
             )
@@ -522,24 +549,52 @@ class _Stage2:
                     f"{pair.effective_date.isoformat()} from {pair.source}.",
                 )
 
-    # ---------------------------------------------------------------- Stage-1 explanation lookup
+    # ---------------------------------------------------------------- Stage-1 evidence
 
-    def _stage1_index(self, origin: str, destination: str) -> dict[tuple[str, str, str], dict[str, Any]]:
-        """For each (side, product, context) whether Stage-1 native differences are explained."""
+    def _stage1_records(self, origin: str, destination: str) -> dict[tuple[str, str, str], list]:
+        """Stage-1 non-MATCH records for this lane at every scenario weight, by (side, charge, context)."""
         stage1 = run_shadow(
             quote_date=self.quote_date, lanes=((origin, destination),), registry=self.registry,
-            weights=(Decimal(100),), using=self.using, read_only=False,
+            weights=self.weights, using=self.using, read_only=False,
         )
-        index: dict[tuple[str, str, str], dict[str, Any]] = {}
+        index: dict[tuple[str, str, str], list] = {}
         for record in stage1.records:
-            if record.classification == "MATCH":
-                continue
-            key = (record.side, record.product_code, record.context)
-            entry = index.setdefault(key, {"explained": [], "unexplained": []})
-            (entry["explained"] if record.evidence else entry["unexplained"]).append(record.aspect)
+            if record.classification != "MATCH":
+                index.setdefault((record.side, record.product_code, record.context), []).append(record)
         return index
 
-    # ---------------------------------------------------------------- compare
+    def _chain(self, code: str) -> list[str]:
+        """The charge and every charge it is a percentage of (its pricing dependencies)."""
+        out, seen = [], set()
+        while code and code not in seen:
+            seen.add(code)
+            out.append(code)
+            product = (
+                ProductCode.objects.using(self.using).filter(code=code)
+                .select_related("percent_of_product_code").first()
+            )
+            code = product.percent_of_product_code.code if product and product.percent_of_product_code else ""
+        return out
+
+    @staticmethod
+    def _side_context(line: Line, s: Scenario) -> tuple[str, str]:
+        if line.leg == "DESTINATION":
+            return "SELL", f"{s.term}/{s.quote_currency}"
+        return "BUY", ""
+
+    @staticmethod
+    def _native_evidence(index, side, code, context, weight) -> tuple[list[str], list[str]]:
+        """Pricing-relevant Stage-1 native differences for exactly this charge, context and weight.
+
+        Validity, origin and destination are metadata and the static tier table is replaced by the
+        selected rate at this weight, so none of them can account for an amount.
+        """
+        wanted = set(PRICING_ASPECTS) | {weight_aspect(weight)}
+        explained, unexplained = [], []
+        for record in index.get((side, code, context), []):
+            if record.aspect in wanted:
+                (explained if record.evidence else unexplained).append(record.aspect)
+        return sorted(set(explained)), sorted(set(unexplained))
 
     def _emit(self, scenario, product_code, aspect, classification, legacy=None, shadow=None, currency="",
               stage="", reason=""):
@@ -556,80 +611,167 @@ class _Stage2:
             provenance.strip("; "), reason,
         ))
 
-    def _compare(self, s: Scenario, legacy: Priced, shadow: Priced, stage1, destination: str) -> None:
-        differing_unexplained = False
-        any_difference = False
-        for code in sorted(set(legacy.lines) | set(shadow.lines)):
-            left, right = legacy.lines.get(code), shadow.lines.get(code)
-            leg = (left or right).leg
-            side = "SELL" if leg == "DESTINATION" else "BUY"
-            context = f"{s.term}/{s.quote_currency}" if side == "SELL" else ""
-            lane_key = (side, code, context)
-            s1 = stage1.get(lane_key, {"explained": [], "unexplained": []})
+    # ---------------------------------------------------------------- compare
 
+    @staticmethod
+    def _line_differs(left: Line | None, right: Line | None) -> bool:
+        if left is None or right is None:
+            return True
+        if (left.sell_amount, left.gst_amount, left.sell_incl_gst) != (
+            right.sell_amount, right.gst_amount, right.sell_incl_gst
+        ):
+            return True
+        if (left.cost_amount, right.cost_amount) == (0, 0):
+            return False
+        return (left.cost_amount, left.cost_currency) != (right.cost_amount, right.cost_currency)
+
+    @staticmethod
+    def _cost_not_comparable(left: Line, right: Line) -> bool:
+        return left.leg == "DESTINATION" and right.cost_amount == 0 and left.cost_amount != 0
+
+    def _compare(self, s: Scenario, legacy: Priced, shadow: Priced, index, origin: str, destination: str,
+                 policy) -> None:
+        weight = f"{s.weight.normalize():f}"
+        codes = sorted(set(legacy.lines) | set(shadow.lines))
+        evidence: dict[str, tuple[list[str], list[str]]] = {}
+        for code in codes:
+            left, right = legacy.lines.get(code), shadow.lines.get(code)
+            if not self._line_differs(left, right):
+                continue
+            explained: list[str] = []
+            unexplained: list[str] = []
+            for member in self._chain(code):
+                line = legacy.lines.get(member) or shadow.lines.get(member)
+                if line is None:
+                    continue
+                side, context = self._side_context(line, s)
+                found_explained, found_unexplained = self._native_evidence(index, side, member, context, s.weight)
+                tag = "" if member == code else f"{member}:"
+                explained += [f"{tag}{a}" for a in found_explained]
+                unexplained += [f"{tag}{a}" for a in found_unexplained]
+            evidence[code] = (explained, unexplained)
+
+        # Counterfactual proof: re-price with the legacy native facts for every charge whose Stage-1
+        # evidence is fully explained. If the legacy amount is reproduced, the explained native
+        # difference accounts for the whole amount difference; any residue is a downstream divergence.
+        candidates = {
+            member
+            for code, (explained, unexplained) in evidence.items() if explained and not unexplained
+            for member in self._chain(code)
+        }
+        counterfactual: Priced | None = None
+        if candidates:
+            try:
+                counterfactual = self._price(
+                    MatrixShadowImportEngine, s, origin, destination, policy, matrix=True,
+                    legacy_codes=frozenset(candidates),
+                )
+            except (ShadowBlocked, FxResolutionError):
+                counterfactual = None
+
+        def verdict(code: str, aspect: str, left: Line | None, right: Line | None) -> tuple[str, str]:
+            explained, unexplained = evidence[code]
+            if unexplained:
+                return UNEXPLAINED_DIFFERENCE, (
+                    f"{aspect} differs; Stage-1 unexplained pricing-relevant native differences at "
+                    f"{weight} kg: {', '.join(unexplained)}."
+                )
+            if not explained:
+                return UNEXPLAINED_DIFFERENCE, (
+                    f"{aspect} differs but the pricing-relevant native facts for this charge match at "
+                    f"{weight} kg (validity and source metadata cannot account for an amount); the "
+                    "divergence arises in the downstream calculation."
+                )
+            if counterfactual is None:
+                return UNEXPLAINED_DIFFERENCE, (
+                    f"{aspect} differs; the explained-fact counterfactual could not be priced."
+                )
+            reference = counterfactual.lines.get(code)
+            if aspect == "presence":
+                same = (reference is not None) == (left is not None)
+            elif aspect in ("gst_amount", "sell_incl_gst"):
+                # A missing-rate placeholder is never classified for GST, so there is no treatment to
+                # compare; the counterfactual below still has to reproduce the legacy GST exactly.
+                placeholder = right is not None and right.is_rate_missing
+                same = (
+                    left is not None and right is not None and reference is not None
+                    and (placeholder or (left.gst_category, left.gst_rate) == (right.gst_category, right.gst_rate))
+                    and left.sell_amount != right.sell_amount
+                    and getattr(reference, aspect) == getattr(left, aspect)
+                    and (reference.gst_category, reference.gst_rate) == (left.gst_category, left.gst_rate)
+                )
+            else:
+                same = (
+                    left is not None and reference is not None
+                    and getattr(reference, aspect) == getattr(left, aspect)
+                )
+            if not same:
+                return UNEXPLAINED_DIFFERENCE, (
+                    f"{aspect} differs; applying the legacy native facts for this charge does not reproduce "
+                    "the legacy amount, so a downstream divergence remains."
+                )
+            return EXPECTED_DIFFERENCE, (
+                f"{aspect} differs; explained Stage-1 pricing-relevant native differences at {weight} kg: "
+                f"{', '.join(explained)}. Applying the legacy native facts reproduces the legacy amount."
+            )
+
+        any_unexplained = any_difference = cost_not_comparable = False
+        for code in codes:
+            left, right = legacy.lines.get(code), shadow.lines.get(code)
             if left is None or right is None:
                 present = right if left is None else left
                 any_difference = True
-                cls, reason = self._explain(s1, f"charge present only in {'Rate Matrix shadow' if left is None else 'legacy'}")
-                differing_unexplained |= cls == UNEXPLAINED_DIFFERENCE
-                self._emit(s, code, "presence", cls, "absent" if left is None else "present",
-                           "present" if left is None else "absent", present.sell_currency,
-                           f"charge {'added' if left is None else 'dropped'} before pricing", reason)
+                cls, reason = verdict(code, "presence", left, right)
+                any_unexplained |= cls == UNEXPLAINED_DIFFERENCE
+                self._emit(
+                    s, code, "presence", cls, "absent" if left is None else "present",
+                    "present" if left is None else "absent", present.sell_currency,
+                    f"charge {'added' if left is None else 'dropped'} before pricing", reason,
+                )
                 continue
-
             for aspect in ("sell_amount", "gst_amount", "sell_incl_gst"):
                 a, b = getattr(left, aspect), getattr(right, aspect)
-                currency = left.sell_currency
-                stage = left.stage(aspect)
                 if a == b:
-                    self._emit(s, code, aspect, MATCH, a, b, currency, stage)
+                    self._emit(s, code, aspect, MATCH, a, b, left.sell_currency, left.stage(aspect))
                     continue
                 any_difference = True
-                cls, reason = self._explain(s1, f"{aspect} differs")
-                differing_unexplained |= cls == UNEXPLAINED_DIFFERENCE
-                self._emit(s, code, aspect, cls, a, b, currency, stage, reason)
-            if left.cost_amount == right.cost_amount != 0 and left.cost_currency == right.cost_currency:
+                cls, reason = verdict(code, aspect, left, right)
+                any_unexplained |= cls == UNEXPLAINED_DIFFERENCE
+                self._emit(s, code, aspect, cls, a, b, left.sell_currency, left.stage(aspect), reason)
+            if (left.cost_amount, right.cost_amount) == (0, 0):
+                continue
+            if left.cost_amount == right.cost_amount and left.cost_currency == right.cost_currency:
                 self._emit(s, code, "cost_amount", MATCH, left.cost_amount, right.cost_amount,
                            left.cost_currency, "BUY rate lookup (native currency, before FX)")
-            elif (left.cost_amount, right.cost_amount) != (0, 0) and (
-                left.cost_amount != right.cost_amount or left.cost_currency != right.cost_currency
-            ):
-                if leg == "DESTINATION" and right.cost_amount == 0:
-                    self._emit(s, code, "cost_amount", NOT_COMPARABLE, left.cost_amount, right.cost_amount,
-                               left.cost_currency, "BUY lookup",
-                               "The Rate Matrix holds no destination BUY tariff, so cost is not comparable.")
-                else:
-                    any_difference = True
-                    cls, reason = self._explain(s1, "cost_amount differs")
-                    differing_unexplained |= cls == UNEXPLAINED_DIFFERENCE
-                    self._emit(s, code, "cost_amount", cls, left.cost_amount, right.cost_amount,
-                               left.cost_currency, left.stage("sell_amount").split(" -> ")[0], reason)
+            elif self._cost_not_comparable(left, right):
+                cost_not_comparable = True
+                self._emit(s, code, "cost_amount", NOT_COMPARABLE, left.cost_amount, right.cost_amount,
+                           left.cost_currency, "BUY lookup",
+                           "The Rate Matrix holds no destination BUY tariff, so cost is not comparable.")
+            else:
+                any_difference = True
+                cls, reason = verdict(code, "cost_amount", left, right)
+                any_unexplained |= cls == UNEXPLAINED_DIFFERENCE
+                self._emit(s, code, "cost_amount", cls, left.cost_amount, right.cost_amount,
+                           left.cost_currency, "BUY rate lookup (native currency, before FX)", reason)
 
-        cost_not_comparable = any(
-            r.classification == NOT_COMPARABLE and r.aspect == "cost_amount" and r.scenario == s.key
-            and r.lane == s.lane for r in self.report.records
-        )
         for name in ("total_sell_pgk", "total_gst", "total_sell_incl_gst", "total_cost_pgk", "total_margin"):
             a, b = legacy.totals[name], shadow.totals[name]
-            if name in ("total_cost_pgk", "total_margin") and cost_not_comparable and a != b:
+            if a == b:
+                self._emit(s, "TOTAL", name, MATCH, a, b, "PGK", "totals")
+            elif name in ("total_cost_pgk", "total_margin") and cost_not_comparable:
                 self._emit(s, "TOTAL", name, NOT_COMPARABLE, a, b, "PGK", "totals",
                            "Includes destination cost that the Rate Matrix does not hold.")
-            elif a == b:
-                self._emit(s, "TOTAL", name, MATCH, a, b, "PGK", "totals")
-            else:
-                cls = UNEXPLAINED_DIFFERENCE if differing_unexplained or not any_difference else EXPECTED_DIFFERENCE
+            elif any_unexplained or not any_difference:
                 reason = (
-                    "Follows the explained line differences above." if cls == EXPECTED_DIFFERENCE
-                    else "No explained line difference accounts for this total."
+                    "A contributing line difference is unexplained." if any_unexplained
+                    else "No line difference accounts for this total."
                 )
-                self._emit(s, "TOTAL", name, cls, a, b, "PGK", "totals", reason)
-
-    @staticmethod
-    def _explain(stage1: dict[str, Any], what: str) -> tuple[str, str]:
-        if stage1["explained"] and not stage1["unexplained"]:
-            return EXPECTED_DIFFERENCE, (
-                f"{what}; Stage-1 native differences explained in the registry: {', '.join(sorted(set(stage1['explained'])))}."
-            )
-        if stage1["unexplained"]:
-            return UNEXPLAINED_DIFFERENCE, f"{what}; Stage-1 unexplained native differences: {', '.join(sorted(set(stage1['unexplained'])))}."
-        return UNEXPLAINED_DIFFERENCE, f"{what}; Stage-1 native facts match, so the divergence arises in the downstream calculation."
+                self._emit(s, "TOTAL", name, UNEXPLAINED_DIFFERENCE, a, b, "PGK", "totals", reason)
+            elif counterfactual is not None and counterfactual.totals[name] == a:
+                self._emit(s, "TOTAL", name, EXPECTED_DIFFERENCE, a, b, "PGK", "totals",
+                           "Every contributing line difference is explained, and applying the legacy native "
+                           "facts reproduces the legacy total.")
+            else:
+                self._emit(s, "TOTAL", name, UNEXPLAINED_DIFFERENCE, a, b, "PGK", "totals",
+                           "Explained line differences do not reproduce the legacy total.")

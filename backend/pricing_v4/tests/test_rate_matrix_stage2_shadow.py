@@ -29,12 +29,17 @@ from pricing_v4.rate_matrix_models import (
     RateSheet,
     RateTier,
 )
+from pricing_v4.services.rate_matrix_shadow import Record as Stage1Record
 from pricing_v4.services.rate_matrix_stage2_shadow import (
     BLOCKED,
     EXPECTED_DIFFERENCE,
     MATCH,
     UNEXPLAINED_DIFFERENCE,
+    Line,
     MatrixShadowImportEngine,
+    Priced,
+    Scenario,
+    _Stage2,
     run_stage2,
 )
 
@@ -492,3 +497,198 @@ class TestCommand:
         bad.write_text("{not json", encoding="utf-8")
         with pytest.raises(CommandError, match="Registry errors"):
             call_command("shadow_price_rate_matrix", explained=str(bad))
+
+
+# --------------------------------------------------------------------------- scenario-specific explanation
+
+
+def _entry(lane, side, code, aspect, legacy, matrix, reason="Synthetic approved difference."):
+    return {
+        "lane": lane, "side": side, "product_code": code, "aspect": aspect, "legacy": legacy, "matrix": matrix,
+        "reason": reason, "evidence": "SYNTHETIC-EVIDENCE",
+    }
+
+
+@pytest.fixture
+def margin_bug_at_100kg(monkeypatch):
+    """A downstream-only defect in the shadow path: native facts are untouched, one weight is wrong."""
+    real = ImportPricingEngine._apply_margin
+
+    def buggy(self, amount):
+        result = real(self, amount)
+        return result + D("1.00") if self.weight == D(100) else result
+
+    monkeypatch.setattr(MatrixShadowImportEngine, "_apply_margin", buggy)
+
+
+@pytest.fixture
+def tier_1000_differs(world):
+    """Legacy 1000 kg break is 6.50 against the matrix 6.10: a native difference at and above 1000 kg."""
+    breaks = [dict(b) for b in FRT_BREAKS]
+    breaks[-1]["rate"] = "6.50"
+    ImportCOGS.objects.filter(product_code__code=FRT).update(weight_breaks=breaks)
+    return [_entry(LANE_NAME, "BUY", FRT, "rate@1000kg", "6.5", "6.1")]
+
+
+@pytest.mark.django_db
+class TestScenarioSpecificExplanation:
+    def test_an_explained_1000kg_difference_explains_1000kg_but_not_a_mismatch_at_100kg(
+        self, world, tier_1000_differs, margin_bug_at_100kg
+    ):
+        report = run(weights=(D(100), D(1000)), stage1_registry=tier_1000_differs)
+        at_1000 = one(report, scenario=scenario_key("1000"), product_code=FRT, aspect="sell_amount")
+        assert at_1000.classification == EXPECTED_DIFFERENCE
+        assert "rate@1000kg" in at_1000.reason
+        at_100 = one(report, scenario=scenario_key("100"), product_code=FRT, aspect="sell_amount")
+        assert at_100.classification == UNEXPLAINED_DIFFERENCE
+        assert "match at 100 kg" in at_100.reason
+
+    def test_native_facts_matching_with_a_downstream_difference_is_unexplained(self, world, margin_bug_at_100kg):
+        report = run(weights=(D(100),))
+        diff = one(report, scenario=scenario_key("100"), product_code=FRT, aspect="sell_amount")
+        assert diff.classification == UNEXPLAINED_DIFFERENCE
+        assert D(diff.shadow) - D(diff.legacy) == D("1.00")
+
+    def test_an_explained_validity_difference_cannot_excuse_a_sell_amount_bug(self, world, margin_bug_at_100kg):
+        ImportCOGS.objects.filter(product_code__code=FRT).update(valid_from=date(2030, 1, 2))
+        registry = [_entry(LANE_NAME, "BUY", FRT, "validity", "2030-01-02..2030-12-31", "2030-01-01..2030-12-31")]
+        report = run(weights=(D(100),), stage1_registry=registry)
+        diff = one(report, scenario=scenario_key("100"), product_code=FRT, aspect="sell_amount")
+        assert diff.classification == UNEXPLAINED_DIFFERENCE
+        assert "metadata cannot account for an amount" in diff.reason
+
+    def test_an_explained_static_tier_table_does_not_explain_an_amount_at_a_weight(self, world, tier_1000_differs):
+        registry = [_entry(
+            LANE_NAME, "BUY", FRT, "tiers", "0:7.5|45:7.35|100:7|250:6.75|500:6.45|1000:6.5",
+            "0:7.5|45:7.35|100:7|250:6.75|500:6.45|1000:6.1",
+        )]
+        report = run(weights=(D(1000),), stage1_registry=registry)
+        diff = one(report, scenario=scenario_key("1000"), product_code=FRT, aspect="sell_amount")
+        assert diff.classification == UNEXPLAINED_DIFFERENCE
+        assert "rate@1000kg" in diff.reason
+
+    def test_the_explanation_does_not_carry_to_another_weight(self, world, tier_1000_differs):
+        report = run(weights=(D(1000), D(1001)), stage1_registry=tier_1000_differs)
+        explained = one(report, scenario=scenario_key("1000"), product_code=FRT, aspect="sell_amount")
+        assert explained.classification == EXPECTED_DIFFERENCE
+        other = one(report, scenario=scenario_key("1001"), product_code=FRT, aspect="sell_amount")
+        assert other.classification == UNEXPLAINED_DIFFERENCE
+        assert "rate@1001kg" in other.reason
+
+    def test_totals_are_unexplained_when_any_contributing_line_is_unexplained(self, world, margin_bug_at_100kg):
+        LocalSellRate.objects.filter(product_code__code=DOC, currency="PGK").update(amount=D(150))
+        registry = [_entry("*-XPM", "SELL", DOC, "unit_rate", "150", "165")]
+        report = run(weights=(D(100),), stage1_registry=registry)
+        key = scenario_key("100")
+        doc = one(report, scenario=key, product_code=DOC, aspect="sell_amount")
+        assert doc.classification == EXPECTED_DIFFERENCE  # the SELL difference itself is validly explained
+        assert one(report, scenario=key, product_code=FRT, aspect="sell_amount").classification == (
+            UNEXPLAINED_DIFFERENCE
+        )
+        for aspect in ("total_sell_pgk", "total_gst", "total_sell_incl_gst"):
+            total = one(report, scenario=key, product_code="TOTAL", aspect=aspect)
+            assert total.classification == UNEXPLAINED_DIFFERENCE
+            assert "unexplained" in total.reason
+
+    def test_totals_are_expected_only_when_every_contributing_line_is_explained(self, world):
+        LocalSellRate.objects.filter(product_code__code=DOC, currency="PGK").update(amount=D(150))
+        registry = [_entry("*-XPM", "SELL", DOC, "unit_rate", "150", "165")]
+        report = run(weights=(D(100),), scopes=("A2D",), stage1_registry=registry)
+        key = scenario_key("100", scope="A2D")
+        for aspect in ("sell_amount", "gst_amount", "sell_incl_gst"):
+            line = one(report, scenario=key, product_code=DOC, aspect=aspect)
+            assert line.classification == EXPECTED_DIFFERENCE
+        for aspect in ("total_sell_pgk", "total_gst", "total_sell_incl_gst"):
+            total = one(report, scenario=key, product_code="TOTAL", aspect=aspect)
+            assert total.classification == EXPECTED_DIFFERENCE
+
+    def test_an_unexplained_native_difference_for_the_same_charge_blocks_the_explanation(self, world):
+        LocalSellRate.objects.filter(product_code__code=DOC, currency="PGK").update(
+            amount=D(150), rate_type="PER_KG"
+        )
+        registry = [_entry("*-XPM", "SELL", DOC, "unit_rate", "150", "165")]  # basis differs too, unexplained
+        report = run(weights=(D(100),), scopes=("A2D",), stage1_registry=registry)
+        diff = one(report, scenario=scenario_key("100", scope="A2D"), product_code=DOC, aspect="sell_amount")
+        assert diff.classification == UNEXPLAINED_DIFFERENCE
+        assert "basis" in diff.reason
+
+    def test_a_surcharge_difference_is_explained_through_its_basis_charge(self, world):
+        # The pickup minimum differs (explained); the fuel surcharge is 20% of pickup and inherits it.
+        ImportCOGS.objects.filter(product_code__code=PICK).update(min_charge=D(90))
+        registry = [_entry(LANE_NAME, "BUY", PICK, "min_charge", "90", "85")]
+        report = run(weights=(D(100),), stage1_registry=registry)
+        key = scenario_key("100")
+        assert one(report, scenario=key, product_code=PICK, aspect="sell_amount").classification == (
+            EXPECTED_DIFFERENCE
+        )
+        fsc = one(report, scenario=key, product_code=FSC, aspect="sell_amount")
+        assert fsc.classification == EXPECTED_DIFFERENCE
+        assert PICK in fsc.reason
+
+
+# --------------------------------------------------------------------------- GST inheritance unit checks
+
+
+def _priced_line(code, *, sell, gst, category="service_in_PNG", rate="0.10", missing=False, leg="DESTINATION"):
+    return Line(
+        product_code=code, leg=leg, sell_amount=D(sell), sell_currency="PGK", cost_amount=D(0),
+        cost_currency="PGK", gst_amount=D(gst), gst_category=category, gst_rate=D(rate),
+        sell_incl_gst=D(sell) + D(gst), fx_applied=False, caf_applied=False, margin_applied=False,
+        is_rate_missing=missing,
+    )
+
+
+def _stage2_for_unit_checks(monkeypatch, counterfactual):
+    stage2 = _Stage2(TODAY, (LANE,), (D(100),), ("COLLECT",), ("A2D",), [], None, "default")
+    monkeypatch.setattr(stage2, "_price", lambda *args, **kwargs: counterfactual)
+    monkeypatch.setattr(stage2, "_chain", lambda code: [code])
+    return stage2
+
+
+def _presence_index(code, evidence="SYNTHETIC-EVIDENCE"):
+    return {("SELL", code, "COLLECT/PGK"): [
+        Stage1Record("*-XPM", "SELL", code, "presence", "LEGACY_ONLY", "present", "absent", "COLLECT/PGK",
+                     "synthetic", evidence)
+    ]}
+
+
+class TestGstInheritance:
+    SCENARIO = Scenario(LANE_NAME, D(100), "COLLECT", "A2D", "PGK")
+
+    def _totals(self, sell, gst):
+        return {"total_sell_pgk": D(sell), "total_gst": D(gst), "total_sell_incl_gst": D(sell) + D(gst),
+                "total_cost_pgk": D(0), "total_margin": D(sell)}
+
+    def test_a_missing_rate_placeholder_has_no_gst_treatment_to_disagree_with(self, monkeypatch):
+        legacy_line = _priced_line("IMP-SYN-LOADING-DEST", sell="150.00", gst="15.00")
+        placeholder = _priced_line("IMP-SYN-LOADING-DEST", sell="0", gst="0", category="", rate="0", missing=True)
+        counterfactual = Priced({legacy_line.product_code: legacy_line}, self._totals("150.00", "15.00"))
+        stage2 = _stage2_for_unit_checks(monkeypatch, counterfactual)
+        legacy = Priced({legacy_line.product_code: legacy_line}, self._totals("150.00", "15.00"))
+        shadow = Priced({placeholder.product_code: placeholder}, self._totals("0", "0"))
+        stage2._compare(self.SCENARIO, legacy, shadow, _presence_index("IMP-SYN-LOADING-DEST"), "XAA", "XPM", None)
+        by_aspect = {r.aspect: r for r in stage2.report.records if r.product_code == "IMP-SYN-LOADING-DEST"}
+        assert {a: by_aspect[a].classification for a in ("sell_amount", "gst_amount", "sell_incl_gst")} == {
+            "sell_amount": EXPECTED_DIFFERENCE, "gst_amount": EXPECTED_DIFFERENCE,
+            "sell_incl_gst": EXPECTED_DIFFERENCE,
+        }
+
+    def test_a_real_gst_treatment_disagreement_is_unexplained(self, monkeypatch):
+        legacy_line = _priced_line("IMP-SYN-DOC-DEST", sell="150.00", gst="15.00")
+        shadow_line = _priced_line("IMP-SYN-DOC-DEST", sell="165.00", gst="0.00", category="export_service", rate="0")
+        counterfactual = Priced({legacy_line.product_code: legacy_line}, self._totals("150.00", "15.00"))
+        stage2 = _stage2_for_unit_checks(monkeypatch, counterfactual)
+        index = {("SELL", "IMP-SYN-DOC-DEST", "COLLECT/PGK"): [
+            Stage1Record("*-XPM", "SELL", "IMP-SYN-DOC-DEST", "unit_rate", "EXPECTED_DIFFERENCE", "150", "165",
+                         "COLLECT/PGK", "synthetic", "SYNTHETIC-EVIDENCE")
+        ]}
+        stage2._compare(
+            self.SCENARIO, Priced({legacy_line.product_code: legacy_line}, self._totals("150.00", "15.00")),
+            Priced({shadow_line.product_code: shadow_line}, self._totals("165.00", "0.00")), index, "XAA", "XPM",
+            None,
+        )
+        by_aspect = {r.aspect: r for r in stage2.report.records if r.product_code == "IMP-SYN-DOC-DEST"}
+        assert by_aspect["sell_amount"].classification == EXPECTED_DIFFERENCE
+        assert by_aspect["gst_amount"].classification == UNEXPLAINED_DIFFERENCE
+        total = next(r for r in stage2.report.records if r.aspect == "total_gst")
+        assert total.classification == UNEXPLAINED_DIFFERENCE
