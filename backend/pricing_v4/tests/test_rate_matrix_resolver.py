@@ -414,7 +414,7 @@ class TestReadOnly:
 
 
 LIVE_PATHS = ("quotes", "pricing_v4/engine", "pricing_v4/adapter.py", "pricing_v4/dispatcher.py", "core")
-RESOLVER_MODULES = ("rate_matrix_resolver", "rate_matrix_shadow")
+RESOLVER_MODULES = ("rate_matrix_resolver", "rate_matrix_shadow", "rate_matrix_stage2_shadow")
 
 
 def test_no_live_pricing_module_imports_the_resolver_or_shadow():

@@ -1,6 +1,6 @@
-# Rate Matrix Resolver and Stage-1 Shadow Comparison
+# Rate Matrix Resolver and Shadow Comparison (Stage 1 and Stage 2)
 
-Status: implemented in Pilot Gate B3J. **Read only and not live.** No quote, engine, adapter, or
+Status: resolver and Stage-1 shadow implemented in Pilot Gate B3J; Stage-2 commercial shadow implemented in Pilot Gate B3K (section 3). **Read only and not live.** No quote, engine, adapter, or
 dispatcher imports either module (a test enforces this). Legacy pricing remains authoritative and
 route automation stays disabled. Nothing here writes a row, converts currency, or computes CAF,
 margin, GST, or a quote total.
@@ -111,8 +111,57 @@ change to either side stops it applying. An entry that matches nothing is report
 `EXPECTED_DIFFERENCE` records *why a difference exists*; it does not approve it. The registry is
 operator-supplied and private; real tariff values are not committed to the repository.
 
-## 3. Safety
+## 3. Stage-2 commercial shadow: `shadow_price_rate_matrix` (Pilot Gate B3K)
 
-- Neither module is imported by `quotes`, `pricing_v4/engine`, the adapter, the dispatcher, or `core`.
-- Both only issue `SELECT` statements; tests assert this and that no FX table is read.
+```bash
+python manage.py shadow_price_rate_matrix [--lane BNE-POM ...] [--date YYYY-MM-DD] \n    [--weights 30,45,100,...] [--terms COLLECT,PREPAID] [--scopes A2D,D2D] \n    [--explained stage1-registry.json] [--max-fx-age-days N] [--format text|json] [--fail-on-unexplained]
+```
+
+For each scenario (lane, chargeable weight, payment term, service scope) it prices the import **twice with
+the production `ImportPricingEngine`**: once from legacy rate rows, and once with
+`MatrixShadowImportEngine`, a subclass that redirects only the rate lookups (`_get_cogs`, `_get_local_cogs`,
+`_get_sell_rate`, `_get_destination_sell_rate`) and the surcharge-basis seed (`_calculate_cogs_amount`) to the
+resolver. Tier selection, minimum and maximum charges, percentage surcharges, FX, CAF, margin, GST
+classification, rounding and totals are the unmodified production code, so no commercial formula is
+duplicated. A test pins the override set.
+
+Then it compares line by line (sell amount, GST, sell including GST, native cost) and total by total.
+
+### Policy and FX are legacy observed values
+
+CAF, margin and the margin method are read from `CommercialTermsPolicy`; FX from `FxMarketRate`. They are
+reported with provenance as **LEGACY OBSERVED POLICY. NOT APPROVED FOR CUTOVER.** Nothing is invented,
+seeded, or approved. GST rates come from `quotes.tax_policy` exactly as production applies them.
+
+### Fails closed (`BLOCKED`)
+
+| Condition | Code |
+|---|---|
+| No active policy for the date | `POLICY_MISSING` |
+| More than one active policy covers the date (production would silently take the newest) | `POLICY_AMBIGUOUS` |
+| Policy lacks CAF or margin | `POLICY_INCOMPLETE` |
+| FX rate missing for a needed pair | `MissingFxMarketRateError` |
+| Competing FX sources on the resolved date | `AmbiguousFxSourceError` |
+| FX older than an operator-supplied `--max-fx-age-days` (no default is assumed) | `FX_STALE` |
+| Resolver returns `AMBIGUOUS` or `INVALID_CONTEXT` | `RESOLVER_*` |
+| Matrix percentage basis differs from the legacy basis | `PERCENTAGE_BASIS_MISMATCH` |
+| Matrix mirror GST treatment differs from the legacy ProductCode | `GST_TREATMENT_MISMATCH` |
+| BUY sheets for the origin do not name exactly one supplier | `SUPPLIER_NOT_SINGLE` |
+
+A scenario that needs no FX (for example A2D COLLECT in PGK) is still priced when FX is absent.
+
+### Classes
+
+`MATCH`, `EXPECTED_DIFFERENCE`, `UNEXPLAINED_DIFFERENCE`, `BLOCKED`, `NOT_COMPARABLE`. A line difference is
+`EXPECTED_DIFFERENCE` only when the Stage-1 comparison for that charge has native differences and **all**
+of them are explained in the Stage-1 registry; if the native facts match but the amount differs, the
+divergence is in the downstream calculation and is `UNEXPLAINED_DIFFERENCE`. Native cost on destination
+charges is `NOT_COMPARABLE` because the Rate Matrix holds no destination BUY tariff. Every record carries
+ProductCode, legacy amount, shadow amount, currency, calculation stage, policy and FX provenance, and
+reason.
+
+## 4. Safety
+
+- None of the modules is imported by `quotes`, `pricing_v4/engine`, the adapter, the dispatcher, or `core`.
+- All only issue `SELECT` statements; tests assert this and that no FX table is read.
 - No tariff, master data, or legacy row is changed.

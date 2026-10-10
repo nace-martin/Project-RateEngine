@@ -212,12 +212,18 @@ def run_shadow(
     registry_errors: list[str] | None = None,
     legacy_agent_code: str | None = None,
     using: str = "default",
+    read_only: bool = True,
 ) -> ShadowReport:
-    """Run the comparison inside a read-only, rolled-back transaction."""
+    """Run the comparison inside a read-only, rolled-back transaction.
+
+    ``read_only=False`` is for a caller that is already inside ``read_only_database`` (the Stage-2
+    shadow): the nested block would otherwise switch the connection back to writable on exit.
+    """
+    shadow = _Shadow(quote_date, tuple(lanes), tuple(weights), registry or [], legacy_agent_code, using)
+    if not read_only:
+        return shadow.run(registry_errors or [])
     with read_only_database(using):
-        return _Shadow(quote_date, tuple(lanes), tuple(weights), registry or [], legacy_agent_code, using).run(
-            registry_errors or []
-        )
+        return shadow.run(registry_errors or [])
 
 
 def _fmt(value: Decimal | None) -> str | None:
