@@ -258,6 +258,60 @@ class TestPrerequisites:
         assert any("already used by ServiceComponent 'OTHER-COMP'" in r for r in plan.reasons)
 
 
+# --------------------------------------------------------------------------- audience
+
+
+@pytest.mark.django_db
+class TestAudience:
+    """sync_v4_components never sets audience, so the canonical mirror state is the model default BOTH."""
+
+    def test_both_is_ready(self, world):
+        plan = plan_of(valid_manifest())
+        assert valid_manifest()["service_components"][0]["audience"] == "BOTH"
+        assert plan.ready
+        assert plan.action == "CREATE"
+        assert plan.fields["audience"] == "BOTH"
+
+    @pytest.mark.parametrize("audience", ["BUY", "SELL"])
+    def test_buy_and_sell_conflict(self, world, audience):
+        manifest = valid_manifest()
+        manifest["service_components"][0]["audience"] = audience
+        before = snapshot()
+        plan = plan_of(manifest)
+        assert plan.action == "CONFLICT"
+        assert not plan.ready
+        assert any(r.startswith(f"audience '{audience}' must be 'BOTH'") for r in plan.reasons)
+        assert snapshot() == before
+
+    @pytest.mark.parametrize("audience", ["BUY", "SELL"])
+    def test_apply_refuses_a_non_default_audience(self, world, audience):
+        manifest = valid_manifest()
+        manifest["service_components"][0]["audience"] = audience
+        before = snapshot()
+        plan = apply_of(manifest, world)
+        assert not plan.ready
+        assert plan.applied is None
+        assert snapshot() == before
+
+    def test_created_row_has_the_model_default_audience(self, world):
+        apply_of(valid_manifest(), world)
+        assert ServiceComponent.objects.get(code=CODE).audience == ServiceComponent._meta.get_field("audience").default == "BOTH"
+
+    def test_later_sync_is_a_no_op_including_audience(self, world):
+        apply_of(valid_manifest(), world)
+        before = list(ServiceComponent.objects.filter(code=CODE).values())
+        call_command("sync_v4_components", stdout=StringIO())
+        after = list(ServiceComponent.objects.filter(code=CODE).values())
+        assert after == before
+        assert after[0]["audience"] == "BOTH"
+
+    def test_sync_created_component_has_both(self, db):
+        legacy = _legacy(2996, "IMP-SYNTH-AUD")
+        _mirror(legacy)
+        call_command("sync_v4_components", stdout=StringIO())
+        assert ServiceComponent.objects.get(code="IMP-SYNTH-AUD").audience == "BOTH"
+
+
 # --------------------------------------------------------------------------- existing rows
 
 

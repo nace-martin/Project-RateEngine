@@ -89,6 +89,9 @@ Rules:
 - The proposed fields must equal what `sync_v4_components` derives for that ProductCode (leg, category,
   description, unit, mode, cost type and source, active). A later broad sync is then a no-op for the
   row. A test runs the real command to keep that true.
+- `audience` must be `BOTH`. `sync_v4_components` does not set audience for ProductCode mirrors, so a
+  component it creates takes the `ServiceComponent` model default `BOTH`; the loader reproduces that
+  canonical state and makes no audience decision. `BUY` or `SELL` is a `CONFLICT`.
 - Columns the manifest does not state take model defaults and are compared on `REUSE`; a stored row
   with any other value is a `CONFLICT`, never updated.
 - A description already used by another component is a `CONFLICT` (descriptions are unique).

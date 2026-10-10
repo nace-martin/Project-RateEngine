@@ -73,6 +73,9 @@ SYNC_CATEGORY_MAP = {
     "SURCHARGE": "ACCESSORIAL",
 }
 
+# sync_v4_components does not set audience, so mirrors it creates take the model default.
+AUDIENCE_DEFAULT = "BOTH"
+
 # Columns the manifest does not state take the model defaults. They are compared on REUSE, so an
 # existing row carrying anything else is a CONFLICT rather than being silently accepted.
 UNSTATED_DEFAULTS = {
@@ -345,4 +348,12 @@ def _prerequisite_problems(entry: dict[str, Any], using: str) -> list[str]:
                 f"{key} '{entry[key]}' differs from what sync_v4_components derives ('{value}'); "
                 "a later sync would overwrite it."
             )
+    # sync_v4_components never sets audience, so a ProductCode mirror it creates carries the model
+    # default. The controlled loader reproduces that state and must not introduce an audience decision.
+    if entry["audience"] != AUDIENCE_DEFAULT:
+        reasons.append(
+            f"audience '{entry['audience']}' must be '{AUDIENCE_DEFAULT}': sync_v4_components does not set "
+            "audience, so a ProductCode mirror takes the ServiceComponent model default and this loader "
+            "makes no audience decision."
+        )
     return reasons
