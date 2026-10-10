@@ -2,8 +2,9 @@
 
 Validates a strict JSON manifest against the Pilot Gate B3A contract
 (docs/architecture/clean-database-architecture-v2.1.md section 3.5.1) and the
-current database. It only reads. There is no apply mode: nothing here creates,
-updates, or deletes a row, and no pricing path calls this module.
+current database. It only reads: nothing here creates, updates, or deletes a
+row, and no pricing path calls this module. The controlled apply counterpart is
+``rate_matrix_loader`` (Pilot Gate B3H), which reuses this contract unchanged.
 """
 
 from __future__ import annotations
@@ -147,7 +148,7 @@ class ManifestReport:
         counts = self.counts()
         out = [
             "Rate Matrix manifest dry-run",
-            "Mode: DRY RUN (validation only; no rows are written and no apply mode exists)",
+            "Mode: DRY RUN (validation only; no rows are written)",
             "",
             "Proposed creates",
             f"  CommercialProductCode: {counts['product_codes_create']}",
@@ -266,8 +267,12 @@ def _is_blank(value: Any) -> bool:
 
 
 class _Validator:
-    def __init__(self, using: str):
+    def __init__(self, using: str, *, allow_existing_sheets: bool = False):
         self.using = using
+        # Validation rejects a sheet whose name and version already exist. The loader sets
+        # this so it can instead compare the stored sheet and report REUSE or CONFLICT.
+        self.allow_existing_sheets = allow_existing_sheets
+        self.existing_sheet_keys: set[tuple[str, int]] = set()
         self.report = ManifestReport()
         self.proposed_codes: dict[str, str] = {}
         self.resolved_codes: dict[str, dict[str, Any]] = {}
@@ -772,7 +777,11 @@ class _Validator:
                 )
             else:
                 seen[key] = path
-                if RateSheet.objects.using(self.using).filter(name=name, version=version).exists():
+                if not RateSheet.objects.using(self.using).filter(name=name, version=version).exists():
+                    pass
+                elif self.allow_existing_sheets:
+                    self.existing_sheet_keys.add(key)
+                else:
                     self.report.error(
                         "SHEET_ALREADY_EXISTS", path,
                         f"A RateSheet named '{name}' version {version} already exists. "
@@ -785,7 +794,7 @@ class _Validator:
             if not lines:
                 self.report.error("SHEET_HAS_NO_LINES", f"{path}.lines", "A rate sheet must contain at least one line.")
             sheet_context = {
-                "path": path, "rate_type": rate_type, "transport_mode": transport_mode,
+                "path": path, "sheet_key": (name, version), "rate_type": rate_type, "transport_mode": transport_mode,
                 "currency_code": currency_code, "valid_from": valid_from, "valid_until": valid_until,
                 "valid_until_ok": valid_until_ok, "is_active": is_active,
                 "supplier": supplier.id if supplier else None, "supplier_ok": supplier_ok,
@@ -848,7 +857,8 @@ class _Validator:
             and sheet["valid_until_ok"] and sheet["supplier_ok"] and sheet["customer_ok"]
         ):
             self.rate_records.append({
-                "label": path, "source": "manifest", "is_active": sheet["is_active"],
+                "label": path, "source": "manifest", "sheet_key": sheet["sheet_key"],
+                "is_active": sheet["is_active"],
                 "rate_type": sheet["rate_type"], "product_code": code,
                 "transport_mode": sheet["transport_mode"], "currency_code": sheet["currency_code"],
                 "valid_from": sheet["valid_from"], "valid_until": sheet["valid_until"],
@@ -1020,7 +1030,7 @@ class _Validator:
             applicability = getattr(line, "applicability", None)
             records.append({
                 "label": f"existing RateSheet \"{sheet.name}\" v{sheet.version} line {line.product_code.code}",
-                "source": "existing", "is_active": True,
+                "source": "existing", "sheet_key": (sheet.name, sheet.version), "is_active": True,
                 "rate_type": sheet.rate_type, "product_code": line.product_code.code,
                 "transport_mode": sheet.transport_mode, "currency_code": sheet.currency_code,
                 "valid_from": sheet.valid_from, "valid_until": sheet.valid_until,
@@ -1035,55 +1045,86 @@ class _Validator:
             })
         return records
 
-    @staticmethod
-    def _windows_overlap(a: dict[str, Any], b: dict[str, Any]) -> bool:
-        # End dates are treated as inclusive, the conservative reading: a sheet ending
-        # on the day another starts is reported as overlapping.
-        a_ends_before_b = a["valid_until"] is not None and a["valid_until"] < b["valid_from"]
-        b_ends_before_a = b["valid_until"] is not None and b["valid_until"] < a["valid_from"]
-        return not (a_ends_before_b or b_ends_before_a)
-
-    def _classify(self, a: dict[str, Any], b: dict[str, Any]) -> str | None:
-        if not (a["is_active"] and b["is_active"]):
-            return None
-        if any(a[dim] != b[dim] for dim in EXACT_DIMENSIONS):
-            return None
-        if not self._windows_overlap(a, b):
-            return None
-        differing = [dim for dim in WILDCARD_DIMENSIONS if a[dim] != b[dim]]
-        if any(not (_is_blank(a[dim]) or _is_blank(b[dim])) for dim in differing):
-            return None
-        if a["currency_code"] != b["currency_code"]:
-            # A SELL tariff in another currency is a different rate. A BUY cost in another
-            # currency is a competing cost for the same charge: native currency cannot choose.
-            return "RATE_BUY_CURRENCY_AMBIGUOUS" if a["rate_type"] == "BUY" else None
-        if not differing:
-            return "RATE_DUPLICATE_IDENTITY"
-        if differing == ["payment_term"]:
-            return "RATE_PAYMENT_TERM_COEXISTENCE"
-        return "RATE_AMBIGUOUS_MATCH"
-
     def _detect_rate_conflicts(self) -> None:
-        messages = {
-            "RATE_DUPLICATE_IDENTITY": "Same rate identity with overlapping validity as {other}.",
-            "RATE_PAYMENT_TERM_COEXISTENCE": (
-                "A blank (any) payment term and a specific payment term coexist for the same "
-                "otherwise-identical active rate with overlapping validity: {other}."
-            ),
-            "RATE_BUY_CURRENCY_AMBIGUOUS": (
-                "Two active BUY rates for the same charge, supplier, and applicability overlap in "
-                "validity but differ in currency: {other}. Currency alone cannot choose between costs; "
-                "nothing is converted and no precedence is applied."
-            ),
-            "RATE_AMBIGUOUS_MATCH": (
-                "More than one rate could match the same quote context with overlapping validity "
-                "(a blank dimension overlaps a specific one): {other}. No precedence is applied."
-            ),
-        }
         manifest_records = self.rate_records
         existing = self._existing_rate_records() if manifest_records else []
         for index, record in enumerate(manifest_records):
             for other in manifest_records[:index] + existing:
-                code = self._classify(record, other)
+                if (
+                    other["source"] == "existing" and self.allow_existing_sheets
+                    and record["sheet_key"] == other["sheet_key"]
+                ):
+                    # The manifest sheet is already stored under this name and version. The
+                    # loader compares it with the stored copy; it is not a rival tariff.
+                    continue
+                code = classify_rate_conflict(record, other)
                 if code:
-                    self.report.error(code, record["label"], messages[code].format(other=other["label"]))
+                    self.report.error(code, record["label"], RATE_CONFLICT_MESSAGES[code].format(other=other["label"]))
+
+
+RATE_CONFLICT_MESSAGES = {
+    "RATE_DUPLICATE_IDENTITY": "Same rate identity with overlapping validity as {other}.",
+    "RATE_PAYMENT_TERM_COEXISTENCE": (
+        "A blank (any) payment term and a specific payment term coexist for the same "
+        "otherwise-identical active rate with overlapping validity: {other}."
+    ),
+    "RATE_BUY_CURRENCY_AMBIGUOUS": (
+        "Two active BUY rates for the same charge, supplier, and applicability overlap in "
+        "validity but differ in currency: {other}. Currency alone cannot choose between costs; "
+        "nothing is converted and no precedence is applied."
+    ),
+    "RATE_AMBIGUOUS_MATCH": (
+        "More than one rate could match the same quote context with overlapping validity "
+        "(a blank dimension overlaps a specific one): {other}. No precedence is applied."
+    ),
+}
+
+
+def windows_overlap(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    # End dates are treated as inclusive, the conservative reading: a sheet ending
+    # on the day another starts is reported as overlapping.
+    a_ends_before_b = a["valid_until"] is not None and a["valid_until"] < b["valid_from"]
+    b_ends_before_a = b["valid_until"] is not None and b["valid_until"] < a["valid_from"]
+    return not (a_ends_before_b or b_ends_before_a)
+
+
+def classify_rate_conflict(a: dict[str, Any], b: dict[str, Any]) -> str | None:
+    """Return the conflict code if two active rate records could both match one quote, else None."""
+    if not (a["is_active"] and b["is_active"]):
+        return None
+    if any(a[dim] != b[dim] for dim in EXACT_DIMENSIONS):
+        return None
+    if not windows_overlap(a, b):
+        return None
+    differing = [dim for dim in WILDCARD_DIMENSIONS if a[dim] != b[dim]]
+    if any(not (_is_blank(a[dim]) or _is_blank(b[dim])) for dim in differing):
+        return None
+    if a["currency_code"] != b["currency_code"]:
+        # A SELL tariff in another currency is a different rate. A BUY cost in another
+        # currency is a competing cost for the same charge: native currency cannot choose.
+        return "RATE_BUY_CURRENCY_AMBIGUOUS" if a["rate_type"] == "BUY" else None
+    if not differing:
+        return "RATE_DUPLICATE_IDENTITY"
+    if differing == ["payment_term"]:
+        return "RATE_PAYMENT_TERM_COEXISTENCE"
+    return "RATE_AMBIGUOUS_MATCH"
+
+
+@dataclass
+class ValidatedManifest:
+    """A validated manifest plus the resolved facts the loader needs. Read-only."""
+
+    report: ManifestReport
+    rate_records: list[dict[str, Any]]
+    existing_sheet_keys: set[tuple[str, int]]
+
+
+def validate_manifest_for_load(data: Any, *, using: str = "default", allow_existing_sheets: bool = True) -> ValidatedManifest:
+    """Validate a parsed manifest for the loader. Writes nothing.
+
+    Unlike :func:`validate_manifest` this does not open its own read-only block, so the loader can
+    call it again inside its apply transaction to prove the stored result.
+    """
+    validator = _Validator(using, allow_existing_sheets=allow_existing_sheets)
+    report = validator.run(data)
+    return ValidatedManifest(report, validator.rate_records, validator.existing_sheet_keys)
