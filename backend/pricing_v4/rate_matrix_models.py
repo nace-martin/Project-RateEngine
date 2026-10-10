@@ -8,8 +8,9 @@ This is an isolated schema-only foundation. Active pricing runtime continues
 to use legacy COGS/Sell models and RateCard tables.
 
 Pilot Gate B3A contract fields (payment term, additive flat amount, sheet
-provenance and version identity) are schema only; no resolver exists. The controlled
-tariff loader is pricing_v4.services.rate_matrix_loader (Pilot Gate B3H).
+provenance and version identity) are schema only. The controlled tariff loader is
+pricing_v4.services.rate_matrix_loader (Pilot Gate B3H) and the read-only, not-live resolver is
+pricing_v4.services.rate_matrix_resolver (Pilot Gate B3J).
 """
 
 import re

@@ -2,8 +2,8 @@
 
 Status: implemented in Pilot Gate B3C. This command is dry run only and has no apply mode. The
 controlled apply counterpart is `load_rate_matrix_manifest` (Pilot Gate B3H, see
-`rate_matrix_loader.md`), which reuses this contract unchanged. There is no resolver, and no pricing
-path reads the Rate Matrix tables.
+`rate_matrix_loader.md`), which reuses this contract unchanged. A read-only resolver exists (Pilot Gate B3J, see
+`rate_matrix_resolver.md`), and no pricing path reads the Rate Matrix tables.
 
 Contract authority: `docs/architecture/clean-database-architecture-v2.1.md` §3.5.1.
 
