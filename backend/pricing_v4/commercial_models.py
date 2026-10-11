@@ -256,6 +256,39 @@ class CommercialTermsPolicy(models.Model):
     )
     is_active = models.BooleanField(default=True)
 
+    # --- Calculation conventions (Pilot Gate B3L-B) -------------------------------------------
+    # These make the *meaning* of the percentages above part of the versioned policy, so adopting
+    # the approved Pilot authority is a new policy version, not a code switch. Existing rows keep
+    # the legacy meaning through the defaults.
+    class CafMethod(models.TextChoices):
+        LEGACY_RATE_ADJUSTMENT = "LEGACY_RATE_ADJUSTMENT", "Legacy: import CAF deducted from the TT rate"
+        UPLIFT_AFTER_FX = "UPLIFT_AFTER_FX", "CAF is a separate uplift applied after pure FX conversion"
+
+    class FxSideConvention(models.TextChoices):
+        LEGACY_COST_AT_TT_BUY = "LEGACY_COST_AT_TT_BUY", "Legacy: FCY cost at TT BUY, PGK to FCY at TT SELL"
+        COST_AT_TT_SELL = "COST_AT_TT_SELL", "FCY cost at TT SELL, PGK to FCY customer quote at TT BUY"
+
+    caf_method = models.CharField(
+        max_length=32, choices=CafMethod.choices, default=CafMethod.LEGACY_RATE_ADJUSTMENT,
+        help_text="How import_caf_percent is applied. Export CAF is unchanged.",
+    )
+    fx_side_convention = models.CharField(
+        max_length=32, choices=FxSideConvention.choices, default=FxSideConvention.LEGACY_COST_AT_TT_BUY,
+        help_text="Which TT side converts supplier cost and which converts a PGK amount to a customer quote.",
+    )
+    fx_max_age_days = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text="Maximum calendar age of an FX market rate. Null means no limit (legacy).",
+    )
+    fx_primary_source = models.CharField(
+        max_length=64, blank=True, default="",
+        help_text="FxMarketRate.source preferred when it is within fx_max_age_days. Blank means no priority (legacy).",
+    )
+    fx_fallback_source = models.CharField(
+        max_length=64, blank=True, default="",
+        help_text="FxMarketRate.source used only when the primary source has no suitable rate.",
+    )
+
     class Meta:
         db_table = "policy_commercial_terms"
         constraints = (
@@ -305,6 +338,22 @@ class CommercialTermsPolicy(models.Model):
                 & models.Q(gst_standard_percent__lte=100),
                 name="comm_policy_gst_standard_range",
             ),
+            models.CheckConstraint(
+                condition=models.Q(caf_method__in=["LEGACY_RATE_ADJUSTMENT", "UPLIFT_AFTER_FX"]),
+                name="comm_policy_caf_method_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(fx_side_convention__in=["LEGACY_COST_AT_TT_BUY", "COST_AT_TT_SELL"]),
+                name="comm_policy_fx_side_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(fx_max_age_days__isnull=True) | models.Q(fx_max_age_days__lte=365),
+                name="comm_policy_fx_max_age_range",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(fx_fallback_source__gt="") | models.Q(fx_primary_source__gt=""),
+                name="comm_policy_fx_fallback_needs_primary",
+            ),
         )
 
     def clean(self):
@@ -347,6 +396,14 @@ class CommercialTermsPolicy(models.Model):
         ):
             raise ValidationError(
                 {"gst_standard_percent": "GST standard percent must be between 0% and 100%."}
+            )
+        if self.fx_fallback_source and not self.fx_primary_source:
+            raise ValidationError(
+                {"fx_fallback_source": "A fallback FX source requires a primary FX source."}
+            )
+        if self.fx_fallback_source and self.fx_fallback_source == self.fx_primary_source:
+            raise ValidationError(
+                {"fx_fallback_source": "The fallback FX source must differ from the primary source."}
             )
 
     @property

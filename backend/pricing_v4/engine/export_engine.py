@@ -51,6 +51,7 @@ from core.charge_rules import (
     evaluate_rate_lookup_rule,
 )
 from quotes.tax_policy import get_png_gst_category
+from pricing_v4.services.commercial_policy import require_standard_gst_rate
 from quotes.quote_result_contract import (
     QuoteComponent,
     basis_for_unit,
@@ -159,6 +160,15 @@ class ExportPricingEngine:
     Rule 9: Focused on POM→BNE corridor first.
     """
     
+    @property
+    def _standard_gst_rate(self) -> Decimal:
+        """Standard GST rate from the resolved commercial policy; missing or ambiguous fails closed."""
+        cached = getattr(self, '_gst_rate_cache', None)
+        if cached is None:
+            cached = require_standard_gst_rate(self.quote_date)
+            self._gst_rate_cache = cached
+        return cached
+
     def __init__(
         self,
         quote_date: date,
@@ -568,7 +578,9 @@ class ExportPricingEngine:
                 if agent_name:
                     agent_name = agent_name.name
                 cost_eval = self._calculate_amount(cogs) if cogs else RuleEvaluation(CALCULATION_FLAT, Decimal('0.00'))
-                gst_category, gst_rate = get_png_gst_category(product_code=pc, shipment_type='EXPORT', leg='ORIGIN')
+                gst_category, gst_rate = get_png_gst_category(
+            product_code=pc, shipment_type='EXPORT', leg='ORIGIN', standard_rate=self._standard_gst_rate
+        )
                 return ChargeLineResult(
                     product_code_id=pc.id, product_code=pc.code, description=pc.description,
                     category=pc.category, cost_amount=cost_eval.amount,
@@ -609,7 +621,9 @@ class ExportPricingEngine:
         margin_amount = sell_amount - margin_cost_base
         margin_percent = (margin_amount / margin_cost_base * 100 if margin_cost_base > 0 else Decimal('0'))
         
-        gst_category, gst_rate = get_png_gst_category(product_code=pc, shipment_type='EXPORT', leg='ORIGIN')
+        gst_category, gst_rate = get_png_gst_category(
+            product_code=pc, shipment_type='EXPORT', leg='ORIGIN', standard_rate=self._standard_gst_rate
+        )
         gst_amount = (sell_amount * gst_rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         sell_incl_gst = sell_amount + gst_amount
         
@@ -636,7 +650,9 @@ class ExportPricingEngine:
         cost_amount = cost_eval.amount
         margin_amount = sell_amount - cost_amount
         margin_percent = (margin_amount / cost_amount * 100) if cost_amount > 0 else Decimal('0')
-        gst_category, gst_rate = get_png_gst_category(product_code=pc, shipment_type='EXPORT', leg='ORIGIN')
+        gst_category, gst_rate = get_png_gst_category(
+            product_code=pc, shipment_type='EXPORT', leg='ORIGIN', standard_rate=self._standard_gst_rate
+        )
         gst_amount = (sell_amount * gst_rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         return ChargeLineResult(
             product_code_id=pc.id, product_code=pc.code,

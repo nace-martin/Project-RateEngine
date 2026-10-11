@@ -720,7 +720,9 @@ def _get_totals(version, currency: str = "PGK") -> dict:
         ),
         Decimal('0'),
     )
-    gst = sell_total * Decimal('0.10')
+    from pricing_v4.services.commercial_policy import require_standard_gst_rate
+
+    gst = sell_total * require_standard_gst_rate(None)  # policy authority; fails closed if unresolved
     return {'sell_excl_gst': sell_total, 'gst': gst, 'sell_incl_gst': sell_total + gst}
 
 

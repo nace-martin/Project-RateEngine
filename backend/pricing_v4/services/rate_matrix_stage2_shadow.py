@@ -45,7 +45,7 @@ from pricing_v4.engine.import_engine import (
 )
 from pricing_v4.models import ProductCode
 from pricing_v4.services import rate_matrix_resolver as resolver
-from pricing_v4.services.fx_resolver import FxResolutionError, resolve_market_fx_pair
+from pricing_v4.services.fx_resolver import FxResolutionError
 from pricing_v4.services.rate_matrix_manifest import read_only_database
 from pricing_v4.services.rate_matrix_shadow import run_shadow, weight_aspect
 from quotes.currency_rules import determine_quote_currency
@@ -68,7 +68,7 @@ PRICING_ASPECTS = (
     "presence", "currency", "basis", "unit_rate", "additive_flat_amount", "min_charge", "max_charge",
     "percentage_rate", "percentage_basis",
 )
-GST_SOURCE = "quotes.tax_policy.PNG_GST_RATE_DECIMAL (code constant) via get_png_gst_category"
+GST_SOURCE = "CommercialTermsPolicy.gst_standard_percent via require_standard_gst_rate"
 
 
 class ShadowBlocked(Exception):
@@ -114,6 +114,7 @@ class Line:
 class Priced:
     lines: dict[str, Line]
     totals: dict[str, Decimal]
+    conversions: list = field(default_factory=list)
 
 
 @dataclass
@@ -424,8 +425,10 @@ class _Stage2:
             "valid_from": policy.valid_from.isoformat(),
             "valid_until": policy.valid_until.isoformat() if policy.valid_until else None,
             "import_caf_percent": str(policy.import_caf_percent), "margin_percent": str(policy.margin_percent),
-            "margin_method": policy.margin_method, "gst_standard_percent_observed": str(policy.gst_standard_percent),
-            "gst_rate_used_by_engine": GST_SOURCE,
+            "margin_method": policy.margin_method, "gst_standard_percent": str(policy.gst_standard_percent),
+            "gst_rate_used_by_engine": GST_SOURCE, "caf_method": policy.caf_method,
+            "fx_side_convention": policy.fx_side_convention, "fx_max_age_days": policy.fx_max_age_days,
+            "fx_primary_source": policy.fx_primary_source, "fx_fallback_source": policy.fx_fallback_source,
         }
         return policy
 
@@ -490,16 +493,16 @@ class _Stage2:
     def _price(self, engine_class, scenario: Scenario, origin, destination, policy, *, matrix: bool = False,
                legacy_codes=frozenset()) -> Priced:
         quote_currency = scenario.quote_currency
+        # Like the production adapter, no FX is resolved up front: the engine resolves it only when it
+        # actually converts, so a quote with no conversion needs none.
         tt_buy = tt_sell = None
-        if quote_currency != "PGK":  # Same pre-resolution as the production adapter.
-            pair = resolve_market_fx_pair(quote_currency, "PGK", self.quote_date)
-            tt_buy, tt_sell = pair.tt_buy, pair.tt_sell
         kwargs = {
             "quote_date": self.quote_date, "origin": origin, "destination": destination,
             "chargeable_weight_kg": scenario.weight, "payment_term": PaymentTerm(scenario.term),
             "service_scope": ServiceScope(scenario.scope), "tt_buy": tt_buy, "tt_sell": tt_sell,
             "caf_rate": policy.import_caf_rate, "margin_rate": policy.margin_rate, "margin_method": policy.margin_method,
             "quote_currency": quote_currency,
+            "caf_method": policy.caf_method, "fx_side_convention": policy.fx_side_convention,
         }
         if matrix:
             kwargs["matrix"] = _MatrixLookup(scenario, origin, destination, self.quote_date, self.using)
@@ -520,33 +523,33 @@ class _Stage2:
             "total_sell_incl_gst": result.total_sell_incl_gst, "total_cost_pgk": result.total_cost_pgk,
             "total_margin": result.total_margin,
         }
-        return Priced(lines, totals)
+        return Priced(lines, totals, list((result.audit_metadata or {}).get("conversions") or []))
 
     def _fx_checks(self, scenario: Scenario, *priced: Priced) -> None:
-        # Only currencies that took part in a conversion. A zero cost carries the engine's placeholder
-        # currency and converts to zero without any rate.
-        currencies = set()
+        # Provenance comes from the conversions the engine actually performed. Nothing is resolved here,
+        # so a scenario with no conversion needs and reports no FX.
+        legs: dict[str, dict] = {}
         for p in priced:
-            for line in p.lines.values():
-                if line.sell_currency and line.sell_currency != "PGK":
-                    currencies.add(line.sell_currency)
-                if line.cost_amount != 0 and line.cost_currency and line.cost_currency != "PGK":
-                    currencies.add(line.cost_currency)
-        for currency in sorted(currencies):
-            pair = resolve_market_fx_pair(currency, "PGK", self.quote_date)
-            age = (self.quote_date - pair.effective_date).days
+            for conversion in p.conversions:
+                for leg in conversion.get("legs") or []:
+                    legs.setdefault(leg["pair"], leg)
+        for pair_name, leg in sorted(legs.items()):
+            effective = date.fromisoformat(leg["effective_date"]) if leg.get("effective_date") else None
+            age = leg.get("age_days")
+            if age is None and effective is not None:
+                age = (self.quote_date - effective).days
             info = {
-                "pair": f"{currency}/PGK", "source": pair.source, "effective_date": pair.effective_date.isoformat(),
-                "tt_buy": str(pair.tt_buy), "tt_sell": str(pair.tt_sell), "age_days": age,
-                "status": NOT_APPROVED,
+                "pair": pair_name, "side": leg.get("side"), "rate": leg.get("rate"), "source": leg.get("source"),
+                "source_role": leg.get("source_role"), "effective_date": leg.get("effective_date"),
+                "age_days": age, "max_age_days": leg.get("max_age_days"), "status": NOT_APPROVED,
             }
-            self._fx_seen[info["pair"]] = info
+            self._fx_seen[pair_name] = info
             self.report.fx_provenance = sorted(self._fx_seen.values(), key=lambda i: i["pair"])
-            if self.max_fx_age_days is not None and age > self.max_fx_age_days:
+            if self.max_fx_age_days is not None and age is not None and age > self.max_fx_age_days:
                 raise ShadowBlocked(
                     "FX_STALE",
-                    f"{currency}/PGK rate is {age} days old (limit {self.max_fx_age_days}); effective "
-                    f"{pair.effective_date.isoformat()} from {pair.source}.",
+                    f"{pair_name} rate is {age} days old (limit {self.max_fx_age_days}); effective "
+                    f"{leg.get('effective_date')} from {leg.get('source')}.",
                 )
 
     # ---------------------------------------------------------------- Stage-1 evidence

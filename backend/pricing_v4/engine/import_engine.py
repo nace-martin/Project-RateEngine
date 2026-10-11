@@ -21,7 +21,7 @@ from enum import Enum
 import logging
 
 from core.commodity import DEFAULT_COMMODITY_CODE
-from pricing_v4.services.commercial_policy import MissingCommercialPolicyError
+from pricing_v4.services.commercial_policy import MissingCommercialPolicyError, require_standard_gst_rate
 from pricing_v4.models import (
     ProductCode,
     LocalSellRate
@@ -56,6 +56,10 @@ from quotes.quote_result_contract import (
 from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult, build_tax_breakdown
 
 logger = logging.getLogger(__name__)
+
+# Policy-versioned calculation conventions (CommercialTermsPolicy.caf_method / fx_side_convention).
+CAF_UPLIFT_AFTER_FX = 'UPLIFT_AFTER_FX'
+FX_COST_AT_TT_SELL = 'COST_AT_TT_SELL'
 
 class PaymentTerm(Enum):
     COLLECT = "COLLECT"
@@ -106,6 +110,12 @@ class ChargeLine:
     notes: str = ""
     rule_family: str = CALCULATION_LOOKUP_RATE
 
+    # Canonical PGK equivalents from the engine's own conversions (approved conventions only).
+    # None means no PGK equivalent exists because no conversion to or from PGK took place.
+    cost_pgk: Optional[Decimal] = None
+    sell_pgk: Optional[Decimal] = None
+    sell_pgk_incl_gst: Optional[Decimal] = None
+
 
 _POLICY_DEFAULT = object()
 
@@ -144,6 +154,8 @@ class ImportPricingEngine:
         preferred_agent_id: Optional[int] = None,
         preferred_carrier_id: Optional[int] = None,
         buy_currency: Optional[str] = None,
+        caf_method: Optional[str] = None,
+        fx_side_convention: Optional[str] = None,
     ):
         self.quote_date = quote_date
         self.origin = origin
@@ -155,9 +167,11 @@ class ImportPricingEngine:
         # FX rates - no fabricated defaults; missing required FX fails closed
         self.tt_buy = tt_buy
         self.tt_sell = tt_sell
+        resolved_policy = None
         if caf_rate is _POLICY_DEFAULT or margin_rate is _POLICY_DEFAULT:
             from pricing_v4.services.commercial_policy import require_commercial_terms_policy
             policy = require_commercial_terms_policy(quote_date)
+            resolved_policy = policy
             if caf_rate is _POLICY_DEFAULT:
                 caf_rate = policy.import_caf_rate
             if margin_rate is _POLICY_DEFAULT:
@@ -167,8 +181,23 @@ class ImportPricingEngine:
         self.margin_rate = margin_rate
         self.margin_method = margin_method or 'MARKUP_ON_COST'
         self.fx_rates = fx_rates or {}
+        # Calculation conventions come from the policy row; direct engine callers that pass explicit
+        # CAF and margin values keep the legacy conventions unless they state otherwise.
+        self.caf_method = caf_method or (
+            getattr(resolved_policy, 'caf_method', None) if resolved_policy is not None else None
+        ) or 'LEGACY_RATE_ADJUSTMENT'
+        self.fx_side_convention = fx_side_convention or (
+            getattr(resolved_policy, 'fx_side_convention', None) if resolved_policy is not None else None
+        ) or 'LEGACY_COST_AT_TT_BUY'
+        self._pair_cache: Dict[str, Any] = {}
+        self._conversions: List[dict] = []
+        self._gst_rate_cache: Optional[Decimal] = None
         self._warnings: List[str] = []
-        self._audit_metadata: Dict[str, List[dict[str, str]]] = {"fx_fallbacks": []}
+        self._audit_metadata: Dict[str, Any] = {
+            "fx_fallbacks": [],
+            "conversions": self._conversions,
+            "commercial_convention": {"caf_method": self.caf_method, "fx_side_convention": self.fx_side_convention},
+        }
         
         # Determine quote currency (prefer explicit override, else derive)
         self.quote_currency = quote_currency or self._determine_quote_currency()
@@ -223,28 +252,117 @@ class ImportPricingEngine:
                 return leg == 'DESTINATION'
         return False
     
+    # ------------------------------------------------------------------ FX, CAF and conversions
+
+    @property
+    def _approved_caf(self) -> bool:
+        """CAF is a separate uplift after pure FX conversion (approved Pilot authority)."""
+        return self.caf_method == CAF_UPLIFT_AFTER_FX
+
+    @property
+    def _approved_fx_sides(self) -> bool:
+        """Supplier cost converts at TT SELL; a PGK amount converts to a customer quote at TT BUY."""
+        return self.fx_side_convention == FX_COST_AT_TT_SELL
+
+    @property
+    def _standard_gst_rate(self) -> Decimal:
+        """Standard GST rate from the resolved commercial policy. Missing or ambiguous policy fails closed."""
+        if self._gst_rate_cache is None:
+            self._gst_rate_cache = require_standard_gst_rate(self.quote_date)
+        return self._gst_rate_cache
+
+    def _pair(self, currency: str):
+        """Market FX pair for currency/PGK on the quote date, resolved once per currency."""
+        if currency not in self._pair_cache:
+            from pricing_v4.services.fx_resolver import resolve_market_fx_pair
+            self._pair_cache[currency] = resolve_market_fx_pair(currency, 'PGK', self.quote_date)
+        return self._pair_cache[currency]
+
+    def _leg_evidence(self, currency: str, side: str, rate: Decimal) -> dict:
+        """Provenance of one FX leg. Never triggers FX resolution that has not already happened."""
+        pair = self._pair_cache.get(currency)
+        evidence = {"pair": f"{currency}/PGK", "side": side, "rate": str(rate)}
+        if pair is not None:
+            evidence.update({
+                "source": pair.source, "effective_date": pair.effective_date.isoformat(),
+                "is_inverse": pair.is_inverse, "is_cross": pair.is_cross, "source_role": pair.source_role,
+                "age_days": pair.age_days, "max_age_days": pair.max_age_days, "policy_code": pair.policy_code,
+            })
+        return evidence
+
+    def _record_conversion(self, **evidence) -> None:
+        self._conversions.append(evidence)
+
     def _get_rate_for_currency(self, currency: str, rate_type: str = 'tt_sell') -> Decimal:
         """Get FX rate for specific currency."""
         if currency == 'PGK':
             return Decimal('1.0')
-        
+
         # Check standard rates
         if currency == self.quote_currency:
             rate = self.tt_buy if rate_type == 'tt_buy' else self.tt_sell
             if rate is not None:
                 return rate
-             
-        from pricing_v4.services.fx_resolver import resolve_market_fx_pair
-        pair = resolve_market_fx_pair(currency, 'PGK', self.quote_date)
+
+        pair = self._pair(currency)
         return pair.tt_buy if rate_type == 'tt_buy' else pair.tt_sell
+
+    def _convert_with_caf(
+        self, amount: Decimal, from_curr: str, to_curr: str, *, role: str, product_code: str = ""
+    ) -> Decimal:
+        """Approved conversion: pure market FX first, then CAF as a separate uplift.
+
+        FCY supplier cost to PGK uses TT SELL. A PGK amount to a customer FCY quote uses TT BUY
+        (PGK per FCY divided into the PGK amount). FCY to FCY runs the two legs through PGK. The CAF is
+        applied once, only because a conversion happened, and is never folded into the FX rate. An FCY
+        amount that is not a supplier cost has no approved side and fails closed.
+        """
+        if from_curr == to_curr or amount == Decimal('0'):
+            return Decimal('0.00') if amount == Decimal('0') else amount
+        if self.caf_rate is None:
+            raise MissingCommercialPolicyError(
+                "Import CAF rate is required when a currency conversion occurs; calculation fails closed."
+            )
+        legs = []
+        pgk = amount
+        if from_curr != 'PGK':
+            if role != 'COST':
+                raise MissingCommercialPolicyError(
+                    f"No approved FX side converts a {from_curr} sell amount to {to_curr}; calculation fails closed."
+                )
+            rate = self._get_rate_for_currency(from_curr, 'tt_sell')
+            if rate <= 0:
+                from pricing_v4.services.fx_resolver import MissingFxMarketRateError
+                raise MissingFxMarketRateError("FX rate must be strictly positive.")
+            pgk = (amount * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            legs.append(self._leg_evidence(from_curr, 'TT_SELL', rate))
+        pure = pgk
+        if to_curr != 'PGK':
+            rate = self._get_rate_for_currency(to_curr, 'tt_buy')
+            if rate <= 0:
+                from pricing_v4.services.fx_resolver import MissingFxMarketRateError
+                raise MissingFxMarketRateError("FX rate must be strictly positive.")
+            pure = (pgk / rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            legs.append(self._leg_evidence(to_curr, 'TT_BUY', rate))
+        commercial = (pure * (Decimal('1') + self.caf_rate)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        self._record_conversion(
+            product_code=product_code, role=role, from_currency=from_curr, to_currency=to_curr,
+            amount_in=str(amount), pure_market_amount=str(pure), caf_percent=str(self.caf_rate * 100),
+            caf_amount=str(commercial - pure), commercial_amount=str(commercial),
+            caf_method=self.caf_method, fx_side_convention=self.fx_side_convention, legs=legs,
+        )
+        return commercial
 
     def _convert_fcy_to_pgk(self, amount: Decimal, currency: Optional[str] = None) -> Decimal:
         """
         FCY → PGK conversion (Import).
-        Uses TT BUY in PGK per FCY, CAF subtracted, MULTIPLY.
+        Legacy convention: TT BUY in PGK per FCY, CAF subtracted from the rate, MULTIPLY.
+        Approved convention: see ``_convert_with_caf``.
         """
         if amount == Decimal('0'):
             return Decimal('0.00')
+        if self._approved_caf:
+            return self._convert_with_caf(amount, currency or self.buy_currency or 'UNKNOWN', 'PGK', role='COST')
         if self.caf_rate is None:
             raise MissingCommercialPolicyError(
                 "Import CAF rate is required for FCY conversion; calculation fails closed."
@@ -262,22 +380,32 @@ class ImportPricingEngine:
             raise MissingFxMarketRateError(
                 "Missing TT BUY FX rate for Import FCY to PGK conversion; calculation fails closed."
             )
-            
+
         effective_rate = rate * (Decimal('1') - self.caf_rate)
         if effective_rate <= 0:
             from pricing_v4.services.fx_resolver import MissingFxMarketRateError
             raise MissingFxMarketRateError("Effective FX rate must be strictly positive.")
-        
+
         pgk = amount * effective_rate
-        return pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-    
+        pgk = pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        self._record_conversion(
+            product_code="", role='COST', from_currency=currency or self.buy_currency, to_currency='PGK',
+            amount_in=str(amount), commercial_amount=str(pgk), caf_percent=str(self.caf_rate * 100),
+            caf_method=self.caf_method, fx_side_convention=self.fx_side_convention,
+            legs=[self._leg_evidence(currency or self.buy_currency or '', 'TT_BUY', rate)],
+        )
+        return pgk
+
     def _convert_pgk_to_fcy(self, amount: Decimal, target_currency: Optional[str] = None) -> Decimal:
         """
         PGK → FCY conversion.
-        Uses TT SELL in PGK per FCY, CAF subtracted (Import), DIVIDE.
+        Legacy convention: TT SELL in PGK per FCY, CAF subtracted from the rate, DIVIDE.
+        Approved convention: see ``_convert_with_caf`` (TT BUY, then CAF uplift).
         """
         if amount == Decimal('0'):
             return Decimal('0.00')
+        if self._approved_caf:
+            return self._convert_with_caf(amount, 'PGK', target_currency or self.quote_currency, role='SELL')
         if self.caf_rate is None:
             raise MissingCommercialPolicyError(
                 "Import CAF rate is required for PGK to FCY conversion; calculation fails closed."
@@ -295,25 +423,36 @@ class ImportPricingEngine:
             raise MissingFxMarketRateError(
                 "Missing TT SELL FX rate for Import PGK to FCY conversion; calculation fails closed."
             )
-             
+
         effective_rate = rate * (Decimal('1') - self.caf_rate)
         if effective_rate <= 0:
             from pricing_v4.services.fx_resolver import MissingFxMarketRateError
             raise MissingFxMarketRateError("Effective FX rate must be strictly positive.")
         fcy = amount / effective_rate
-        return fcy.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-    
-    def _convert_cross_currency(self, amount: Decimal, from_curr: str, to_curr: str) -> Decimal:
+        fcy = fcy.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        self._record_conversion(
+            product_code="", role='SELL', from_currency='PGK', to_currency=target_currency or self.quote_currency,
+            amount_in=str(amount), commercial_amount=str(fcy), caf_percent=str(self.caf_rate * 100),
+            caf_method=self.caf_method, fx_side_convention=self.fx_side_convention,
+            legs=[self._leg_evidence(target_currency or self.quote_currency or '', 'TT_SELL', rate)],
+        )
+        return fcy
+
+    def _convert_cross_currency(
+        self, amount: Decimal, from_curr: str, to_curr: str, *, role: str = 'COST', product_code: str = ""
+    ) -> Decimal:
         """Convert any currency to any currency via PGK."""
         if from_curr == to_curr or amount == Decimal('0'):
             return amount
-            
+        if self._approved_caf:
+            return self._convert_with_caf(amount, from_curr, to_curr, role=role, product_code=product_code)
+
         # 1. Convert source to PGK (using TT BUY)
         if from_curr == 'PGK':
             amount_pgk = amount
         else:
             amount_pgk = self._convert_fcy_to_pgk(amount, from_curr)
-            
+
         # 2. Convert PGK to target (using TT SELL)
         if to_curr == 'PGK':
             return amount_pgk
@@ -506,7 +645,9 @@ class ImportPricingEngine:
                         line.caf_applied = True
                     
                     # Apply GST Classification
-                    gst_cat, gst_r = get_png_gst_category(product_code=pc, shipment_type='IMPORT', leg=leg)
+                    gst_cat, gst_r = get_png_gst_category(
+                        product_code=pc, shipment_type='IMPORT', leg=leg, standard_rate=self._standard_gst_rate
+                    )
                     line.gst_category = gst_cat
                     line.gst_rate = gst_r
                     # Force GST to 0 if rate is missing to prevent AUD 0.00 base with non-zero GST
@@ -542,16 +683,50 @@ class ImportPricingEngine:
         
         # Calculate totals
         all_lines = result.line_items
-        result.total_cost_pgk = sum((self._convert_cross_currency(line.cost_amount, line.cost_currency, 'PGK') for line in all_lines), Decimal('0.00'))
-        result.total_sell_pgk = sum((self._convert_cross_currency(line.sell_amount, line.sell_currency, 'PGK') for line in all_lines), Decimal('0.00'))
+        if self._approved_caf:
+            # PGK equivalents are summed from the canonical per-line conversion results. A line with no
+            # conversion to or from PGK has none, and no FX is resolved to invent one.
+            result.total_cost_pgk = sum((line.cost_pgk or Decimal('0.00') for line in all_lines), Decimal('0.00'))
+            result.total_sell_pgk = sum((line.sell_pgk or Decimal('0.00') for line in all_lines), Decimal('0.00'))
+            self._audit_metadata["pgk_equivalent_complete"] = all(
+                line.sell_pgk is not None or not line.sell_amount for line in all_lines
+            )
+        else:
+            # Legacy conventions: PGK equivalents are a reporting conversion. When FX is available they are
+            # exactly as before. When it is not, and the quote itself needed no conversion, the quote still
+            # prices and the equivalents are reported as unavailable instead of failing.
+            from pricing_v4.services.fx_resolver import FxResolutionError
+
+            def pgk_equivalent(line, amount, currency):
+                try:
+                    return self._convert_cross_currency(amount, currency, 'PGK'), True
+                except FxResolutionError:
+                    if line.fx_applied:
+                        raise
+                    return Decimal('0.00'), False
+
+            total_cost = total_sell = Decimal('0.00')
+            complete = True
+            for line in all_lines:
+                cost_value, cost_ok = pgk_equivalent(line, line.cost_amount, line.cost_currency)
+                sell_value, sell_ok = pgk_equivalent(line, line.sell_amount, line.sell_currency)
+                total_cost += cost_value
+                total_sell += sell_value
+                complete = complete and cost_ok and sell_ok
+            result.total_cost_pgk = total_cost
+            result.total_sell_pgk = total_sell
+            self._audit_metadata["pgk_equivalent_complete"] = complete
         result.total_margin = sum(line.margin_amount for line in all_lines)
         result.total_gst = sum(line.gst_amount for line in all_lines)
         result.total_sell_incl_gst = sum(line.sell_incl_gst for line in all_lines)
         result.fx_applied = any(line.fx_applied for line in all_lines)
-        result.tax_breakdown = build_tax_breakdown(
-            all_lines,
-            converter=lambda amount, currency: self._convert_cross_currency(amount, currency, 'PGK'),
-        )
+        if self._approved_caf:
+            result.tax_breakdown = build_tax_breakdown(all_lines, converter=lambda amount, currency: amount)
+        else:
+            result.tax_breakdown = build_tax_breakdown(
+                all_lines,
+                converter=lambda amount, currency: self._convert_cross_currency(amount, currency, 'PGK'),
+            )
         
         return result
 
@@ -644,6 +819,8 @@ class ImportPricingEngine:
         # Determine sell amount based on leg and payment term
         sell_amount = Decimal('0')
         sell_currency = self.quote_currency
+        pgk_basis: Optional[Decimal] = None
+        cost_in_quote_for_margin: Optional[Decimal] = None
         fx_applied = False
         caf_applied = False
         margin_applied = False
@@ -661,8 +838,12 @@ class ImportPricingEngine:
             
             # Currency handling for destination charges
             # If sell rate currency != quote currency, we must convert.
+            if sell_rate.currency == 'PGK':
+                pgk_basis = sell_amount
             if sell_rate.currency != self.quote_currency:
-                sell_amount = self._convert_cross_currency(sell_amount, sell_rate.currency, self.quote_currency)
+                sell_amount = self._convert_cross_currency(
+                    sell_amount, sell_rate.currency, self.quote_currency, role='SELL', product_code=pc.code
+                )
                 fx_applied = True
                 caf_applied = True
             
@@ -675,9 +856,12 @@ class ImportPricingEngine:
             
             # FX conversion if needed
             if cost_currency != self.quote_currency:
-                sell_amount = self._convert_cross_currency(cost_amount, cost_currency, self.quote_currency)
+                sell_amount = self._convert_cross_currency(
+                    cost_amount, cost_currency, self.quote_currency, role='COST', product_code=pc.code
+                )
                 fx_applied = True
                 caf_applied = True
+            cost_in_quote_for_margin = sell_amount
             
             # Apply margin
             sell_amount = self._apply_margin(sell_amount)
@@ -691,7 +875,10 @@ class ImportPricingEngine:
             # For proper margin calc, need to compare in same currency
             if fx_applied and cost_currency != sell_currency:
                 # Convert cost to sell currency for comparison
-                cost_in_quote_curr = self._convert_cross_currency(cost_amount, cost_currency, sell_currency)
+                cost_in_quote_curr = (
+                    cost_in_quote_for_margin if self._approved_caf and cost_in_quote_for_margin is not None
+                    else self._convert_cross_currency(cost_amount, cost_currency, sell_currency)
+                )
                 margin_amount = sell_amount - cost_in_quote_curr
                 if cost_in_quote_curr > 0:
                     margin_percent = (margin_amount / cost_in_quote_curr * 100).quantize(Decimal('0.1'))
@@ -703,10 +890,27 @@ class ImportPricingEngine:
         gst_category, gst_rate = get_png_gst_category(
             product_code=pc,
             shipment_type='IMPORT',
-            leg=leg
+            leg=leg,
+            standard_rate=self._standard_gst_rate,
         )
         gst_amount = (sell_amount * gst_rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         sell_incl_gst = sell_amount + gst_amount
+
+        # Canonical PGK equivalents come only from conversions the engine performed or from native PGK.
+        cost_pgk = sell_pgk = sell_pgk_incl_gst = None
+        if self._approved_caf:
+            if cost_amount == Decimal('0') or cost_currency == 'PGK':
+                cost_pgk = cost_amount
+            elif self.quote_currency == 'PGK' and cost_in_quote_for_margin is not None:
+                cost_pgk = cost_in_quote_for_margin
+            if sell_currency == 'PGK':
+                sell_pgk = sell_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                sell_pgk_incl_gst = sell_incl_gst
+            elif pgk_basis is not None:
+                sell_pgk = pgk_basis
+                sell_pgk_incl_gst = pgk_basis + (pgk_basis * gst_rate).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP
+                )
         
         return ChargeLine(
             product_code_id=pc.id,
@@ -730,6 +934,9 @@ class ImportPricingEngine:
             gst_amount=gst_amount,
             sell_incl_gst=sell_incl_gst,
             rule_family=sell_eval.rule_family if sell_eval.amount > 0 else cost_eval.rule_family,
+            cost_pgk=cost_pgk,
+            sell_pgk=sell_pgk,
+            sell_pgk_incl_gst=sell_pgk_incl_gst,
         )
 
     @staticmethod
@@ -785,6 +992,9 @@ class ImportPricingEngine:
             fx_applied=line.fx_applied,
             caf_applied=line.caf_applied,
             margin_applied=line.margin_applied,
+            cost_pgk=line.cost_pgk,
+            sell_pgk=line.sell_pgk,
+            sell_pgk_incl_gst=line.sell_pgk_incl_gst,
         )
     
     def _calculate_sell_amount(self, sell_rate, *, base_amount: Decimal = Decimal('0.00')) -> RuleEvaluation:
@@ -802,7 +1012,9 @@ class ImportPricingEngine:
         if sell_rate:
             sell_amount = self._calculate_sell_amount(sell_rate).amount
             if sell_rate.currency != self.quote_currency:
-                sell_amount = self._convert_cross_currency(sell_amount, sell_rate.currency, self.quote_currency)
+                sell_amount = self._convert_cross_currency(
+                    sell_amount, sell_rate.currency, self.quote_currency, role='SELL', product_code=pc.code
+                )
             return sell_amount
         return Decimal('0')
 

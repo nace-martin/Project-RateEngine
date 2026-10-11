@@ -22,6 +22,7 @@ from services.models import ServiceComponent
 from quotes.completeness import evaluate_from_lines
 from pricing_v4.services.commercial_policy import (
     MissingCommercialPolicyError,
+    require_standard_gst_rate,
     resolve_commercial_terms_policy,
 )
 from quotes.currency_rules import determine_quote_currency
@@ -204,6 +205,57 @@ class PricingServiceV4Adapter:
             "fx_cross_details": market.cross_details if market else None,
             "defaults_used": defaults_used or [],
             "notes": notes,
+        }
+        self._audit_metadata["fx_audit"] = payload
+
+    def _capture_fx_audit_from_conversions(self, result) -> None:
+        """Record the FX/CAF audit from the conversions the engine actually performed.
+
+        Nothing is resolved here: the evidence is exactly what the engine used, so the audit, the
+        persisted PGK equivalents and the totals share one conversion result.
+        """
+        metadata = getattr(result, "audit_metadata", {}) or {}
+        conversions = list(metadata.get("conversions") or [])
+        convention = metadata.get("commercial_convention") or {}
+        approved = convention.get("caf_method") == "UPLIFT_AFTER_FX"
+        fx_snapshot = getattr(self, "fx_snapshot", None)
+        first = conversions[0] if conversions else None
+        leg = (first.get("legs") or [{}])[0] if first else {}
+        payload: dict[str, object] = {
+            "applied": bool(conversions),
+            "from_currency": first.get("from_currency") if first else None,
+            "to_currency": first.get("to_currency") if first else None,
+            "direction": (
+                f"{first.get('from_currency')} -> {first.get('to_currency')}" if first else None
+            ),
+            "base_rate_type": leg.get("side"),
+            "base_rate": leg.get("rate"),
+            "caf_percent": first.get("caf_percent") if first else None,
+            "caf_operation": (("UPLIFTED_AFTER_FX" if approved else "DEDUCTED_FROM_RATE") if first else None),
+            "effective_rate_after_caf": None,
+            "fx_snapshot_source": getattr(fx_snapshot, "source", None),
+            "fx_snapshot_timestamp": (
+                getattr(fx_snapshot, "as_of_timestamp", None).isoformat()
+                if getattr(fx_snapshot, "as_of_timestamp", None)
+                else None
+            ),
+            "fx_market_source": leg.get("source"),
+            "fx_market_effective_date": leg.get("effective_date"),
+            "fx_source_role": leg.get("source_role"),
+            "fx_age_days": leg.get("age_days"),
+            "fx_max_age_days": leg.get("max_age_days"),
+            "fx_policy_code": leg.get("policy_code"),
+            "fx_inverted": bool(leg.get("is_inverse", False)),
+            "fx_crossed": bool(leg.get("is_cross", False)),
+            "commercial_convention": convention,
+            "conversions": conversions,
+            "pgk_equivalent_complete": metadata.get("pgk_equivalent_complete"),
+            "defaults_used": [],
+            "notes": (
+                "Conversion evidence recorded by the pricing engine; pure market FX and CAF are separate."
+                if conversions
+                else "No currency conversion was performed, so no FX rate was required."
+            ),
         }
         self._audit_metadata["fx_audit"] = payload
 
@@ -567,13 +619,10 @@ class PricingServiceV4Adapter:
             normalized_buy_currency = str(getattr(self.quote_input, "buy_currency", None) or "").upper() or None
             fx_applied = (normalized_quote_currency != "PGK") or (normalized_buy_currency not in (None, "", "PGK"))
 
+            # FX is resolved by the engine, lazily, only when a conversion is actually performed. A quote
+            # whose costs and sell tariffs are all in the quote currency therefore needs no FX at all.
             tt_buy = None
             tt_sell = None
-            target_curr = normalized_quote_currency if normalized_quote_currency != "PGK" else normalized_buy_currency
-            if target_curr and target_curr != "PGK":
-                from pricing_v4.services.fx_resolver import resolve_market_fx_pair
-                pair = resolve_market_fx_pair(target_curr, 'PGK', self.quote_input.quote_date)
-                tt_buy, tt_sell = pair.tt_buy, pair.tt_sell
             
             # Get CAF and margin from CommercialTermsPolicy (Wave 3B2 cutover)
             if not self.commercial_terms_policy:
@@ -589,28 +638,6 @@ class PricingServiceV4Adapter:
             caf_used = caf_rate
             margin_rate = self.commercial_terms_policy.margin_rate
             margin_method = self.commercial_terms_policy.margin_method
-
-            if fx_applied:
-                if normalized_quote_currency != "PGK":
-                    from_currency = normalized_quote_currency
-                    base_rate_type = "TT_SELL"
-                    base_rate = tt_sell
-                else:
-                    from_currency = normalized_buy_currency or "UNKNOWN"
-                    base_rate_type = "TT_BUY"
-                    base_rate = tt_buy
-                self._capture_fx_audit(
-                    applied=True,
-                    from_currency=from_currency,
-                    to_currency="PGK",
-                    base_rate_type=base_rate_type,
-                    base_rate=base_rate,
-                    caf_percent=caf_used,
-                    caf_operation="DEDUCTED",
-                    effective_rate_after_caf=(base_rate * (Decimal("1") - caf_used)) if base_rate is not None else None,
-                    defaults_used=[],
-                    notes="Import: CAF deducted from base TT rate; conversion recorded for audit.",
-                )
 
             engine = ImportPricingEngine(
                 quote_date=self.quote_input.quote_date,
@@ -629,6 +656,8 @@ class PricingServiceV4Adapter:
                 preferred_agent_id=self.quote_input.agent_id,
                 preferred_carrier_id=self.quote_input.carrier_id,
                 buy_currency=self.quote_input.buy_currency,
+                caf_method=self.commercial_terms_policy.caf_method,
+                fx_side_convention=self.commercial_terms_policy.fx_side_convention,
             )
         elif shipment.shipment_type == 'DOMESTIC':
             # Domestic Engine
@@ -674,6 +703,9 @@ class PricingServiceV4Adapter:
             else:
                 result = engine.calculate_quote()
         
+        if shipment.shipment_type == 'IMPORT':
+            self._capture_fx_audit_from_conversions(result)
+
         # 3. Convert Result to V3 QuoteCharges (now returns List[CalculatedChargeLine])
         return self._convert_result_to_lines(result)
 
@@ -694,6 +726,14 @@ class PricingServiceV4Adapter:
         # 1. Gather all line data into a map by Product Code
         # Structure: { code: { 'cost': ..., 'sell': ..., 'description': ... } }
         
+        convention = (getattr(result, "audit_metadata", {}) or {}).get("commercial_convention") or {}
+        approved_conventions = convention.get("caf_method") == "UPLIFT_AFTER_FX"
+        self._conversion_rates = {}
+        for conversion in (getattr(result, "audit_metadata", {}) or {}).get("conversions") or []:
+            legs = conversion.get("legs") or []
+            if conversion.get("product_code") and legs and legs[0].get("rate") is not None:
+                self._conversion_rates.setdefault(conversion["product_code"], Decimal(str(legs[0]["rate"])))
+
         consolidated = {}
         
         # Helper to process V4 lines (they come in different shapes from different engines)
@@ -773,11 +813,18 @@ class PricingServiceV4Adapter:
                     'calculation_notes': getattr(line, 'calculation_notes', None),
                     'is_spot_sourced': bool(getattr(line, 'is_spot_sourced', False)),
                     'is_manual_override': bool(getattr(line, 'is_manual_override', False)),
+                    'cost_pgk': None,
+                    'sell_pgk': None,
+                    'sell_pgk_incl_gst': None,
                 }
             
             # Sum up (though typically one per code)
             consolidated[code]['cost_amount'] += line.cost_amount
             consolidated[code]['sell_amount'] += line.sell_amount
+            for pgk_field in ('cost_pgk', 'sell_pgk', 'sell_pgk_incl_gst'):
+                value = getattr(line, pgk_field, None)
+                if value is not None:
+                    consolidated[code][pgk_field] = (consolidated[code][pgk_field] or Decimal('0')) + value
             
             # Handle Tax
             gst = getattr(line, 'gst_amount', Decimal('0'))
@@ -834,7 +881,7 @@ class PricingServiceV4Adapter:
                 consolidated[code]['sell_amount'] += item.amount
                 
                 # Domestic GST Logic (10%)
-                gst = item.amount * Decimal('0.10')
+                gst = item.amount * require_standard_gst_rate(self.quote_input.quote_date)
                 consolidated[code]['sell_incl_gst'] += (item.amount + gst)
 
         # Prefetch ServiceComponents to avoid N+1 and handle missing gracefully
@@ -871,17 +918,31 @@ class PricingServiceV4Adapter:
                 sell_fcy_incl_gst = Decimal(str(data.get('sell_incl_gst', sell_fcy)))
                 cost_fcy = Decimal(str(data['cost_amount']))
                 
-                fx_sell_rate = self._get_fx_sell_rate(currency, self._get_fx_rates_dict())
-                fx_buy_rate = self._get_fx_buy_rate(cost_currency, self._get_fx_rates_dict())
+                if approved_conventions:
+                    fx_sell_rate = fx_buy_rate = Decimal('0')
+                else:
+                    # PGK equivalents are reporting conversions: unavailable FX never blocks a quote that
+                    # needed no conversion, and is reported as unavailable (0.00) rather than invented.
+                    fx_sell_rate = self._optional_fx_rate(self._get_fx_sell_rate, currency)
+                    fx_buy_rate = self._optional_fx_rate(self._get_fx_buy_rate, cost_currency)
                 
-                if fx_sell_rate > 0:
+                if approved_conventions:
+                    sell_pgk = data.get('sell_pgk') or Decimal('0.00')
+                    sell_pgk_incl_gst = data.get('sell_pgk_incl_gst') or Decimal('0.00')
+                elif fx_sell_rate is None:
+                    sell_pgk = sell_pgk_incl_gst = Decimal('0.00')
+                elif fx_sell_rate > 0:
                     sell_pgk = self._convert_fcy_to_pgk(sell_fcy, fx_sell_rate)
                     sell_pgk_incl_gst = self._convert_fcy_to_pgk(sell_fcy_incl_gst, fx_sell_rate)
                 else:
                     sell_pgk = sell_fcy
                     sell_pgk_incl_gst = sell_fcy_incl_gst
 
-                if fx_buy_rate > 0:
+                if approved_conventions:
+                    cost_pgk = data.get('cost_pgk') or Decimal('0.00')
+                elif fx_buy_rate is None:
+                    cost_pgk = Decimal('0.00')
+                elif fx_buy_rate > 0:
                     cost_pgk = self._convert_fcy_to_pgk(cost_fcy, fx_buy_rate)
                 else:
                     cost_pgk = cost_fcy
@@ -899,7 +960,7 @@ class PricingServiceV4Adapter:
                     sell_fcy_currency=currency,
                     cost_fcy=cost_fcy,
                     cost_fcy_currency=cost_currency,
-                    exchange_rate=fx_sell_rate,
+                    exchange_rate=(self._conversion_rates.get(code) if approved_conventions else fx_sell_rate),
                     bucket=data.get('bucket', 'origin_charges'),
                     product_code=data.get('product_code') or code,
                     component=data.get('component'),
@@ -927,8 +988,15 @@ class PricingServiceV4Adapter:
                 if cost_currency != 'PGK':
                     cost_fcy = data['cost_amount']
                     cost_fcy_currency = cost_currency
-                    fx_buy_rate = self._get_fx_buy_rate(cost_currency, self._get_fx_rates_dict())
-                    cost_pgk = self._convert_fcy_to_pgk(data['cost_amount'], fx_buy_rate) if fx_buy_rate > 0 else data['cost_amount']
+                    if approved_conventions:
+                        fx_buy_rate = self._conversion_rates.get(code)
+                        cost_pgk = data.get('cost_pgk') or Decimal('0.00')
+                    else:
+                        fx_buy_rate = self._optional_fx_rate(self._get_fx_buy_rate, cost_currency)
+                        if fx_buy_rate is None:
+                            cost_pgk = Decimal('0.00')
+                        else:
+                            cost_pgk = self._convert_fcy_to_pgk(data['cost_amount'], fx_buy_rate) if fx_buy_rate > 0 else data['cost_amount']
                 else:
                     cost_pgk = data['cost_amount']
                 lines.append(CalculatedChargeLine(
@@ -1026,6 +1094,15 @@ class PricingServiceV4Adapter:
                 logger.warning("Invalid FX rates JSON; falling back to empty rates.")
                 return {}
         return rates or {}
+
+    def _optional_fx_rate(self, getter, currency: str):
+        """A reporting FX rate, or None when no suitable market rate exists (never invented)."""
+        from pricing_v4.services.fx_resolver import FxResolutionError
+
+        try:
+            return getter(currency, self._get_fx_rates_dict())
+        except FxResolutionError:
+            return None
 
     def _get_fx_buy_rate(self, currency: str, rates: dict) -> Decimal:
         if currency == 'PGK':
@@ -1519,7 +1596,10 @@ class PricingServiceV4Adapter:
             charge_mock = TaxCharge(charge.code, stage)
             
             # Apply Policy
-            apply_gst_policy(version_mock, charge_mock)
+            apply_gst_policy(
+                version_mock, charge_mock,
+                standard_rate_percent=require_standard_gst_rate(self.quote_input.quote_date) * Decimal('100'),
+            )
             
             # Calculate GST
             gst_rate = Decimal(str(charge_mock.gst_percentage)) / Decimal('100')

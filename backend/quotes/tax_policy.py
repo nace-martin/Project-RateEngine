@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 # V4 Engine-First Tax Policy
 # =============================================================================
 
-def get_gst_from_product_code(product_code: 'ProductCode') -> Tuple[bool, Decimal]:
+def get_gst_from_product_code(product_code: 'ProductCode', *, standard_rate: Decimal) -> Tuple[bool, Decimal]:
     """
     Engine-First: Pull GST settings directly from ProductCode.
     
@@ -50,11 +50,11 @@ def get_gst_from_product_code(product_code: 'ProductCode') -> Tuple[bool, Decima
     
     elif gst_treatment == 'STANDARD':
         # Normal taxable service
-        return (True, product_code.gst_rate)
+        return (True, standard_rate)
     
     # Fallback to legacy is_gst_applicable field
     if product_code.is_gst_applicable:
-        return (True, product_code.gst_rate)
+        return (True, standard_rate)
     else:
         return (False, Decimal('0'))
 
@@ -69,14 +69,19 @@ GST_CATEGORY_EXPORT_SERVICE = 'export_service'
 GST_CATEGORY_OFFSHORE_SERVICE = 'offshore_service'
 GST_CATEGORY_IMPORTED_GOODS = 'imported_goods'
 
-# PNG GST rate (10%)
-PNG_GST_RATE_DECIMAL = Decimal('0.10')
+# Reference value only (10%). It is NOT a runtime pricing authority: the standard GST rate is the resolved
+# CommercialTermsPolicy.gst_standard_percent (see pricing_v4.services.commercial_policy.require_standard_gst_rate).
+# It exists for tests and parity checks that need a named value to compare the policy against.
+PNG_GST_REFERENCE_RATE = Decimal('0.10')
+PNG_GST_RATE_DECIMAL = PNG_GST_REFERENCE_RATE  # backward-compatible name for the reference value
 
 
 def get_png_gst_category(
     product_code: 'ProductCode',
     shipment_type: str,  # IMPORT, EXPORT, DOMESTIC
     leg: str = None,     # ORIGIN, FREIGHT, DESTINATION
+    *,
+    standard_rate: Decimal,  # the resolved policy's standard GST rate (a fraction)
 ) -> Tuple[str, Decimal]:
     """
     Classify a charge for PNG GST and return (category, rate).
@@ -108,6 +113,8 @@ def get_png_gst_category(
         product_code: ProductCode instance
         shipment_type: 'IMPORT', 'EXPORT', or 'DOMESTIC'
         leg: Optional leg ('ORIGIN', 'FREIGHT', 'DESTINATION')
+        standard_rate: standard GST rate from the resolved commercial policy. Required: this
+            module holds the classification and leg rules, not the percentage.
         
     Returns:
         Tuple of (gst_category, gst_rate)
@@ -122,7 +129,7 @@ def get_png_gst_category(
     
     # DOMESTIC - All services in PNG attract 10% GST
     if shipment_type == 'DOMESTIC':
-        return (GST_CATEGORY_SERVICE_IN_PNG, PNG_GST_RATE_DECIMAL)
+        return (GST_CATEGORY_SERVICE_IN_PNG, standard_rate)
     
     # EXPORT
     if shipment_type == 'EXPORT':
@@ -136,14 +143,14 @@ def get_png_gst_category(
             if gst_treatment == 'ZERO_RATED':
                 return (GST_CATEGORY_EXPORT_SERVICE, Decimal('0'))
             # Standard origin services attract GST (including reclassified surcharges)
-            return (GST_CATEGORY_SERVICE_IN_PNG, PNG_GST_RATE_DECIMAL)
+            return (GST_CATEGORY_SERVICE_IN_PNG, standard_rate)
 
         # Freight is always zero-rated for export
         if leg == 'FREIGHT' or category == 'FREIGHT':
             return (GST_CATEGORY_EXPORT_SERVICE, Decimal('0'))
         
         # Fallback for origin
-        return (GST_CATEGORY_SERVICE_IN_PNG, PNG_GST_RATE_DECIMAL)
+        return (GST_CATEGORY_SERVICE_IN_PNG, standard_rate)
     
     # IMPORT
     if shipment_type == 'IMPORT':
@@ -164,11 +171,11 @@ def get_png_gst_category(
             if gst_treatment == 'ZERO_RATED':
                 return (GST_CATEGORY_EXPORT_SERVICE, Decimal('0'))
             # Standard destination services attract GST
-            return (GST_CATEGORY_SERVICE_IN_PNG, PNG_GST_RATE_DECIMAL)
+            return (GST_CATEGORY_SERVICE_IN_PNG, standard_rate)
     
     # Fallback: Use ProductCode settings
     if gst_treatment == 'STANDARD' or getattr(product_code, 'is_gst_applicable', False):
-        return (GST_CATEGORY_SERVICE_IN_PNG, product_code.gst_rate)
+        return (GST_CATEGORY_SERVICE_IN_PNG, standard_rate)
     
     return (GST_CATEGORY_OFFSHORE_SERVICE, Decimal('0'))
 
@@ -179,7 +186,6 @@ def get_png_gst_category(
 
 # Constants for easy maintenance
 NON_TAXABLE_CODES = frozenset({"DUTY", "IMPORT_GST", "AQIS", "DAU", "ICS", "DISB"})
-PNG_GST_RATE = 10
 DEFAULT_GST_RATE = 0
 
 # Jurisdiction handler registry - add new countries here
@@ -202,7 +208,7 @@ class JurisdictionBasedTaxEngine:
     - Single-responsibility methods for testability
     """
 
-    def apply_gst_policy(self, version, charge) -> None:
+    def apply_gst_policy(self, version, charge, *, standard_rate_percent: Decimal) -> None:
         """
         Main entry point. Mutates `charge.is_taxable` and `charge.gst_percentage`.
         
@@ -224,7 +230,7 @@ class JurisdictionBasedTaxEngine:
         handler_name = JURISDICTION_HANDLERS.get(country_code)
         if handler_name:
             handler = getattr(self, handler_name)
-            handler(version, charge)
+            handler(version, charge, standard_rate_percent)
 
     def _is_globally_exempt(self, charge) -> bool:
         """
@@ -254,7 +260,7 @@ class JurisdictionBasedTaxEngine:
             return version.destination.country_code
         return ""
 
-    def _apply_png_logic(self, version, charge) -> None:
+    def _apply_png_logic(self, version, charge, standard_rate_percent) -> None:
         """
         Specific tax rules for Papua New Guinea (PG).
         
@@ -268,7 +274,7 @@ class JurisdictionBasedTaxEngine:
         if service_type in ("IMPORT", "DOMESTIC"):
             # Services supplied in PNG → 10% GST
             charge.is_taxable = True
-            charge.gst_percentage = PNG_GST_RATE
+            charge.gst_percentage = standard_rate_percent
             
         elif service_type == "EXPORT":
             # Exports are 0% only if evidence is provided
@@ -277,7 +283,7 @@ class JurisdictionBasedTaxEngine:
             if charge.stage == "ORIGIN" and not export_evidence:
                 # No export evidence → taxable at origin
                 charge.is_taxable = True
-                charge.gst_percentage = PNG_GST_RATE
+                charge.gst_percentage = standard_rate_percent
             # With evidence or destination stage → stays at 0% (zero-rated)
 
     # Future jurisdiction handlers:
@@ -290,7 +296,7 @@ class JurisdictionBasedTaxEngine:
 _tax_engine = JurisdictionBasedTaxEngine()
 
 
-def apply_gst_policy(version, charge) -> None:
+def apply_gst_policy(version, charge, *, standard_rate_percent: Decimal) -> None:
     """
     Backward-compatible wrapper for JurisdictionBasedTaxEngine.
     
@@ -305,7 +311,9 @@ def apply_gst_policy(version, charge) -> None:
     sc = getattr(charge, 'service_component', None)
     if sc and sc.product_code:
         # Use the V4 engine logic defined above
-        is_taxable, gst_decimal_rate = get_gst_from_product_code(sc.product_code)
+        is_taxable, gst_decimal_rate = get_gst_from_product_code(
+            sc.product_code, standard_rate=standard_rate_percent / 100
+        )
         
         charge.is_taxable = is_taxable
         # Convert Decimal('0.10') to percentage '10' for compatibility with legacy consumers
@@ -313,5 +321,5 @@ def apply_gst_policy(version, charge) -> None:
         return
 
     # 2. Legacy Fallback (SPOT / Ad-Hoc / No Product Code)
-    _tax_engine.apply_gst_policy(version, charge)
+    _tax_engine.apply_gst_policy(version, charge, standard_rate_percent=standard_rate_percent)
 
