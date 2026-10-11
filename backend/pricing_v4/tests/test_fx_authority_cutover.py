@@ -134,18 +134,21 @@ class FxAuthorityCutoverTests(TestCase):
             adapter.calculate_charges()
         self.assertIn("AUD->PGK on or before 2026-06-01", str(ctx.exception))
 
-    def test_missing_import_fx_fails_closed(self):
-        """Import quote requiring FCY output fails closed when no authoritative FX exists."""
+    def test_import_without_a_conversion_needs_no_fx(self):
+        """B3L-B: FX is required only when a conversion is actually performed.
+
+        A PREPAID AUD import with no AUD/PGK conversion must not fail because the FX table is empty.
+        Conversions that do occur still fail closed (see test_b3lb_engine_conventions).
+        """
         FxMarketRate.objects.all().delete()
         FxSnapshot.objects.all().delete()
 
-        # BNE -> POM, PREPAID resolves to AUD output currency
         qi = self._make_quote_input("IMPORT", "BNE", "POM", payment_term="PREPAID", output_currency="AUD")
         adapter = PricingServiceV4Adapter(qi)
 
-        with self.assertRaises(MissingFxMarketRateError) as ctx:
-            adapter.calculate_charges()
-        self.assertIn("AUD->PGK on or before 2026-06-01", str(ctx.exception))
+        adapter.calculate_charges()  # must not raise MissingFxMarketRateError
+        audit = adapter._audit_metadata.get("fx_audit") or {}
+        self.assertFalse(audit.get("applied"))
 
     def test_friday_rate_resolves_for_weekend_quote(self):
         """Friday rate resolves for Saturday/Sunday quote dates per Decision 1."""

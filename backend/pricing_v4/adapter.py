@@ -259,6 +259,50 @@ class PricingServiceV4Adapter:
         }
         self._audit_metadata["fx_audit"] = payload
 
+    def _capture_legacy_spot_fx_audit(self) -> None:
+        """Legacy convention only: SPOT envelope lines are converted by the adapter, outside the engine.
+
+        When the engine recorded no conversion, resolve the market pair once, lazily, so the audit
+        shows the rate the adapter used for those lines. Approved conventions never reach this: their
+        conversions are recorded by the engine.
+        """
+        if getattr(self.quote_input.shipment, "shipment_type", None) != "IMPORT":
+            return
+        policy = self.commercial_terms_policy
+        if policy is None or policy.caf_method != "LEGACY_RATE_ADJUSTMENT":
+            return
+        existing = self._audit_metadata.get("fx_audit") or {}
+        if existing.get("applied"):
+            return
+        quote_currency = str(self.get_output_currency() or "").upper() or "PGK"
+        buy_currency = str(getattr(self.quote_input, "buy_currency", None) or "").upper() or None
+        if quote_currency != "PGK":
+            from_currency, side = quote_currency, "TT_SELL"
+        elif buy_currency not in (None, "", "PGK"):
+            from_currency, side = buy_currency, "TT_BUY"
+        else:
+            return
+        from pricing_v4.services.fx_resolver import FxResolutionError, resolve_market_fx_pair
+
+        try:
+            pair = resolve_market_fx_pair(from_currency, "PGK", self.quote_input.quote_date)
+        except FxResolutionError:
+            return
+        base_rate = pair.tt_sell if side == "TT_SELL" else pair.tt_buy
+        caf = policy.import_caf_rate
+        self._capture_fx_audit(
+            applied=True,
+            from_currency=from_currency,
+            to_currency="PGK",
+            base_rate_type=side,
+            base_rate=base_rate,
+            caf_percent=caf,
+            caf_operation="DEDUCTED",
+            effective_rate_after_caf=(base_rate * (Decimal("1") - caf)) if caf is not None else None,
+            defaults_used=[],
+            notes="Import: CAF deducted from base TT rate; conversion recorded for audit.",
+        )
+
     def get_fx_snapshot(self):
         return self.fx_snapshot
 
@@ -474,6 +518,7 @@ class PricingServiceV4Adapter:
         if self.spot_envelope_id:
             spot_lines = self._calculate_spot_lines()
             self.pricing_mode = PricingMode.SPOT
+            self._capture_legacy_spot_fx_audit()
 
         # 3. Merge Strategies (Standard + Spot Overlay)
         # Using bucket-level override logic
