@@ -1,0 +1,23 @@
+{
+  "manifest_version": 1,
+  "policy": {
+    "policy_code": "COMMERCIAL-POLICY-2026-10-11",
+    "valid_from": "2026-10-11",
+    "margin_percent": "16.67",
+    "margin_method": "TARGET_GROSS_MARGIN",
+    "import_caf_percent": "5.00",
+    "export_caf_percent": "10.00",
+    "gst_standard_percent": "10.00",
+    "caf_method": "UPLIFT_AFTER_FX",
+    "fx_side_convention": "COST_AT_TT_SELL",
+    "fx_max_age_days": 5,
+    "fx_primary_source": "bsp_html",
+    "fx_fallback_source": "MANUAL"
+  },
+  "supersedes": {
+    "policy_code": "LAUNCH-POLICY-2026",
+    "expected_valid_until": null,
+    "set_valid_until": "2026-10-10"
+  },
+  "evidence": "Pilot Gate B3L-A decision pack, operator-approved; B3L-B (PR #372) and B3L-C (PR #373) merged at 477d4e2d. Export CAF 10.00 carried forward unchanged from LAUNCH-POLICY-2026."
+}
