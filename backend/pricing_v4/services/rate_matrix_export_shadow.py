@@ -18,6 +18,13 @@ Locked commercial rules (Commercial Manager, 2026-10-12) that this harness prove
   The CAF is a separate uplift after pure FX and is applied only because a conversion occurred.
 - An explicit SELL tariff receives no additional margin.
 
+**Differences from legacy rows are classified on explicit approved-authority evidence only.** The legacy
+rows are not authoritative where the Commercial Manager has stated a different current tariff. A difference
+is ``EXPECTED_DIFFERENCE`` only when every differing native fact (minimum, tier table, basis, rate) matches
+an approved registry entry exactly, and re-pricing with the legacy native facts for that charge reproduces
+the legacy amount. Anything else is ``UNEXPLAINED_DIFFERENCE``. The same fail-closed principle as the
+import shadow applies; nothing is forced to MATCH.
+
 The production export engine does not yet implement these conventions (it applies margin, then divides
 by TT SELL x (1 + CAF) for COLLECT). That gap is reported per AUD scenario as ``NOT_COMPARABLE``; this
 module does not change production behaviour.
@@ -35,6 +42,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from types import SimpleNamespace
 from typing import Any
 
+from core.charge_rules import evaluate_tiered_break_rule
 from pricing_v4.commercial_models import CommercialProductCode
 from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm
 from pricing_v4.models import ProductCode
@@ -46,6 +54,7 @@ from pricing_v4.services.commercial_policy import (
 )
 from pricing_v4.services.fx_resolver import FxResolutionError, resolve_market_fx_pair
 from pricing_v4.services.rate_matrix_manifest import read_only_database
+from pricing_v4.services.rate_matrix_shadow import load_registry
 
 MATCH = "MATCH"
 EXPECTED_DIFFERENCE = "EXPECTED_DIFFERENCE"
@@ -58,18 +67,13 @@ DEFAULT_LANES = (("POM", "BNE"), ("POM", "SYD"))
 DEFAULT_WEIGHTS = tuple(Decimal(w) for w in ("30", "45", "100", "200", "500", "999", "1000", "1001"))
 DEFAULT_SCOPES = ("A2A", "D2A")
 DEFAULT_CURRENCIES = ("PGK", "AUD")
-SUPPLIER_CODE = "PX"
 NOT_APPROVED = "EXPORT CAF AND CONVENTIONS PER LOCKED RULE 2026-10-12. NOT LIVE. NOT WIRED INTO PRODUCTION."
-
-# Charges whose locked BUY rule cannot be expressed by a Rate Matrix line, so no BUY line is loaded and the
-# legacy database value is not comparable to it. See docs/b3m-c-export-manifest.md.
-BUY_NOT_REPRESENTABLE = {
-    "EXP-BUILDUP": (
-        "Locked BUY build-up has a tier-conditional minimum (0-99 kg nil; 100 kg and over K0.10/kg or K0.15/kg "
-        "with K30 minimum). A line carries one minimum for every tier, so no BUY line is loaded; the legacy "
-        "database row (0.15/kg, K30 at every weight) is superseded by the locked rule."
-    ),
-}
+NONE_TEXT = "none"
+# Native facts compared between a legacy row and a Rate Matrix tariff. Validity and source metadata
+# cannot change an amount and are not compared here.
+FACT_ASPECTS = (
+    "currency", "basis", "unit_rate", "additive_flat_amount", "min_charge", "max_charge", "percentage_rate", "tiers",
+)
 
 
 class ExportShadowBlocked(Exception):
@@ -100,6 +104,8 @@ class Priced:
     totals: dict[str, Decimal]
     currency: str
     conversions: list[dict[str, Any]] = field(default_factory=list)
+    # Native tariff facts the engine actually used, by (side, product code): aspect -> text.
+    facts: dict[tuple[str, str], dict[str, str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -134,6 +140,7 @@ class Record:
     currency: str = ""
     provenance: str = ""
     reason: str = ""
+    evidence: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -146,6 +153,8 @@ class ExportShadowReport:
     policy: dict[str, Any] | None = None
     fx_provenance: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    stale_registry_entries: list[dict[str, Any]] = field(default_factory=list)
+    registry_errors: list[str] = field(default_factory=list)
 
     def counts(self) -> dict[str, int]:
         return {name: sum(1 for r in self.records if r.classification == name) for name in CLASSIFICATIONS}
@@ -158,7 +167,8 @@ class ExportShadowReport:
         return {
             "mode": "SHADOW_EXPORT", "writes_performed": 0, "quote_date": self.quote_date.isoformat(),
             "counts": self.counts(), "policy_provenance": self.policy, "fx_provenance": self.fx_provenance,
-            "notes": self.notes, "records": [r.as_dict() for r in self.records],
+            "notes": self.notes, "stale_registry_entries": self.stale_registry_entries,
+            "registry_errors": self.registry_errors, "records": [r.as_dict() for r in self.records],
         }
 
     def render_json(self) -> str:
@@ -180,12 +190,73 @@ class ExportShadowReport:
                 f"  {r.classification:22s} {r.lane} [{r.scenario}] {r.product_code} {r.aspect}: "
                 f"legacy={r.legacy} shadow={r.shadow} {r.currency}"
             )
-            if r.provenance:
-                out.append(f"      provenance: {r.provenance}")
-            if r.reason:
-                out.append(f"      reason: {r.reason}")
+            for label, value in (("provenance", r.provenance), ("reason", r.reason), ("evidence", r.evidence)):
+                if value:
+                    out.append(f"      {label}: {value}")
+        if self.stale_registry_entries:
+            out += ["", f"Stale approved-difference entries ({len(self.stale_registry_entries)}):"]
+            out += [f"  {json.dumps(entry, sort_keys=True)}" for entry in self.stale_registry_entries]
+        out += [f"Registry error: {e}" for e in self.registry_errors]
         out += ["", "Writes performed: 0"]
         return "\n".join(out)
+
+
+# ----------------------------------------------------------------------------- native facts
+
+
+def _fmt(value: Any) -> str:
+    if value is None or value == "":
+        return NONE_TEXT
+    text = format(Decimal(str(value)).normalize(), "f")
+    return text if text != "-0" else "0"
+
+
+def render_tiers(breaks: list[dict[str, Any]] | None) -> str:
+    """``min_kg:rate`` per tier, with ``@minimum`` when the tier carries its own minimum."""
+    if not breaks:
+        return NONE_TEXT
+    parts = []
+    for tier in sorted(breaks, key=lambda t: Decimal(str(t["min_kg"]))):
+        minimum = tier.get("min_charge")
+        parts.append(f"{_fmt(tier['min_kg'])}:{_fmt(tier['rate'])}" + (f"@{_fmt(minimum)}" if minimum is not None else ""))
+    return "|".join(parts)
+
+
+def native_facts(record: Any) -> dict[str, str]:
+    """Pricing-relevant native facts of a legacy rate row or a shadow Rate Matrix tariff, as comparable text."""
+    if record is None:
+        return {}
+    breaks = getattr(record, "weight_breaks", None)
+    rate_type = str(getattr(record, "rate_type", "") or "").upper()
+    amount = getattr(record, "amount", None)
+    per_kg = getattr(record, "rate_per_kg", None)
+    per_shipment = getattr(record, "rate_per_shipment", None)
+    percent = getattr(record, "percent_rate", None)
+    additive_flat = None
+    if breaks:
+        basis, unit = "TIERED_WEIGHT", None
+    elif percent is not None or rate_type == "PERCENT":
+        basis, unit = "PERCENTAGE", None
+        percent = percent if percent is not None else amount
+    elif rate_type == "PER_KG" or (per_kg is not None and rate_type != "FIXED"):
+        basis, unit = "PER_KG", per_kg if per_kg is not None else amount
+        if getattr(record, "is_additive", False):
+            additive_flat = getattr(record, "additive_flat_amount", None)
+            if additive_flat is None:
+                additive_flat = per_shipment
+    else:
+        basis = "FLAT"
+        unit = per_shipment if per_shipment is not None else amount
+    return {
+        "currency": str(getattr(record, "currency", "") or NONE_TEXT),
+        "basis": basis,
+        "unit_rate": _fmt(unit),
+        "additive_flat_amount": _fmt(additive_flat),
+        "min_charge": _fmt(getattr(record, "min_charge", None)),
+        "max_charge": _fmt(getattr(record, "max_charge", None)),
+        "percentage_rate": _fmt(percent),
+        "tiers": render_tiers(breaks),
+    }
 
 
 # ----------------------------------------------------------------------------- Rate Matrix lookup
@@ -223,9 +294,12 @@ def _shadow_rate(tariff: resolver.ResolvedTariff, *, supplier: str | None) -> Sh
         if tariff.additive_flat_amount is not None:
             rate.is_additive, rate.rate_per_shipment = True, tariff.additive_flat_amount
     elif basis == "TIERED_WEIGHT":
-        rate.weight_breaks = [
-            {"min_kg": str(tier.min_quantity), "rate": str(tier.unit_rate)} for tier in tariff.tiers
-        ]
+        rate.weight_breaks = []
+        for tier in tariff.tiers:
+            entry = {"min_kg": str(tier.min_quantity), "rate": str(tier.unit_rate)}
+            if tier.min_charge is not None:
+                entry["min_charge"] = str(tier.min_charge)
+            rate.weight_breaks.append(entry)
     elif basis == "PERCENTAGE":
         rate.rate_type, rate.amount, rate.percent_rate = "PERCENT", tariff.percentage_rate, tariff.percentage_rate
     else:  # pragma: no cover - the contract has no other basis
@@ -297,8 +371,6 @@ class _MatrixLookup:
         return _shadow_rate(result.tariff, supplier=supplier)
 
     def buy(self, pc: ProductCode) -> ShadowRate | None:
-        if pc.code in BUY_NOT_REPRESENTABLE:
-            return None
         key = ("BUY", pc.code)
         if key not in self._cache:
             supplier_id, supplier_name = self._supplier_for_lane()
@@ -322,20 +394,77 @@ class _MatrixLookup:
         return self._cache[key]
 
 
-class MatrixShadowExportEngine(ExportPricingEngine):
-    """The production export engine with only its two rate lookups redirected to the Rate Matrix."""
+def _selected_minimum(rate: ShadowRate, weight: Decimal) -> Decimal | None:
+    selected = None
+    for tier in sorted(rate.weight_breaks or [], key=lambda t: Decimal(str(t["min_kg"])), reverse=True):
+        if weight >= Decimal(str(tier["min_kg"])):
+            selected = tier
+            break
+    if selected is None or selected.get("min_charge") is None:
+        return None
+    return Decimal(str(selected["min_charge"]))
 
-    def __init__(self, *, matrix: _MatrixLookup, **kwargs):
+
+class LegacyRecordingExportEngine(ExportPricingEngine):
+    """The production export engine, unchanged, that also remembers which native record each lookup used."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.used: dict[tuple[str, int], Any] = {}
+
+    def _get_cogs(self, product_code_id: int):
+        record = super()._get_cogs(product_code_id)
+        if record is not None:
+            self.used[("BUY", product_code_id)] = record
+        return record
+
+    def _get_sell_rate(self, product_code_id: int):
+        record = super()._get_sell_rate(product_code_id)
+        if record is not None:
+            self.used[("SELL", product_code_id)] = record
+        return record
+
+
+class MatrixShadowExportEngine(ExportPricingEngine):
+    """The production export engine with only its two rate lookups redirected to the Rate Matrix.
+
+    ``legacy_buy`` and ``legacy_sell`` name ProductCodes whose lookups stay on the legacy path. They are used
+    only for the counterfactual proof that an approved native difference accounts for an amount difference:
+    substitute the legacy native facts for exactly those charges and re-price.
+
+    A tier may carry its own minimum (``RateTier.min_charge``). The production rule function applies one
+    minimum to the whole line, so that case is evaluated here with the production tier-selection and limit
+    rule; every other tariff goes through the production rule unchanged.
+    """
+
+    def __init__(self, *, matrix: _MatrixLookup, legacy_buy=frozenset(), legacy_sell=frozenset(), **kwargs):
         super().__init__(**kwargs)
         self._matrix = matrix
+        self._legacy_buy, self._legacy_sell = frozenset(legacy_buy), frozenset(legacy_sell)
 
     def _get_cogs(self, product_code_id: int):
         pc = self._get_product_code(product_code_id)
-        return self._matrix.buy(pc) if pc else None
+        if pc is None:
+            return None
+        if pc.code in self._legacy_buy:
+            return super()._get_cogs(product_code_id)
+        return self._matrix.buy(pc)
 
     def _get_sell_rate(self, product_code_id: int):
         pc = self._get_product_code(product_code_id)
-        return self._matrix.sell(pc) if pc else None
+        if pc is None:
+            return None
+        if pc.code in self._legacy_sell:
+            return super()._get_sell_rate(product_code_id)
+        return self._matrix.sell(pc)
+
+    def _calculate_amount(self, rate):
+        if isinstance(rate, ShadowRate) and rate.weight_breaks and any("min_charge" in b for b in rate.weight_breaks):
+            return evaluate_tiered_break_rule(
+                rate.weight_breaks, self.chargeable_weight_kg,
+                min_amount=_selected_minimum(rate, self.chargeable_weight_kg), max_amount=rate.max_charge,
+            )
+        return super()._calculate_amount(rate)
 
 
 # ----------------------------------------------------------------------------- orchestration
@@ -359,13 +488,25 @@ def convert_pgk_to_aud(amount: Decimal, tt_buy: Decimal, caf_rate: Decimal) -> t
     return pure, commercial - pure, commercial
 
 
+def _totals(lines: dict[str, Line]) -> dict[str, Decimal]:
+    zero = Decimal("0.00")
+    return {
+        "total_sell": sum((line.sell_amount for line in lines.values()), zero),
+        "total_gst": sum((line.gst_amount for line in lines.values()), zero),
+        "total_sell_incl_gst": sum((line.sell_incl_gst for line in lines.values()), zero),
+        "total_cost_pgk": sum((line.cost_amount for line in lines.values()), zero),
+    }
+
+
 class _ExportShadow:
-    def __init__(self, quote_date, lanes, weights, scopes, currencies, using):
+    def __init__(self, quote_date, lanes, weights, scopes, currencies, registry, using):
         self.quote_date, self.lanes, self.weights = quote_date, tuple(lanes), tuple(weights)
         self.scopes, self.currencies, self.using = tuple(scopes), tuple(currencies), using
+        self.registry = registry
+        self.used: set[int] = set()
         self.report = ExportShadowReport(quote_date=quote_date)
         self._fx_seen: dict[str, dict[str, Any]] = {}
-        self._pgk_cache: dict[tuple[str, Decimal, str], tuple[Priced, Priced] | ExportShadowBlocked] = {}
+        self._pgk_cache: dict[tuple[str, Decimal, str], Any] = {}
 
     # ---------------------------------------------------------------- policy
 
@@ -394,6 +535,9 @@ class _ExportShadow:
             return self.report
         for scenario in self._all_scenarios():
             self._scenario(scenario, policy)
+        self.report.stale_registry_entries = [
+            entry for index, entry in enumerate(self.registry) if index not in self.used
+        ]
         return self.report
 
     def _all_scenarios(self):
@@ -405,7 +549,8 @@ class _ExportShadow:
 
     # ---------------------------------------------------------------- pricing
 
-    def _price_pgk(self, engine_class, scenario: Scenario, *, matrix: bool) -> Priced:
+    def _price_pgk(self, engine_class, scenario: Scenario, *, matrix: bool, legacy_buy=frozenset(),
+                   legacy_sell=frozenset()) -> Priced:
         kwargs = {
             "quote_date": self.quote_date, "origin": scenario.origin, "destination": scenario.destination,
             "chargeable_weight_kg": scenario.weight, "payment_term": PaymentTerm.PREPAID,
@@ -414,17 +559,26 @@ class _ExportShadow:
         }
         if matrix:
             kwargs["matrix"] = _MatrixLookup(scenario, self.quote_date, self.using)
+            kwargs["legacy_buy"], kwargs["legacy_sell"] = legacy_buy, legacy_sell
         engine = engine_class(**kwargs)
         ids = ExportPricingEngine.get_product_codes(
             is_dg=False, service_scope=scenario.scope, origin=scenario.origin, destination=scenario.destination,
             payment_term="PREPAID", quote_date=self.quote_date,
         )
         result = engine.calculate_quote(ids, service_scope=scenario.scope)
+        facts: dict[tuple[str, str], dict[str, str]] = {}
+        if matrix:
+            for (side, code), rate in engine._matrix._cache.items():
+                if rate is not None:
+                    facts[(side, code)] = native_facts(rate)
+        else:
+            for (side, pc_id), record in engine.used.items():
+                product = engine._get_product_code(pc_id)
+                if product is not None:
+                    facts[(side, product.code)] = native_facts(record)
         lines: dict[str, Line] = {}
         for item in result.line_items:
-            sell_rate = None
-            if matrix:
-                sell_rate = engine._matrix._cache.get(("SELL", item.product_code))
+            sell_rate = engine._matrix._cache.get(("SELL", item.product_code)) if matrix else None
             lines[item.product_code] = Line(
                 product_code=item.product_code, sell_amount=item.sell_amount, gst_amount=item.gst_amount,
                 sell_incl_gst=item.sell_incl_gst, cost_amount=item.cost_amount, cost_currency=item.cost_currency,
@@ -432,14 +586,14 @@ class _ExportShadow:
                 is_rate_missing=bool(getattr(item, "is_rate_missing", False)),
                 provenance=sell_rate.provenance if sell_rate is not None else "",
             )
-        return Priced(lines, _totals(lines), "PGK")
+        return Priced(lines, _totals(lines), "PGK", facts=facts)
 
     def _pgk_pair(self, scenario: Scenario) -> tuple[Priced, Priced]:
         """Legacy and matrix PGK pricing for a scenario's lane, weight and scope (shared across currencies)."""
         key = (scenario.lane, scenario.weight, scenario.scope)
         if key not in self._pgk_cache:
             try:
-                legacy = self._price_pgk(ExportPricingEngine, scenario, matrix=False)
+                legacy = self._price_pgk(LegacyRecordingExportEngine, scenario, matrix=False)
                 shadow = self._price_pgk(MatrixShadowExportEngine, scenario, matrix=True)
                 self._pgk_cache[key] = (legacy, shadow)
             except ExportShadowBlocked as blocked:
@@ -472,7 +626,7 @@ class _ExportShadow:
                 gst_rate=line.gst_rate, is_rate_missing=line.is_rate_missing, provenance=line.provenance,
                 conversion=evidence,
             )
-        return Priced(converted, _totals(converted), "AUD", conversions)
+        return Priced(converted, _totals(converted), "AUD", conversions, priced.facts)
 
     def _fx(self, policy) -> Any:
         pair = resolve_market_fx_pair("AUD", "PGK", self.quote_date)
@@ -497,28 +651,92 @@ class _ExportShadow:
     def _scenario(self, s: Scenario, policy) -> None:
         try:
             legacy, shadow = self._pgk_pair(s)
+            tt_buy = None
             if s.currency == "AUD":
-                pair = self._fx(policy)
-                legacy, shadow = self._to_aud(legacy, policy, pair.tt_buy), self._to_aud(shadow, policy, pair.tt_buy)
+                tt_buy = self._fx(policy).tt_buy
             elif s.currency != "PGK":
                 raise ExportShadowBlocked("CURRENCY_UNSUPPORTED", f"Currency {s.currency} has no approved export rule.")
+            explained = self._explain(s, legacy, shadow)
+            counterfactual = self._counterfactual(s, explained)
+            if s.currency == "AUD":
+                counterfactual = self._to_aud(counterfactual, policy, tt_buy) if counterfactual else None
+                legacy, shadow = self._to_aud(legacy, policy, tt_buy), self._to_aud(shadow, policy, tt_buy)
         except ExportShadowBlocked as blocked:
             self._emit(s, "-", "scenario", BLOCKED, reason=f"{blocked.code}: {blocked.message}")
             return
-        except FxResolutionError as exc:
+        except (FxResolutionError, MissingCommercialPolicyError, ValueError) as exc:
             self._emit(s, "-", "scenario", BLOCKED, reason=f"{type(exc).__name__}: {exc}")
             return
-        except (MissingCommercialPolicyError, ValueError) as exc:
-            self._emit(s, "-", "scenario", BLOCKED, reason=f"{type(exc).__name__}: {exc}")
-            return
-        self._compare(s, legacy, shadow)
+        self._compare(s, legacy, shadow, explained, counterfactual)
         if s.currency == "AUD":
             self._production_note(s, shadow)
+
+    # ---------------------------------------------------------------- approved-authority evidence
+
+    def _chain(self, code: str) -> list[str]:
+        out, seen = [], set()
+        while code and code not in seen:
+            seen.add(code)
+            out.append(code)
+            product = (
+                ProductCode.objects.using(self.using).filter(code=code)
+                .select_related("percent_of_product_code").first()
+            )
+            code = product.percent_of_product_code.code if product and product.percent_of_product_code else ""
+        return out
+
+    def _match_registry(self, s: Scenario, side: str, code: str, aspect: str, legacy: str, matrix: str):
+        for index, entry in enumerate(self.registry):
+            if (
+                entry["lane"] in (s.lane, "*") and entry["side"] == side and entry["product_code"] == code
+                and entry["aspect"] == aspect and entry["legacy"] == legacy and entry["matrix"] == matrix
+            ):
+                self.used.add(index)
+                return entry
+        return None
+
+    def _explain(self, s: Scenario, legacy: Priced, shadow: Priced) -> dict[tuple[str, str], tuple]:
+        """(side, code) -> (approved aspects, unapproved aspects, evidence) for every charge whose native facts differ."""
+        out: dict[tuple[str, str], tuple] = {}
+        keys = set(legacy.facts) | set(shadow.facts)
+        for side, code in sorted(keys, key=lambda k: (k[1], k[0])):
+            left = legacy.facts.get((side, code), {})
+            right = shadow.facts.get((side, code), {})
+            approved, unapproved, evidence = [], [], []
+            for aspect in FACT_ASPECTS:
+                a, b = left.get(aspect, NONE_TEXT), right.get(aspect, NONE_TEXT)
+                if a == b:
+                    continue
+                entry = self._match_registry(s, side, code, aspect, a, b)
+                if entry is None:
+                    unapproved.append(aspect)
+                else:
+                    approved.append(aspect)
+                    evidence.append(entry["evidence"])
+            if approved or unapproved:
+                out[(side, code)] = (approved, unapproved, evidence)
+        return out
+
+    def _counterfactual(self, s: Scenario, explained: dict) -> Priced | None:
+        """Re-price with the legacy native facts for every fully approved charge (and its basis chain)."""
+        sell, buy = set(), set()
+        for (side, code), (approved, unapproved, _evidence) in explained.items():
+            if approved and not unapproved:
+                for member in self._chain(code):
+                    (sell if side == "SELL" else buy).add(member)
+        if not sell and not buy:
+            return None
+        try:
+            return self._price_pgk(
+                MatrixShadowExportEngine, s, matrix=True, legacy_buy=frozenset(buy), legacy_sell=frozenset(sell)
+            )
+        except ExportShadowBlocked:
+            return None
 
     # ---------------------------------------------------------------- comparison
 
     def _emit(self, s: Scenario, code: str, aspect: str, classification: str, legacy=None, shadow=None,
-              currency="", provenance="", reason="") -> None:
+              currency="", provenance="", reason="", evidence="") -> None:
         policy = self.report.policy
         text = provenance
         if policy and s.currency == "AUD" and classification != BLOCKED:
@@ -529,54 +747,91 @@ class _ExportShadow:
             )
         self.report.records.append(Record(
             s.lane, s.key, code, aspect, classification,
-            None if legacy is None else str(legacy), None if shadow is None else str(shadow), currency, text, reason,
+            None if legacy is None else str(legacy), None if shadow is None else str(shadow), currency, text,
+            reason, evidence,
         ))
 
-    def _compare(self, s: Scenario, legacy: Priced, shadow: Priced) -> None:
-        any_unexplained = False
-        cost_not_comparable = False
+    def _verdict(self, code: str, aspect: str, side: str, explained: dict, counterfactual: Priced | None,
+                 legacy_value: Decimal, field_name: str) -> tuple[str, str, str]:
+        """EXPECTED only on approved evidence for every differing native fact plus a reproducing counterfactual."""
+        approved, unapproved, evidence = [], [], []
+        for member in self._chain(code):
+            if (side, member) in explained:
+                a, b, c = explained[(side, member)]
+                tag = "" if member == code else f"{member}:"
+                approved += [f"{tag}{x}" for x in a]
+                unapproved += [f"{tag}{x}" for x in b]
+                evidence += c
+        if unapproved:
+            return UNEXPLAINED_DIFFERENCE, (
+                f"{aspect} differs; native facts differ without approved-authority evidence: "
+                f"{', '.join(unapproved)}."
+            ), ""
+        if not approved:
+            return UNEXPLAINED_DIFFERENCE, (
+                f"{aspect} differs but the native facts of this charge match; the divergence is in the "
+                "downstream calculation."
+            ), ""
+        reference = counterfactual.lines.get(code) if counterfactual is not None else None
+        if reference is None or getattr(reference, field_name) != legacy_value:
+            return UNEXPLAINED_DIFFERENCE, (
+                f"{aspect} differs; applying the legacy native facts for this charge does not reproduce the "
+                "legacy amount, so a downstream divergence remains."
+            ), ""
+        return EXPECTED_DIFFERENCE, (
+            f"{aspect} differs; approved-authority native differences: {', '.join(approved)}. Applying the "
+            "legacy native facts reproduces the legacy amount."
+        ), "; ".join(dict.fromkeys(evidence))
+
+    def _compare(self, s: Scenario, legacy: Priced, shadow: Priced, explained: dict,
+                 counterfactual: Priced | None) -> None:
+        any_unexplained = any_difference = False
         for code in sorted(set(legacy.lines) | set(shadow.lines)):
             left, right = legacy.lines.get(code), shadow.lines.get(code)
             if left is None or right is None:
                 present = right if left is None else left
+                any_unexplained = any_difference = True
                 self._emit(s, code, "presence", UNEXPLAINED_DIFFERENCE, "absent" if left is None else "present",
                            "present" if left is None else "absent", legacy.currency, present.provenance,
                            f"charge {'added' if left is None else 'dropped'} before pricing")
-                any_unexplained = True
                 continue
             for aspect in ("sell_amount", "gst_amount", "sell_incl_gst"):
                 a, b = getattr(left, aspect), getattr(right, aspect)
                 if a == b:
                     self._emit(s, code, aspect, MATCH, a, b, legacy.currency, right.provenance)
-                else:
-                    any_unexplained = True
-                    self._emit(s, code, aspect, UNEXPLAINED_DIFFERENCE, a, b, legacy.currency, right.provenance,
-                               "Rate Matrix tariff does not reproduce the legacy native tariff.")
+                    continue
+                any_difference = True
+                cls, reason, evidence = self._verdict(code, aspect, "SELL", explained, counterfactual, a, aspect)
+                any_unexplained |= cls == UNEXPLAINED_DIFFERENCE
+                self._emit(s, code, aspect, cls, a, b, legacy.currency, right.provenance, reason, evidence)
             if left.cost_amount == right.cost_amount:
                 if left.cost_amount != 0:
                     self._emit(s, code, "cost_amount", MATCH, left.cost_amount, right.cost_amount,
                                left.cost_currency, "BUY rate lookup (native PGK)")
-            elif code in BUY_NOT_REPRESENTABLE:
-                cost_not_comparable = True
-                self._emit(s, code, "cost_amount", NOT_COMPARABLE, left.cost_amount, right.cost_amount,
-                           left.cost_currency, "BUY rate lookup (native PGK)", BUY_NOT_REPRESENTABLE[code])
-            else:
-                any_unexplained = True
-                self._emit(s, code, "cost_amount", UNEXPLAINED_DIFFERENCE, left.cost_amount, right.cost_amount,
-                           left.cost_currency, "BUY rate lookup (native PGK)",
-                           "Rate Matrix BUY tariff does not reproduce the legacy native cost.")
+                continue
+            any_difference = True
+            cls, reason, evidence = self._verdict(
+                code, "cost_amount", "BUY", explained, counterfactual, left.cost_amount, "cost_amount"
+            )
+            any_unexplained |= cls == UNEXPLAINED_DIFFERENCE
+            self._emit(s, code, "cost_amount", cls, left.cost_amount, right.cost_amount, left.cost_currency,
+                       "BUY rate lookup (native PGK)", reason, evidence)
         for name in ("total_sell", "total_gst", "total_sell_incl_gst", "total_cost_pgk"):
             a, b = legacy.totals[name], shadow.totals[name]
             ccy = "PGK" if name == "total_cost_pgk" else legacy.currency
             if a == b:
                 self._emit(s, "TOTAL", name, MATCH, a, b, ccy, "totals")
-            elif name == "total_cost_pgk" and cost_not_comparable and not any_unexplained:
-                self._emit(s, "TOTAL", name, NOT_COMPARABLE, a, b, ccy, "totals",
-                           "Includes a BUY charge that the Rate Matrix cannot represent.")
-            else:
+            elif any_unexplained or not any_difference:
                 self._emit(s, "TOTAL", name, UNEXPLAINED_DIFFERENCE, a, b, ccy, "totals",
                            "A contributing line difference is unexplained." if any_unexplained
-                           else "No explained difference accounts for this total.")
+                           else "No line difference accounts for this total.")
+            elif counterfactual is not None and counterfactual.totals[name] == a:
+                self._emit(s, "TOTAL", name, EXPECTED_DIFFERENCE, a, b, ccy, "totals",
+                           "Every contributing line difference is approved, and applying the legacy native facts "
+                           "reproduces the legacy total.")
+            else:
+                self._emit(s, "TOTAL", name, UNEXPLAINED_DIFFERENCE, a, b, ccy, "totals",
+                           "Approved line differences do not reproduce the legacy total.")
 
     def _production_note(self, s: Scenario, approved: Priced) -> None:
         """The production COLLECT engine does not implement the locked AUD rule; report, never reconcile."""
@@ -603,16 +858,6 @@ class _ExportShadow:
                    approved.totals["total_sell"], "AUD", "production engine vs locked export rule", reason)
 
 
-def _totals(lines: dict[str, Line]) -> dict[str, Decimal]:
-    zero = Decimal("0.00")
-    return {
-        "total_sell": sum((l.sell_amount for l in lines.values()), zero),
-        "total_gst": sum((l.gst_amount for l in lines.values()), zero),
-        "total_sell_incl_gst": sum((l.sell_incl_gst for l in lines.values()), zero),
-        "total_cost_pgk": sum((l.cost_amount for l in lines.values()), zero),
-    }
-
-
 def run_export_shadow(
     *,
     quote_date: date,
@@ -620,7 +865,19 @@ def run_export_shadow(
     weights=DEFAULT_WEIGHTS,
     scopes=DEFAULT_SCOPES,
     currencies=DEFAULT_CURRENCIES,
+    registry_text: str | None = None,
     using: str = "default",
 ) -> ExportShadowReport:
+    """Run the export shadow.
+
+    ``registry_text`` is an approved-differences registry in the strict format of the import Stage-1
+    explained-differences registry. Without it every native difference is UNEXPLAINED.
+    """
+    registry: list[dict[str, str]] = []
+    errors: list[str] = []
+    if registry_text is not None:
+        registry, errors = load_registry(registry_text)
     with read_only_database(using):
-        return _ExportShadow(quote_date, lanes, weights, scopes, currencies, using).run()
+        report = _ExportShadow(quote_date, lanes, weights, scopes, currencies, registry, using).run()
+    report.registry_errors = errors
+    return report

@@ -2,6 +2,7 @@
 
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -28,6 +29,10 @@ class Command(BaseCommand):
         parser.add_argument("--weights", help="Comma-separated chargeable weights in kg.")
         parser.add_argument("--scopes", help="Comma-separated service scopes (A2A,D2A).")
         parser.add_argument("--currencies", help="Comma-separated quote currencies (PGK,AUD).")
+        parser.add_argument(
+            "--approved-differences",
+            help="Approved-differences registry JSON (same strict format as the Stage-1 explained registry).",
+        )
         parser.add_argument("--show-matches", action="store_true")
         parser.add_argument("--format", choices=("text", "json"), default="text")
         parser.add_argument("--fail-on-unexplained", action="store_true")
@@ -63,12 +68,22 @@ class Command(BaseCommand):
             if currency not in ("PGK", "AUD"):
                 raise CommandError(f"--currencies must be PGK and/or AUD, got '{currency}'.")
 
+        registry_text = None
+        if options["approved_differences"]:
+            path = Path(options["approved_differences"])
+            if not path.is_file():
+                raise CommandError(f"Registry file not found: {path}")
+            registry_text = path.read_text(encoding="utf-8")
+
         report = run_export_shadow(
             quote_date=quote_date, lanes=lanes, weights=weights, scopes=scopes, currencies=currencies,
+            registry_text=registry_text,
         )
         self.stdout.write(
             report.render_json() if options["format"] == "json"
             else report.render_text(show_matches=options["show_matches"])
         )
-        if options["fail_on_unexplained"] and report.unexplained:
-            raise CommandError("Unexplained differences exist.")
+        if options["fail_on_unexplained"] and (
+            report.unexplained or report.registry_errors or report.stale_registry_entries
+        ):
+            raise CommandError("Unexplained differences, registry errors or stale registry entries exist.")

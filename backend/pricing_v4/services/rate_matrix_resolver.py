@@ -89,13 +89,17 @@ class Tier:
     min_quantity: Decimal
     max_quantity: Decimal | None
     unit_rate: Decimal
+    min_charge: Decimal | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "min_quantity": str(self.min_quantity),
             "max_quantity": None if self.max_quantity is None else str(self.max_quantity),
             "unit_rate": str(self.unit_rate),
         }
+        if self.min_charge is not None:
+            data["min_charge"] = str(self.min_charge)
+        return data
 
 
 @dataclass(frozen=True)
@@ -328,7 +332,7 @@ def _iata(location) -> str | None:
 def _tariff(line: RateLine) -> ResolvedTariff:
     sheet, applicability = line.sheet, line.applicability
     tiers = tuple(
-        Tier(tier.min_quantity, tier.max_quantity, tier.unit_rate)
+        Tier(tier.min_quantity, tier.max_quantity, tier.unit_rate, tier.min_charge)
         for tier in sorted(line.tiers.all(), key=lambda tier: tier.min_quantity)
     )
     return ResolvedTariff(

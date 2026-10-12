@@ -33,6 +33,7 @@ from pricing_v4.models import (
 from pricing_v4.rate_matrix_models import RateLine, RateSheet
 from pricing_v4.services.rate_matrix_export_shadow import (
     BLOCKED,
+    EXPECTED_DIFFERENCE,
     MATCH,
     NOT_COMPARABLE,
     UNEXPLAINED_DIFFERENCE,
@@ -54,6 +55,7 @@ from pricing_v4.services.rate_matrix_master_data import (
 MANIFEST_DIR = Path(__file__).resolve().parent.parent / "rate_matrix_manifests"
 MASTER_FILE = MANIFEST_DIR / "export-pilot-master-data-2026-10-12.json"
 TARIFF_FILE = MANIFEST_DIR / "export-pilot-tariffs-2026-10-12.json"
+REGISTRY_FILE = MANIFEST_DIR / "export-approved-differences-2026-10-12.json"
 QUOTE_DATE = date(2026, 10, 12)
 TT_BUY, TT_SELL = D("3.10945274"), D("3.26157860")
 
@@ -72,8 +74,14 @@ PRODUCTS = [
     (1050, "EXP-PICKUP", "CARTAGE", "KG", "STANDARD"),
     (1060, "EXP-FSC-PICKUP", "SURCHARGE", "PERCENT", "STANDARD"),
 ]
-PGK_BNE_BREAKS = [(0, "7.90"), (100, "7.40"), (200, "7.15"), (500, "6.75")]
-PGK_SYD_BREAKS = [(0, "10.00"), (100, "9.40"), (200, "8.90"), (500, "8.50")]
+# Legacy export_sell_rates rows (superseded by the current EFM PGK Export Rate Card, 2026-10-12).
+LEGACY_SELL_BNE = [(0, "7.90"), (100, "7.40"), (200, "7.15"), (500, "6.75")]
+LEGACY_SELL_SYD = [(0, "10.00"), (100, "9.40"), (200, "8.90"), (500, "8.50")]
+LEGACY_SELL_MIN = D("200.00")
+# Approved current card (min K180; the 45 kg break repeats the base rate).
+PGK_BNE_BREAKS = [(0, "7.20"), (45, "7.20"), (100, "6.75"), (200, "6.50"), (500, "6.15")]
+PGK_SYD_BREAKS = [(0, "9.15"), (45, "9.15"), (100, "8.60"), (200, "8.20"), (500, "7.70")]
+SELL_MIN = D("180.00")
 BUY_BNE_BREAKS = [(0, "6.30"), (100, "5.90"), (200, "5.70"), (500, "5.40")]
 BUY_SYD_BREAKS = [(0, "8.00"), (100, "7.50"), (200, "7.10"), (500, "6.80")]
 
@@ -91,6 +99,10 @@ def master_text(approved=True):
 
 def tariff_text():
     return TARIFF_FILE.read_text(encoding="utf-8")
+
+
+def registry_text():
+    return REGISTRY_FILE.read_text(encoding="utf-8")
 
 
 def load_matrix(world, tariffs=None):
@@ -142,7 +154,7 @@ def world(db):
     )
 
     start, end = date(2026, 1, 1), date(2026, 12, 31)
-    for destination, buy, sell in (("BNE", BUY_BNE_BREAKS, PGK_BNE_BREAKS), ("SYD", BUY_SYD_BREAKS, PGK_SYD_BREAKS)):
+    for destination, buy, sell in (("BNE", BUY_BNE_BREAKS, LEGACY_SELL_BNE), ("SYD", BUY_SYD_BREAKS, LEGACY_SELL_SYD)):
         ExportCOGS.objects.create(
             product_code=products["EXP-FRT-AIR"], origin_airport="POM", destination_airport=destination,
             scope="LANE", carrier=carrier, currency="PGK", min_charge=D("160.00"), weight_breaks=_breaks(buy),
@@ -150,7 +162,7 @@ def world(db):
         )
         ExportSellRate.objects.create(
             product_code=products["EXP-FRT-AIR"], origin_airport="POM", destination_airport=destination,
-            scope="LANE", currency="PGK", min_charge=D("200.00"), weight_breaks=_breaks(sell),
+            scope="LANE", currency="PGK", min_charge=LEGACY_SELL_MIN, weight_breaks=_breaks(sell),
             valid_from=start, valid_until=end,
         )
 
@@ -195,6 +207,7 @@ def loaded(world):
 
 
 def run(**kwargs):
+    kwargs.setdefault("registry_text", registry_text())
     kwargs.setdefault("quote_date", QUOTE_DATE)
     kwargs.setdefault("weights", (D(100),))
     kwargs.setdefault("scopes", ("D2A",))
@@ -255,11 +268,30 @@ class TestManifests:
             else:
                 assert sheet["supplier"] is None and sheet["customer"] is None
 
-    def test_buildup_buy_is_not_loaded_because_its_minimum_is_tier_conditional(self):
+    def test_buildup_buy_carries_its_minimum_on_the_tiers_not_the_line(self):
         data = json.loads(tariff_text())
-        buy_codes = {l["product_code"] for s in data["rate_sheets"] if s["rate_type"] == "BUY" for l in s["lines"]}
-        assert "EXP-BUILDUP" not in buy_codes
-        assert {"EXP-FRT-AIR", "EXP-DOC", "EXP-AWB", "EXP-TERM", "EXP-SCREEN", "EXP-HANDLE"} == buy_codes
+        lines = [l for s in data["rate_sheets"] if s["rate_type"] == "BUY" for l in s["lines"]
+                 if l["product_code"] == "EXP-BUILDUP"]
+        assert len(lines) == 1
+        line = lines[0]
+        assert line["min_charge"] is None and line["unit_rate"] is None
+        assert [(t["min_quantity"], t["max_quantity"], t["unit_rate"], t.get("min_charge")) for t in line["tiers"]] == [
+            ("0", "100", "0.00", None),
+            ("100", "2000.0001", "0.10", "30.00"),
+            ("2000.0001", None, "0.15", "30.00"),
+        ]
+
+    def test_sell_freight_is_the_approved_current_card(self):
+        data = json.loads(tariff_text())
+        sheet = next(s for s in data["rate_sheets"] if s["name"].startswith("Pilot export SELL air freight"))
+        assert sheet["currency_code"] == "PGK" and sheet["supplier"] is None
+        by_destination = {l["applicability"]["destination_iata"]: l for l in sheet["lines"]}
+        for destination, breaks in (("BNE", PGK_BNE_BREAKS), ("SYD", PGK_SYD_BREAKS)):
+            line = by_destination[destination]
+            assert line["min_charge"] == "180.00"
+            assert [(t["min_quantity"], t["unit_rate"]) for t in line["tiers"]] == [
+                (str(lower), rate) for lower, rate in breaks
+            ]
 
     def test_apply_is_idempotent_and_dry_run_default_writes_nothing(self, loaded):
         before = (RateSheet.objects.count(), RateLine.objects.count())
@@ -270,6 +302,19 @@ class TestManifests:
                       reviewed_sha256=manifest_sha256(tariff_text()))
         assert (RateSheet.objects.count(), RateLine.objects.count()) == before
 
+    def test_tier_minimums_are_stored_and_reuse_compares_them(self, loaded):
+        buildup = RateLine.objects.get(sheet__rate_type="BUY", product_code__code="EXP-BUILDUP")
+        assert [(t.min_quantity, t.min_charge) for t in buildup.tiers.order_by("min_quantity")] == [
+            (D("0"), None), (D("100"), D("30")), (D("2000.0001"), D("30")),
+        ]
+        changed = json.loads(tariff_text())
+        for sheet in changed["rate_sheets"]:
+            for line in sheet["lines"]:
+                if line["product_code"] == "EXP-BUILDUP" and sheet["rate_type"] == "BUY":
+                    line["tiers"][1]["min_charge"] = "31.00"
+        body = json.dumps(changed, indent=2) + "\n"
+        assert plan_tariffs([("tariffs.json", body)]).ready is False  # same sheet name and version: CONFLICT
+
     def test_apply_refuses_a_hash_that_was_not_reviewed(self, world):
         text = master_text()
         apply_master_data_text(text, operator=world["user"], reviewed_sha256=plan_master_data_text(text).manifest_sha256)
@@ -278,32 +323,115 @@ class TestManifests:
         assert RateSheet.objects.count() == 0
 
 
+# --------------------------------------------------------------------------- per-tier minimum contract
+
+
+def _buildup_manifest(mutator):
+    data = json.loads(tariff_text())
+    data["rate_sheets"] = [s for s in data["rate_sheets"] if s["name"] == "Pilot export BUY terminal charges POM PGK"]
+    sheet = data["rate_sheets"][0]
+    sheet["lines"] = [l for l in sheet["lines"] if l["product_code"] == "EXP-BUILDUP"]
+    mutator(sheet["lines"][0])
+    return json.dumps(data, indent=2) + "\n"
+
+
+class TestTierMinimumContract:
+    @pytest.fixture(autouse=True)
+    def master(self, world):
+        text = master_text()
+        apply_master_data_text(text, operator=world["user"], reviewed_sha256=plan_master_data_text(text).manifest_sha256)
+
+    def test_a_tier_may_state_its_own_minimum(self):
+        report = validate_manifest_text(_buildup_manifest(lambda line: None))
+        assert report.passed, report.render_text()
+
+    def test_the_minimum_key_is_optional(self):
+        def drop(line):
+            for tier in line["tiers"]:
+                tier.pop("min_charge", None)
+        assert validate_manifest_text(_buildup_manifest(drop)).passed
+
+    def test_a_tier_minimum_with_a_line_minimum_is_ambiguous_and_rejected(self):
+        def both(line):
+            line["min_charge"] = "30.00"
+        report = validate_manifest_text(_buildup_manifest(both))
+        assert not report.passed
+        assert "TIER_MINIMUM_WITH_LINE_MINIMUM" in report.render_text()
+
+    def test_a_negative_or_non_decimal_tier_minimum_is_rejected(self):
+        def negative(line):
+            line["tiers"][1]["min_charge"] = "-1.00"
+        assert not validate_manifest_text(_buildup_manifest(negative)).passed
+
+        def number(line):
+            line["tiers"][1]["min_charge"] = 30
+        assert not validate_manifest_text(_buildup_manifest(number)).passed
+
+    def test_unknown_tier_fields_are_still_rejected(self):
+        def unknown(line):
+            line["tiers"][0]["surcharge"] = "1.00"
+        assert not validate_manifest_text(_buildup_manifest(unknown)).passed
+
+class TestTierModelRules:
+    def test_model_rejects_a_negative_tier_minimum_and_a_tier_minimum_on_a_line_that_has_one(self, loaded):
+        from django.core.exceptions import ValidationError
+
+        from pricing_v4.rate_matrix_models import RateTier
+
+        line = RateLine.objects.get(
+            sheet__rate_type="BUY", product_code__code="EXP-FRT-AIR",
+            applicability__destination__identifiers__code="BNE",
+        )
+        assert line.min_charge == D("160")
+        with pytest.raises(ValidationError):
+            RateTier(rate_line=line, min_quantity=D("9000"), max_quantity=None, unit_rate=D("1"),
+                     min_charge=D("-1")).full_clean()
+        with pytest.raises(ValidationError):
+            RateTier(rate_line=line, min_quantity=D("9000"), max_quantity=None, unit_rate=D("1"),
+                     min_charge=D("5")).full_clean()
+
 # --------------------------------------------------------------------------- freight tiers and minimums
 
 
-@pytest.mark.parametrize("destination,breaks,buy_breaks", [
-    ("BNE", PGK_BNE_BREAKS, BUY_BNE_BREAKS), ("SYD", PGK_SYD_BREAKS, BUY_SYD_BREAKS),
+@pytest.mark.parametrize("destination,breaks,legacy_breaks,buy_breaks", [
+    ("BNE", PGK_BNE_BREAKS, LEGACY_SELL_BNE, BUY_BNE_BREAKS), ("SYD", PGK_SYD_BREAKS, LEGACY_SELL_SYD, BUY_SYD_BREAKS),
 ])
 class TestFreightTiersAndMinimums:
     @pytest.mark.parametrize("weight", [30, 45, 100, 200, 500, 999, 1000, 1001])
-    def test_matrix_freight_matches_legacy_at_every_pilot_weight(self, loaded, destination, breaks, buy_breaks, weight):
+    def test_matrix_freight_is_the_approved_card_and_the_legacy_difference_is_explicit(
+        self, loaded, destination, breaks, legacy_breaks, buy_breaks, weight
+    ):
         report = run(weights=(D(weight),), lanes=(("POM", destination),), scopes=("A2A",), currencies=("PGK",))
         key = f"{weight}kg|A2A|PGK"
-        for aspect in ("sell_amount", "cost_amount"):
-            line = one(report, scenario=key, product_code="EXP-FRT-AIR", aspect=aspect)
-            assert line.classification == MATCH, line.as_dict()
         sell = one(report, scenario=key, product_code="EXP-FRT-AIR", aspect="sell_amount")
         rate = next(D(r) for lower, r in reversed(breaks) if weight >= lower)
-        assert D(sell.shadow) == max(D("200.00"), cents(rate * weight))
+        legacy_rate = next(D(r) for lower, r in reversed(legacy_breaks) if weight >= lower)
+        assert D(sell.shadow) == max(SELL_MIN, cents(rate * weight))
+        assert D(sell.legacy) == max(LEGACY_SELL_MIN, cents(legacy_rate * weight))
+        # The legacy row legitimately differs from the approved card; it is explained, never forced to MATCH.
+        assert sell.classification == EXPECTED_DIFFERENCE, sell.as_dict()
+        assert "approved-authority native differences" in sell.reason
+        assert "current EFM PGK Export Rate Card" in sell.evidence
         cost = one(report, scenario=key, product_code="EXP-FRT-AIR", aspect="cost_amount")
+        assert cost.classification == MATCH  # BUY ExportCOGS is preserved exactly
         buy_rate = next(D(r) for lower, r in reversed(buy_breaks) if weight >= lower)
         assert D(cost.shadow) == max(D("160.00"), cents(buy_rate * weight))
 
-    def test_minimum_charge_applies_below_the_break_even_weight(self, loaded, destination, breaks, buy_breaks):
+    def test_minimum_charge_applies_below_the_break_even_weight(self, loaded, destination, breaks, legacy_breaks,
+                                                                 buy_breaks):
         report = run(weights=(D(10),), lanes=(("POM", destination),), scopes=("A2A",), currencies=("PGK",))
         sell = one(report, scenario="10kg|A2A|PGK", product_code="EXP-FRT-AIR", aspect="sell_amount")
         cost = one(report, scenario="10kg|A2A|PGK", product_code="EXP-FRT-AIR", aspect="cost_amount")
-        assert (D(sell.shadow), D(cost.shadow)) == (D("200.00"), D("160.00"))
+        assert (D(sell.shadow), D(sell.legacy), D(cost.shadow)) == (D("180.00"), D("200.00"), D("160.00"))
+
+    def test_without_the_approved_registry_the_difference_is_unexplained_not_a_match(
+        self, loaded, destination, breaks, legacy_breaks, buy_breaks
+    ):
+        report = run(weights=(D(100),), lanes=(("POM", destination),), scopes=("A2A",), currencies=("PGK",),
+                     registry_text=None)
+        sell = one(report, scenario="100kg|A2A|PGK", product_code="EXP-FRT-AIR", aspect="sell_amount")
+        assert sell.classification == UNEXPLAINED_DIFFERENCE
+        assert "without approved-authority evidence" in sell.reason
 
 
 # --------------------------------------------------------------------------- origin charges
@@ -368,6 +496,17 @@ class TestBuildupBuyBreakpoints:
         rate = D("0.10") if weight <= 2000 else D("0.15")
         return max(D("30.00"), cents(rate * weight))
 
+    @pytest.mark.parametrize("weight", ["30", "45", "99", "100", "200", "299", "301", "500", "999", "1000", "1001",
+                                       "2000", "2000.5", "2001"])
+    def test_rate_matrix_buy_reproduces_the_locked_rule_at_every_breakpoint(self, loaded, weight):
+        report = run(weights=(D(weight),), lanes=(("POM", "BNE"),), currencies=("PGK",))
+        key = f"{D(weight).normalize():f}kg|D2A|PGK"
+        cost = one(report, scenario=key, product_code="EXP-BUILDUP", aspect="cost_amount")
+        assert D(cost.shadow) == self.locked_buy(weight)
+        assert cost.classification in (MATCH, EXPECTED_DIFFERENCE)
+        if cost.classification == EXPECTED_DIFFERENCE:
+            assert "Air Niugini BUY build-up" in cost.evidence
+
     @pytest.mark.parametrize("weight,expected", [
         (30, "0.00"), (45, "0.00"), (99, "0.00"), (100, "30.00"), (200, "30.00"), (299, "30.00"),
         (301, "30.10"), (500, "50.00"), (999, "99.90"), (1000, "100.00"), (1001, "100.10"), (2000, "200.00"),
@@ -376,15 +515,17 @@ class TestBuildupBuyBreakpoints:
     def test_breakpoints_of_the_locked_rule(self, weight, expected):
         assert self.locked_buy(weight) == D(expected)
 
-    def test_a_single_line_minimum_cannot_express_the_rule(self, loaded):
-        # One minimum applies to every tier: any minimum that holds K30 from 100 kg also charges K30 at 30 kg.
+    def test_the_legacy_database_row_is_superseded_and_explained_not_matched(self, loaded):
         report = run(weights=(D(30),), lanes=(("POM", "BNE"),), currencies=("PGK",))
         cost = one(report, scenario="30kg|D2A|PGK", product_code="EXP-BUILDUP", aspect="cost_amount")
-        assert cost.classification == NOT_COMPARABLE
-        assert D(cost.legacy) == D("30.00")  # what the superseded database row (and any one-minimum line) gives
-        assert self.locked_buy(30) == D("0.00")  # what the locked rule requires
-        assert D(cost.shadow) == D("0.00")  # nothing is loaded rather than a misstated line
-        assert "tier-conditional minimum" in cost.reason
+        assert D(cost.legacy) == D("30.00")  # the superseded row (0.15/kg, K30 at every weight)
+        assert D(cost.shadow) == D("0.00")  # the locked rule: nothing below 100 kg
+        assert cost.classification == EXPECTED_DIFFERENCE
+
+    def test_a_line_wide_minimum_would_misstate_the_rule(self):
+        # Documents why the minimum lives on the tier: one line minimum charges K30 at 30 kg.
+        line_wide = max(D("30.00"), cents(D("0.00") * 30))
+        assert line_wide == D("30.00") and self.locked_buy(30) == D("0.00")
 
 
 # --------------------------------------------------------------------------- PGK and AUD quotes
@@ -398,9 +539,9 @@ class TestPgkAndAud:
         assert report.fx_provenance == []
         assert not [r for r in report.records if r.classification == UNEXPLAINED_DIFFERENCE]
         total = one(report, scenario="100kg|D2A|PGK", product_code="TOTAL", aspect="total_sell")
-        assert D(total.shadow) == D("1850.00")
+        assert D(total.shadow) == D("1785.00")  # legacy 1,850.00 less the K65 freight difference (675 vs 740)
 
-    def test_pgk_totals_match_the_production_engine_exactly(self, loaded):
+    def test_pgk_totals_equal_production_except_the_approved_freight_difference(self, loaded):
         engine = ExportPricingEngine(
             quote_date=QUOTE_DATE, origin="POM", destination="BNE", chargeable_weight_kg=D(100),
             payment_term=PaymentTerm.PREPAID,
@@ -413,29 +554,32 @@ class TestPgkAndAud:
         legacy = engine.calculate_quote(ids, service_scope="D2A")
         report = run(lanes=(("POM", "BNE"),), currencies=("PGK",))
         total = one(report, scenario="100kg|D2A|PGK", product_code="TOTAL", aspect="total_sell")
-        assert D(total.shadow) == sum(item.sell_amount for item in legacy.line_items)
+        production = sum(item.sell_amount for item in legacy.line_items)
+        assert D(total.legacy) == production == D("1850.00")
+        assert production - D(total.shadow) == D("740.00") - D("675.00")
+        assert total.classification == EXPECTED_DIFFERENCE
 
     def test_aud_converts_each_explicit_pgk_line_at_tt_buy_then_ten_percent_caf(self, loaded):
         report = run(lanes=(("POM", "BNE"),), currencies=("AUD",))
         key = "100kg|D2A|AUD"
-        for code, pgk in (("EXP-FRT-AIR", "740.00"), ("EXP-DOC", "50.00"), ("EXP-PICKUP", "150.00"),
+        for code, pgk in (("EXP-FRT-AIR", "675.00"), ("EXP-DOC", "50.00"), ("EXP-PICKUP", "150.00"),
                           ("EXP-FSC-PICKUP", "15.00"), ("EXP-SCREEN", "65.00"), ("EXP-FSC-AIR", "80.00")):
             line = one(report, scenario=key, product_code=code, aspect="sell_amount")
-            assert line.classification == MATCH
+            assert line.classification == (EXPECTED_DIFFERENCE if code == "EXP-FRT-AIR" else MATCH), code
             assert D(line.shadow) == aud(pgk), code
-        # 740.00 / 3.10945274 = 237.98 ; x 1.10 = 261.78
-        assert D(one(report, scenario=key, product_code="EXP-FRT-AIR", aspect="sell_amount").shadow) == D("261.78")
+        # 675.00 / 3.10945274 = 217.08 ; x 1.10 = 238.79
+        assert D(one(report, scenario=key, product_code="EXP-FRT-AIR", aspect="sell_amount").shadow) == D("238.79")
 
     def test_aud_helper_applies_the_caf_as_a_separate_uplift_after_pure_fx(self):
-        pure, caf, commercial = convert_pgk_to_aud(D("740.00"), TT_BUY, D("0.10"))
-        assert (pure, caf, commercial) == (D("237.98"), D("23.80"), D("261.78"))
+        pure, caf, commercial = convert_pgk_to_aud(D("675.00"), TT_BUY, D("0.10"))
+        assert (pure, caf, commercial) == (D("217.08"), D("21.71"), D("238.79"))
         assert convert_pgk_to_aud(D("0.00"), TT_BUY, D("0.10")) == (D("0.00"), D("0.00"), D("0.00"))
 
     def test_tt_sell_is_not_used(self, loaded):
         FxMarketRate.objects.update(tt_sell_rate=D("9.99999999"))
         report = run(lanes=(("POM", "BNE"),), currencies=("AUD",))
         frt = one(report, scenario="100kg|D2A|AUD", product_code="EXP-FRT-AIR", aspect="sell_amount")
-        assert D(frt.shadow) == D("261.78")
+        assert D(frt.shadow) == D("238.79")
 
     def test_conversion_evidence_records_side_rate_source_age_and_caf(self, loaded):
         report = run(lanes=(("POM", "BNE"),), currencies=("AUD",))
@@ -449,8 +593,8 @@ class TestPgkAndAud:
         # TARGET_GROSS_MARGIN 16.67% is in force; an explicit SELL must be converted without it.
         report = run(lanes=(("POM", "BNE"),), currencies=("AUD",))
         frt = D(one(report, scenario="100kg|D2A|AUD", product_code="EXP-FRT-AIR", aspect="sell_amount").shadow)
-        with_margin = cents(aud("740.00") / (D("1") - D("0.1667")))
-        assert frt == aud("740.00") and frt != with_margin
+        with_margin = cents(aud("675.00") / (D("1") - D("0.1667")))
+        assert frt == aud("675.00") and frt != with_margin
 
     def test_aud_totals_include_gst_on_the_converted_amounts(self, loaded):
         report = run(lanes=(("POM", "BNE"),), currencies=("AUD",))
@@ -461,6 +605,7 @@ class TestPgkAndAud:
         assert incl == total + gst
         freight_gst = D(one(report, scenario=key, product_code="EXP-FRT-AIR", aspect="gst_amount").shadow)
         assert freight_gst == D("0.00")
+        assert D(one(report, scenario=key, product_code="EXP-FRT-AIR", aspect="sell_incl_gst").shadow) == D("238.79")
 
     def test_production_collect_is_reported_not_reconciled(self, loaded):
         report = run(lanes=(("POM", "BNE"),), currencies=("AUD",))
@@ -562,17 +707,50 @@ class TestSafetyAndCoverage:
 
     def test_both_lanes_all_weights_both_currencies_have_no_unexplained_difference(self, loaded):
         weights = tuple(D(w) for w in (30, 45, 100, 200, 500, 999, 1000, 1001))
-        report = run_export_shadow(quote_date=QUOTE_DATE, weights=weights)
+        report = run_export_shadow(quote_date=QUOTE_DATE, weights=weights, registry_text=registry_text())
         assert len({(r.lane, r.scenario) for r in report.records}) == 2 * 8 * 2 * 2
         assert report.counts()[UNEXPLAINED_DIFFERENCE] == 0
         assert report.counts()[BLOCKED] == 0
         assert report.counts()[MATCH] > 1000
+        assert report.stale_registry_entries == [] and report.registry_errors == []
         noncomparable = {r.aspect for r in report.records if r.classification == NOT_COMPARABLE}
-        assert noncomparable == {"cost_amount", "total_cost_pgk", "production_collect_total_sell"}
+        assert noncomparable == {"production_collect_total_sell"}
+        explained = {(r.product_code, r.aspect) for r in report.records if r.classification == EXPECTED_DIFFERENCE}
+        assert {code for code, _ in explained} == {"EXP-FRT-AIR", "EXP-BUILDUP", "TOTAL"}
 
-    def test_shadow_engine_overrides_only_the_two_rate_lookups(self):
+    def test_differences_are_explained_only_by_an_exact_approved_entry(self, loaded):
+        def entries(mutate):
+            data = json.loads(registry_text())
+            mutate(data["entries"])
+            return json.dumps(data)
+
+        def wrong_value(rows):
+            for row in rows:
+                if row["aspect"] == "min_charge" and row["product_code"] == "EXP-FRT-AIR":
+                    row["matrix"] = "185"
+
+        report = run(lanes=(("POM", "BNE"),), currencies=("PGK",), scopes=("A2A",),
+                     registry_text=entries(wrong_value))
+        sell = one(report, scenario="100kg|A2A|PGK", product_code="EXP-FRT-AIR", aspect="sell_amount")
+        assert sell.classification == UNEXPLAINED_DIFFERENCE and "min_charge" in sell.reason
+        assert report.stale_registry_entries  # the entry that matched nothing is reported
+
+    def test_an_unrelated_legacy_change_is_not_excused_by_the_freight_entries(self, loaded):
+        ExportSellRate.objects.filter(destination_airport="BNE").update(min_charge=D("205.00"))
+        report = run(lanes=(("POM", "BNE"),), currencies=("PGK",), scopes=("A2A",))
+        sell = one(report, scenario="100kg|A2A|PGK", product_code="EXP-FRT-AIR", aspect="sell_amount")
+        assert sell.classification == UNEXPLAINED_DIFFERENCE
+
+    def test_registry_errors_are_reported(self, loaded):
+        report = run(lanes=(("POM", "BNE"),), currencies=("PGK",), scopes=("A2A",), registry_text="{}")
+        assert report.registry_errors
+        assert one(report, scenario="100kg|A2A|PGK", product_code="EXP-FRT-AIR",
+                   aspect="sell_amount").classification == UNEXPLAINED_DIFFERENCE
+
+    def test_shadow_engine_overrides_only_the_lookups_and_the_per_tier_minimum_rule(self):
         own = {n for n in vars(MatrixShadowExportEngine) if not n.startswith("__")}
-        assert own == {"_get_cogs", "_get_sell_rate"}
+        # _calculate_amount differs from production only for a tariff whose tiers carry their own minimum.
+        assert own == {"_get_cogs", "_get_sell_rate", "_calculate_amount"}
 
     def test_command_text_json_and_bad_arguments(self, loaded, capsys):
         call_command("shadow_price_rate_matrix_export", "--date", "2026-10-12", "--weights", "100",

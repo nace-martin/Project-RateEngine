@@ -112,7 +112,7 @@
       "valid_from": "2026-10-12",
       "valid_until": null,
       "is_active": true,
-      "source_reference": "Air Niugini rate card (px_buy_rates_reference.md); local_cogs_rates#19,#20,#21,#24; CM 2026-10-12; EXP-BUILDUP not loaded (tier minimum not representable)",
+      "source_reference": "Air Niugini rate card (px_buy_rates_reference.md); local_cogs_rates#19,#20,#21,#24 and build-up per the card; CM 2026-10-12; build-up uses per-tier minimums",
       "supplier": {
         "legal_name": "Air Niugini",
         "country_code": "PG",
@@ -199,6 +199,44 @@
             "equipment_type": ""
           },
           "tiers": []
+        },
+        {
+          "product_code": "EXP-BUILDUP",
+          "rate_basis": "TIERED_WEIGHT",
+          "unit_rate": null,
+          "additive_flat_amount": null,
+          "min_charge": null,
+          "max_charge": null,
+          "percentage_rate": null,
+          "percentage_basis_product_code": null,
+          "applicability": {
+            "direction": "EXPORT",
+            "origin_iata": "POM",
+            "destination_iata": null,
+            "payment_term": "",
+            "service_level": "",
+            "commodity_category": "",
+            "equipment_type": ""
+          },
+          "tiers": [
+            {
+              "min_quantity": "0",
+              "max_quantity": "100",
+              "unit_rate": "0.00"
+            },
+            {
+              "min_quantity": "100",
+              "max_quantity": "2000.0001",
+              "unit_rate": "0.10",
+              "min_charge": "30.00"
+            },
+            {
+              "min_quantity": "2000.0001",
+              "max_quantity": null,
+              "unit_rate": "0.15",
+              "min_charge": "30.00"
+            }
+          ]
         }
       ]
     },
@@ -250,7 +288,7 @@
       "valid_from": "2026-01-01",
       "valid_until": "2026-12-31",
       "is_active": true,
-      "source_reference": "EFM PGK export card (EXPORT SELL PREPAID D2A); export_sell_rates#307,#319; CM continuation 2026-10-12 despite printed 2025 expiry; PGK only",
+      "source_reference": "Current EFM PGK Export Rate Card (supersedes export_sell_rates#307,#319); CM continuation 2026-10-12 despite printed 2025 expiry; PGK only",
       "supplier": null,
       "customer": null,
       "lines": [
@@ -259,7 +297,7 @@
           "rate_basis": "TIERED_WEIGHT",
           "unit_rate": null,
           "additive_flat_amount": null,
-          "min_charge": "200.00",
+          "min_charge": "180.00",
           "max_charge": null,
           "percentage_rate": null,
           "percentage_basis_product_code": null,
@@ -275,23 +313,28 @@
           "tiers": [
             {
               "min_quantity": "0",
+              "max_quantity": "45",
+              "unit_rate": "7.20"
+            },
+            {
+              "min_quantity": "45",
               "max_quantity": "100",
-              "unit_rate": "7.90"
+              "unit_rate": "7.20"
             },
             {
               "min_quantity": "100",
               "max_quantity": "200",
-              "unit_rate": "7.40"
+              "unit_rate": "6.75"
             },
             {
               "min_quantity": "200",
               "max_quantity": "500",
-              "unit_rate": "7.15"
+              "unit_rate": "6.50"
             },
             {
               "min_quantity": "500",
               "max_quantity": null,
-              "unit_rate": "6.75"
+              "unit_rate": "6.15"
             }
           ]
         },
@@ -300,7 +343,7 @@
           "rate_basis": "TIERED_WEIGHT",
           "unit_rate": null,
           "additive_flat_amount": null,
-          "min_charge": "200.00",
+          "min_charge": "180.00",
           "max_charge": null,
           "percentage_rate": null,
           "percentage_basis_product_code": null,
@@ -316,23 +359,28 @@
           "tiers": [
             {
               "min_quantity": "0",
+              "max_quantity": "45",
+              "unit_rate": "9.15"
+            },
+            {
+              "min_quantity": "45",
               "max_quantity": "100",
-              "unit_rate": "10.00"
+              "unit_rate": "9.15"
             },
             {
               "min_quantity": "100",
               "max_quantity": "200",
-              "unit_rate": "9.40"
+              "unit_rate": "8.60"
             },
             {
               "min_quantity": "200",
               "max_quantity": "500",
-              "unit_rate": "8.90"
+              "unit_rate": "8.20"
             },
             {
               "min_quantity": "500",
               "max_quantity": null,
-              "unit_rate": "8.50"
+              "unit_rate": "7.70"
             }
           ]
         }

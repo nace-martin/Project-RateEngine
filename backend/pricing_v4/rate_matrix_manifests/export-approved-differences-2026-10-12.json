@@ -1,0 +1,125 @@
+{
+  "registry_version": 1,
+  "entries": [
+    {
+      "lane": "POM-BNE",
+      "side": "SELL",
+      "product_code": "EXP-FRT-AIR",
+      "aspect": "min_charge",
+      "legacy": "200",
+      "matrix": "180",
+      "reason": "Current rate card minimum is K180; the legacy row states K200.",
+      "evidence": "Commercial Manager 2026-10-12: current EFM PGK Export Rate Card is authoritative (continuation approved despite printed 2025 expiry); supersedes legacy export_sell_rates#307 (POM-BNE) and #319 (POM-SYD)"
+    },
+    {
+      "lane": "POM-BNE",
+      "side": "SELL",
+      "product_code": "EXP-FRT-AIR",
+      "aspect": "tiers",
+      "legacy": "0:7.9|100:7.4|200:7.15|500:6.75",
+      "matrix": "0:7.2|45:7.2|100:6.75|200:6.5|500:6.15",
+      "reason": "Current rate card weight breaks and rates replace the legacy table.",
+      "evidence": "Commercial Manager 2026-10-12: current EFM PGK Export Rate Card is authoritative (continuation approved despite printed 2025 expiry); supersedes legacy export_sell_rates#307 (POM-BNE) and #319 (POM-SYD)"
+    },
+    {
+      "lane": "POM-SYD",
+      "side": "SELL",
+      "product_code": "EXP-FRT-AIR",
+      "aspect": "min_charge",
+      "legacy": "200",
+      "matrix": "180",
+      "reason": "Current rate card minimum is K180; the legacy row states K200.",
+      "evidence": "Commercial Manager 2026-10-12: current EFM PGK Export Rate Card is authoritative (continuation approved despite printed 2025 expiry); supersedes legacy export_sell_rates#307 (POM-BNE) and #319 (POM-SYD)"
+    },
+    {
+      "lane": "POM-SYD",
+      "side": "SELL",
+      "product_code": "EXP-FRT-AIR",
+      "aspect": "tiers",
+      "legacy": "0:10|100:9.4|200:8.9|500:8.5",
+      "matrix": "0:9.15|45:9.15|100:8.6|200:8.2|500:7.7",
+      "reason": "Current rate card weight breaks and rates replace the legacy table.",
+      "evidence": "Commercial Manager 2026-10-12: current EFM PGK Export Rate Card is authoritative (continuation approved despite printed 2025 expiry); supersedes legacy export_sell_rates#307 (POM-BNE) and #319 (POM-SYD)"
+    },
+    {
+      "lane": "POM-BNE",
+      "side": "BUY",
+      "product_code": "EXP-BUILDUP",
+      "aspect": "basis",
+      "legacy": "PER_KG",
+      "matrix": "TIERED_WEIGHT",
+      "reason": "Locked BUY build-up is tiered with per-tier minimums; the legacy row is a single per-kg rate.",
+      "evidence": "Commercial Manager 2026-10-12: Air Niugini BUY build-up 0-99 kg nil; 100-2000 kg K0.10/kg min K30; over 2000 kg K0.15/kg min K30; supersedes legacy local_cogs_rates#22 (0.15/kg, K30 at every weight)"
+    },
+    {
+      "lane": "POM-BNE",
+      "side": "BUY",
+      "product_code": "EXP-BUILDUP",
+      "aspect": "unit_rate",
+      "legacy": "0.15",
+      "matrix": "none",
+      "reason": "Rate is held on the tiers.",
+      "evidence": "Commercial Manager 2026-10-12: Air Niugini BUY build-up 0-99 kg nil; 100-2000 kg K0.10/kg min K30; over 2000 kg K0.15/kg min K30; supersedes legacy local_cogs_rates#22 (0.15/kg, K30 at every weight)"
+    },
+    {
+      "lane": "POM-BNE",
+      "side": "BUY",
+      "product_code": "EXP-BUILDUP",
+      "aspect": "min_charge",
+      "legacy": "30",
+      "matrix": "none",
+      "reason": "The K30 minimum is held on the 100 kg and over tiers, not on the line.",
+      "evidence": "Commercial Manager 2026-10-12: Air Niugini BUY build-up 0-99 kg nil; 100-2000 kg K0.10/kg min K30; over 2000 kg K0.15/kg min K30; supersedes legacy local_cogs_rates#22 (0.15/kg, K30 at every weight)"
+    },
+    {
+      "lane": "POM-BNE",
+      "side": "BUY",
+      "product_code": "EXP-BUILDUP",
+      "aspect": "tiers",
+      "legacy": "none",
+      "matrix": "0:0|100:0.1@30|2000.0001:0.15@30",
+      "reason": "Per-tier minimum representation of the locked rule.",
+      "evidence": "Commercial Manager 2026-10-12: Air Niugini BUY build-up 0-99 kg nil; 100-2000 kg K0.10/kg min K30; over 2000 kg K0.15/kg min K30; supersedes legacy local_cogs_rates#22 (0.15/kg, K30 at every weight)"
+    },
+    {
+      "lane": "POM-SYD",
+      "side": "BUY",
+      "product_code": "EXP-BUILDUP",
+      "aspect": "basis",
+      "legacy": "PER_KG",
+      "matrix": "TIERED_WEIGHT",
+      "reason": "Locked BUY build-up is tiered with per-tier minimums; the legacy row is a single per-kg rate.",
+      "evidence": "Commercial Manager 2026-10-12: Air Niugini BUY build-up 0-99 kg nil; 100-2000 kg K0.10/kg min K30; over 2000 kg K0.15/kg min K30; supersedes legacy local_cogs_rates#22 (0.15/kg, K30 at every weight)"
+    },
+    {
+      "lane": "POM-SYD",
+      "side": "BUY",
+      "product_code": "EXP-BUILDUP",
+      "aspect": "unit_rate",
+      "legacy": "0.15",
+      "matrix": "none",
+      "reason": "Rate is held on the tiers.",
+      "evidence": "Commercial Manager 2026-10-12: Air Niugini BUY build-up 0-99 kg nil; 100-2000 kg K0.10/kg min K30; over 2000 kg K0.15/kg min K30; supersedes legacy local_cogs_rates#22 (0.15/kg, K30 at every weight)"
+    },
+    {
+      "lane": "POM-SYD",
+      "side": "BUY",
+      "product_code": "EXP-BUILDUP",
+      "aspect": "min_charge",
+      "legacy": "30",
+      "matrix": "none",
+      "reason": "The K30 minimum is held on the 100 kg and over tiers, not on the line.",
+      "evidence": "Commercial Manager 2026-10-12: Air Niugini BUY build-up 0-99 kg nil; 100-2000 kg K0.10/kg min K30; over 2000 kg K0.15/kg min K30; supersedes legacy local_cogs_rates#22 (0.15/kg, K30 at every weight)"
+    },
+    {
+      "lane": "POM-SYD",
+      "side": "BUY",
+      "product_code": "EXP-BUILDUP",
+      "aspect": "tiers",
+      "legacy": "none",
+      "matrix": "0:0|100:0.1@30|2000.0001:0.15@30",
+      "reason": "Per-tier minimum representation of the locked rule.",
+      "evidence": "Commercial Manager 2026-10-12: Air Niugini BUY build-up 0-99 kg nil; 100-2000 kg K0.10/kg min K30; over 2000 kg K0.15/kg min K30; supersedes legacy local_cogs_rates#22 (0.15/kg, K30 at every weight)"
+    }
+  ]
+}
