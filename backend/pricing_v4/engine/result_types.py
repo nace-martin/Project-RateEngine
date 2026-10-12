@@ -62,6 +62,11 @@ class QuoteLineItem:
     fx_applied: bool = False
     caf_applied: bool = False
     margin_applied: bool = False
+    # Canonical PGK equivalents from the engine's own conversions (approved conventions). None when no
+    # conversion to or from PGK took place; they are never recalculated from a separate FX lookup.
+    cost_pgk: Optional[Decimal] = None
+    sell_pgk: Optional[Decimal] = None
+    sell_pgk_incl_gst: Optional[Decimal] = None
 
 
 @dataclass

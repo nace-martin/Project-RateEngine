@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
@@ -49,6 +49,10 @@ class FxResolutionError(ValueError):
 
 class MissingFxMarketRateError(FxResolutionError):
     """Raised when an authoritative FX market rate is required but cannot be found."""
+
+
+class StaleFxMarketRateError(FxResolutionError):
+    """Raised when the only applicable FX market rates are older than the policy maximum age."""
 
 
 class AmbiguousFxSourceError(FxResolutionError):
@@ -104,6 +108,11 @@ class FxPairResult:
     raw_tt_buy: Optional[Decimal] = None
     raw_tt_sell: Optional[Decimal] = None
     raw_mid: Optional[Decimal] = None
+    # Provenance of the policy-driven selection (Pilot Gate B3L-B). Empty / None under a legacy policy.
+    source_role: str = ""  # PRIMARY, FALLBACK, or "" when no source priority applied
+    age_days: Optional[int] = None
+    max_age_days: Optional[int] = None
+    policy_code: str = ""
 
 
 def normalize_currency_code(code: str) -> str:
@@ -183,7 +192,7 @@ def _check_source_ambiguity(
     return record
 
 
-def resolve_market_fx_pair(
+def _resolve_market_fx_pair_unprioritised(
     from_currency: str,
     to_currency: str,
     effective_date: date | datetime | str | None = None,
@@ -414,3 +423,158 @@ def resolve_market_fx_rate(
         ),
         cross_details=pair_result.cross_details,
     )
+
+
+# ---------------------------------------------------------------------------------------------
+# Policy-driven source priority and staleness (Pilot Gate B3L-B)
+# ---------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FxSourcePolicy:
+    policy_code: str
+    max_age_days: Optional[int]
+    primary_source: str
+    fallback_source: str
+
+    @property
+    def active(self) -> bool:
+        return self.max_age_days is not None or bool(self.primary_source)
+
+
+def resolve_fx_source_policy(effective_date: date) -> Optional[FxSourcePolicy]:
+    """The FX source policy carried by the commercial policy in force, or None under a legacy policy."""
+    from pricing_v4.services.commercial_policy import resolve_commercial_terms_policy
+
+    policy = resolve_commercial_terms_policy(effective_date)
+    if policy is None:
+        return None
+    resolved = FxSourcePolicy(
+        policy_code=policy.policy_code,
+        max_age_days=policy.fx_max_age_days,
+        primary_source=(policy.fx_primary_source or "").strip(),
+        fallback_source=(policy.fx_fallback_source or "").strip(),
+    )
+    return resolved if resolved.active else None
+
+
+def _latest_for_source(from_curr: str, to_curr: str, target_date: date, source_name: str):
+    """Latest market fact for one source on or before the date: (record, is_inverse) or None."""
+    direct = (
+        FxMarketRate.objects.filter(
+            base_currency=from_curr, quote_currency=to_curr, effective_date__lte=target_date, source=source_name
+        ).order_by("-effective_date").first()
+    )
+    inverse = (
+        FxMarketRate.objects.filter(
+            base_currency=to_curr, quote_currency=from_curr, effective_date__lte=target_date, source=source_name
+        ).order_by("-effective_date").first()
+    )
+    if direct and inverse and direct.effective_date == inverse.effective_date:
+        raise AmbiguousFxSourceError(
+            f"Both {from_curr}/{to_curr} and {to_curr}/{from_curr} market facts exist from '{source_name}' on "
+            f"{direct.effective_date}; orientation priority is not defined."
+        )
+    if direct and (not inverse or direct.effective_date > inverse.effective_date):
+        return direct, False
+    if inverse:
+        return inverse, True
+    return None
+
+
+def _result_from_record(record: FxMarketRate, from_curr: str, to_curr: str, inverse: bool) -> FxPairResult:
+    quantum = Decimal("0.00000001")
+    if not inverse:
+        return FxPairResult(
+            from_currency=from_curr, to_currency=to_curr, tt_buy=record.tt_buy_rate, tt_sell=record.tt_sell_rate,
+            mid_rate=record.mid_rate, effective_date=record.effective_date, source=record.source,
+            is_inverse=False, stored_base_currency=record.base_currency, stored_quote_currency=record.quote_currency,
+            raw_tt_buy=record.tt_buy_rate, raw_tt_sell=record.tt_sell_rate, raw_mid=record.mid_rate,
+        )
+    # Inversion swaps the sides: inverse TT BUY = 1 / TT SELL, inverse TT SELL = 1 / TT BUY.
+    return FxPairResult(
+        from_currency=from_curr, to_currency=to_curr,
+        tt_buy=(Decimal("1") / record.tt_sell_rate).quantize(quantum, rounding=ROUND_HALF_UP),
+        tt_sell=(Decimal("1") / record.tt_buy_rate).quantize(quantum, rounding=ROUND_HALF_UP),
+        mid_rate=(Decimal("1") / record.mid_rate).quantize(quantum, rounding=ROUND_HALF_UP),
+        effective_date=record.effective_date, source=record.source, is_inverse=True,
+        stored_base_currency=record.base_currency, stored_quote_currency=record.quote_currency,
+        raw_tt_buy=record.tt_buy_rate, raw_tt_sell=record.tt_sell_rate, raw_mid=record.mid_rate,
+    )
+
+
+def _resolve_with_source_priority(
+    from_curr: str, to_curr: str, target_date: date, policy: FxSourcePolicy
+) -> FxPairResult:
+    """Primary source when it has a suitable rate, otherwise the fallback source, otherwise fail closed.
+
+    Suitable means on or before the quote date and no older than the policy maximum age. A newer rate
+    from the fallback source never displaces a suitable primary rate. Other sources are not considered.
+    """
+    stale_notes: list[str] = []
+    for role, source_name in (("PRIMARY", policy.primary_source), ("FALLBACK", policy.fallback_source)):
+        if not source_name:
+            continue
+        found = _latest_for_source(from_curr, to_curr, target_date, source_name)
+        if found is None:
+            continue
+        record, inverse = found
+        age = (target_date - record.effective_date).days
+        if policy.max_age_days is not None and age > policy.max_age_days:
+            stale_notes.append(f"{role} '{source_name}' {record.effective_date} is {age} days old")
+            continue
+        return replace(
+            _result_from_record(record, from_curr, to_curr, inverse),
+            source_role=role, age_days=age, max_age_days=policy.max_age_days, policy_code=policy.policy_code,
+        )
+    if stale_notes:
+        raise StaleFxMarketRateError(
+            f"No suitable FX market rate for {from_curr}/{to_curr} on {target_date}: {'; '.join(stale_notes)} "
+            f"(maximum age {policy.max_age_days} days)."
+        )
+    raise MissingFxMarketRateError(
+        f"No authoritative FX market rate found for {from_curr}/{to_curr} on or before {target_date} from the "
+        f"policy sources ({policy.primary_source or '-'}, {policy.fallback_source or '-'})."
+    )
+
+
+def resolve_market_fx_pair(
+    from_currency: str,
+    to_currency: str,
+    effective_date: date | datetime | str | None = None,
+    source: str | None = None,
+) -> FxPairResult:
+    """
+    Resolve the two-sided market rate for from_currency -> to_currency.
+
+    Under a legacy commercial policy (no FX source policy) this is the long-standing resolution: newest
+    effective date on or before the quote date, competing sources fail closed. When the policy in force
+    carries an FX source policy, the primary / fallback source priority and the maximum age apply to every
+    caller and the result carries that provenance. An explicit ``source`` bypasses the priority but not the
+    age limit.
+    """
+    from_curr = normalize_currency_code(from_currency)
+    to_curr = normalize_currency_code(to_currency)
+    target_date = normalize_effective_date(effective_date)
+    if from_curr == to_curr:
+        return _resolve_market_fx_pair_unprioritised(from_curr, to_curr, target_date, source)
+
+    policy = resolve_fx_source_policy(target_date)
+    if policy is None:
+        return _resolve_market_fx_pair_unprioritised(from_curr, to_curr, target_date, source)
+
+    if policy.primary_source and not source and "PGK" in (from_curr, to_curr):
+        result = _resolve_with_source_priority(from_curr, to_curr, target_date, policy)
+    else:
+        # Cross rates are built from two PGK legs, each resolved here with the same priority.
+        result = _resolve_market_fx_pair_unprioritised(from_curr, to_curr, target_date, source)
+
+    age = (target_date - result.effective_date).days
+    if policy.max_age_days is not None and age > policy.max_age_days:
+        raise StaleFxMarketRateError(
+            f"FX market rate for {from_curr}/{to_curr} effective {result.effective_date} from '{result.source}' "
+            f"is {age} days old on {target_date} (maximum age {policy.max_age_days} days)."
+        )
+    if result.age_days is None:
+        result = replace(result, age_days=age, max_age_days=policy.max_age_days, policy_code=policy.policy_code)
+    return result

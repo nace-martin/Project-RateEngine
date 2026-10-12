@@ -4,12 +4,20 @@ Quick reference for RateEngine pricing logic.
 
 ## Core Parameters
 
-| Parameter | Value | Method / Semantics |
+Two calculation conventions exist, selected by the resolved `CommercialTermsPolicy` row. Which one is
+in force on a date is decided by the policy, not by code. See
+`docs/b3l-b-commercial-authority.md` for the approved convention, its effective date and how it is
+introduced.
+
+| Parameter | Legacy convention (`LAUNCH-POLICY-2026`) | Approved convention (new version, effective 2026-10-11) |
 |-----------|-------|--------------------|
-| Margin | 20% | MARKUP_ON_COST (`Cost × (1 + Margin)`) |
-| CAF Import | 5% | Bank TT BUY deduction |
-| CAF Export | 10% | Bank TT SELL addition |
-| Standard GST | 10% | Domestic / taxable scope |
+| Margin | 20% `MARKUP_ON_COST` (`Cost x (1 + Margin)`) | 16.67% `TARGET_GROSS_MARGIN` (`Cost / (1 - Margin)`), cost-plus only, after FX and CAF |
+| CAF Import | 5%, deducted from the TT BUY rate | 5% uplift applied after pure FX conversion, only when a conversion occurs; never folded into the rate |
+| CAF Export | 10%, TT SELL addition | unchanged by this gate |
+| FX side, FCY supplier cost to PGK | TT BUY | TT SELL |
+| FX side, PGK amount to FCY customer quote | TT SELL | TT BUY |
+| Standard GST | 10% | 10%, read from `CommercialTermsPolicy.gst_standard_percent` |
+| FX source / age | any `FxMarketRate`, no age limit | BSP primary, MANUAL only when BSP is unsuitable, max 5 calendar days, stale fails closed |
 
 ### Margin Semantics (`CommercialTermsPolicy`)
 
@@ -38,9 +46,23 @@ RateEngine enforces:
 
 ## FX Pipeline
 
+Legacy convention:
+
 ```
-FCY Cost → × FX_BUY → × (1 + CAF) → apply_margin(Cost) → PGK Sell
+FCY Cost -> x FX_BUY -> x (1 + CAF) -> apply_margin(Cost) -> PGK Sell
 ```
+
+Approved convention (policy `caf_method = UPLIFT_AFTER_FX`):
+
+```
+native cost -> x market FX (only if a conversion is needed; TT SELL for FCY cost -> PGK)
+            -> x (1 + CAF) (only if a conversion happened)
+            -> / (1 - target gross margin) (cost-plus lines only; explicit SELL tariffs skip this)
+            -> GST on the sell amount by tax class
+```
+
+A quote needs FX only when it actually converts a currency. A PREPAID AUD import whose costs and
+destination SELL tariffs are all AUD prices without any AUD/PGK rate.
 
 ## Quote Currency Authority
 

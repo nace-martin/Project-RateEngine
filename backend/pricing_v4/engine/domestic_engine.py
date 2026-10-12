@@ -8,6 +8,7 @@ from django.db.models import Q
 from core.commodity import DEFAULT_COMMODITY_CODE
 from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_code_enabled
 from pricing_v4.models import ProductCode
+from pricing_v4.services.commercial_policy import require_standard_gst_rate
 from pricing_v4.models import Surcharge
 from pricing_v4.services.rate_selector import (
     RateNotFoundError,
@@ -51,6 +52,15 @@ class DomesticPricingEngine:
     - Simple additions (Cost + Surcharges, Sell + Surcharges)
     - GST added at end for Domestic
     """
+
+    @property
+    def _standard_gst_rate(self) -> Decimal:
+        """Standard GST rate from the resolved commercial policy; missing or ambiguous fails closed."""
+        cached = getattr(self, '_gst_rate_cache', None)
+        if cached is None:
+            cached = require_standard_gst_rate(self.quote_date)
+            self._gst_rate_cache = cached
+        return cached
 
     def __init__(
         self,
@@ -389,8 +399,8 @@ class DomesticPricingEngine:
             item.tax_code = 'service_in_PNG'
             item.rule_family = charge.rule_family or item.rule_family
             item.gst_category = 'service_in_PNG'
-            item.gst_rate = Decimal('0.10')
-            item.gst_amount = item.sell_amount * Decimal('0.10')
+            item.gst_rate = self._standard_gst_rate
+            item.gst_amount = item.sell_amount * item.gst_rate
             item.tax_amount = item.gst_amount
             item.sell_incl_gst = item.sell_amount + item.gst_amount
             item.margin_amount = item.sell_amount - item.cost_amount

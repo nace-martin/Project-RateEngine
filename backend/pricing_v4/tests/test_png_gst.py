@@ -16,7 +16,7 @@ from quotes.tax_policy import (
     GST_CATEGORY_EXPORT_SERVICE,
     GST_CATEGORY_OFFSHORE_SERVICE,
     GST_CATEGORY_IMPORTED_GOODS,
-    PNG_GST_RATE_DECIMAL,
+    PNG_GST_REFERENCE_RATE,
 )
 
 
@@ -29,7 +29,7 @@ class TestPNGGSTExport:
         pc.gst_treatment = 'ZERO_RATED'
         pc.category = 'FREIGHT'
         
-        category, rate = get_png_gst_category(pc, 'EXPORT', 'FREIGHT')
+        category, rate = get_png_gst_category(pc, 'EXPORT', 'FREIGHT', standard_rate=PNG_GST_REFERENCE_RATE)
         
         assert category == GST_CATEGORY_EXPORT_SERVICE
         assert rate == Decimal('0')
@@ -41,10 +41,10 @@ class TestPNGGSTExport:
         pc.category = 'HANDLING'
         pc.gst_rate = Decimal('0.10')
         
-        category, rate = get_png_gst_category(pc, 'EXPORT', 'ORIGIN')
+        category, rate = get_png_gst_category(pc, 'EXPORT', 'ORIGIN', standard_rate=PNG_GST_REFERENCE_RATE)
         
         assert category == GST_CATEGORY_SERVICE_IN_PNG
-        assert rate == PNG_GST_RATE_DECIMAL
+        assert rate == PNG_GST_REFERENCE_RATE
     
     def test_export_destination_offshore_no_gst(self):
         """Export destination services (performed offshore) should be 0% GST."""
@@ -53,7 +53,7 @@ class TestPNGGSTExport:
         pc.category = 'CLEARANCE'
         pc.gst_rate = Decimal('0.10')
         
-        category, rate = get_png_gst_category(pc, 'EXPORT', 'DESTINATION')
+        category, rate = get_png_gst_category(pc, 'EXPORT', 'DESTINATION', standard_rate=PNG_GST_REFERENCE_RATE)
         
         assert category == GST_CATEGORY_OFFSHORE_SERVICE
         assert rate == Decimal('0')
@@ -64,7 +64,7 @@ class TestPNGGSTExport:
         pc.gst_treatment = 'ZERO_RATED'
         pc.category = 'HANDLING'
         
-        category, rate = get_png_gst_category(pc, 'EXPORT', 'ORIGIN')
+        category, rate = get_png_gst_category(pc, 'EXPORT', 'ORIGIN', standard_rate=PNG_GST_REFERENCE_RATE)
         
         assert category == GST_CATEGORY_EXPORT_SERVICE
         assert rate == Decimal('0')
@@ -80,7 +80,7 @@ class TestPNGGSTImport:
         pc.category = 'HANDLING'
         pc.gst_rate = Decimal('0.10')
         
-        category, rate = get_png_gst_category(pc, 'IMPORT', 'ORIGIN')
+        category, rate = get_png_gst_category(pc, 'IMPORT', 'ORIGIN', standard_rate=PNG_GST_REFERENCE_RATE)
         
         assert category == GST_CATEGORY_OFFSHORE_SERVICE
         assert rate == Decimal('0')
@@ -91,7 +91,7 @@ class TestPNGGSTImport:
         pc.gst_treatment = 'ZERO_RATED'
         pc.category = 'FREIGHT'
         
-        category, rate = get_png_gst_category(pc, 'IMPORT', 'FREIGHT')
+        category, rate = get_png_gst_category(pc, 'IMPORT', 'FREIGHT', standard_rate=PNG_GST_REFERENCE_RATE)
         
         assert category == GST_CATEGORY_EXPORT_SERVICE
         assert rate == Decimal('0')
@@ -103,10 +103,10 @@ class TestPNGGSTImport:
         pc.category = 'CLEARANCE'
         pc.gst_rate = Decimal('0.10')
         
-        category, rate = get_png_gst_category(pc, 'IMPORT', 'DESTINATION')
+        category, rate = get_png_gst_category(pc, 'IMPORT', 'DESTINATION', standard_rate=PNG_GST_REFERENCE_RATE)
         
         assert category == GST_CATEGORY_SERVICE_IN_PNG
-        assert rate == PNG_GST_RATE_DECIMAL
+        assert rate == PNG_GST_REFERENCE_RATE
     
     def test_import_goods_value_no_gst(self):
         """Imported goods value (CIF) never attracts GST in quotes - handled by Customs."""
@@ -114,7 +114,7 @@ class TestPNGGSTImport:
         pc.gst_treatment = 'EXEMPT'
         pc.category = 'GOODS'
         
-        category, rate = get_png_gst_category(pc, 'IMPORT', 'DESTINATION')
+        category, rate = get_png_gst_category(pc, 'IMPORT', 'DESTINATION', standard_rate=PNG_GST_REFERENCE_RATE)
         
         assert category == GST_CATEGORY_IMPORTED_GOODS
         assert rate == Decimal('0')
@@ -125,7 +125,7 @@ class TestPNGGSTImport:
         pc.gst_treatment = 'EXEMPT'
         pc.category = 'DISBURSEMENT'
         
-        category, rate = get_png_gst_category(pc, 'IMPORT', 'DESTINATION')
+        category, rate = get_png_gst_category(pc, 'IMPORT', 'DESTINATION', standard_rate=PNG_GST_REFERENCE_RATE)
         
         assert category == GST_CATEGORY_IMPORTED_GOODS
         assert rate == Decimal('0')
@@ -141,10 +141,10 @@ class TestPNGGSTDomestic:
         pc.category = 'FREIGHT'
         pc.gst_rate = Decimal('0.10')
         
-        category, rate = get_png_gst_category(pc, 'DOMESTIC', 'FREIGHT')
+        category, rate = get_png_gst_category(pc, 'DOMESTIC', 'FREIGHT', standard_rate=PNG_GST_REFERENCE_RATE)
         
         assert category == GST_CATEGORY_SERVICE_IN_PNG
-        assert rate == PNG_GST_RATE_DECIMAL
+        assert rate == PNG_GST_REFERENCE_RATE
     
     def test_domestic_cartage_attracts_gst(self):
         """Domestic cartage/delivery should attract 10% GST."""
@@ -153,10 +153,10 @@ class TestPNGGSTDomestic:
         pc.category = 'CARTAGE'
         pc.gst_rate = Decimal('0.10')
         
-        category, rate = get_png_gst_category(pc, 'DOMESTIC', 'DESTINATION')
+        category, rate = get_png_gst_category(pc, 'DOMESTIC', 'DESTINATION', standard_rate=PNG_GST_REFERENCE_RATE)
         
         assert category == GST_CATEGORY_SERVICE_IN_PNG
-        assert rate == PNG_GST_RATE_DECIMAL
+        assert rate == PNG_GST_REFERENCE_RATE
 
 
 class TestGSTCalculation:
@@ -165,7 +165,7 @@ class TestGSTCalculation:
     def test_gst_amount_calculation_10_percent(self):
         """10% GST should be calculated correctly."""
         sell_amount = Decimal('100.00')
-        gst_rate = PNG_GST_RATE_DECIMAL
+        gst_rate = PNG_GST_REFERENCE_RATE
         
         gst_amount = (sell_amount * gst_rate).quantize(Decimal('0.01'))
         
@@ -174,7 +174,7 @@ class TestGSTCalculation:
     def test_gst_amount_rounding(self):
         """GST amounts should be rounded to 2 decimal places."""
         sell_amount = Decimal('123.456')
-        gst_rate = PNG_GST_RATE_DECIMAL
+        gst_rate = PNG_GST_REFERENCE_RATE
         
         gst_amount = (sell_amount * gst_rate).quantize(Decimal('0.01'))
         

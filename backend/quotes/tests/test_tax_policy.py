@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
-from quotes.tax_policy import apply_gst_policy
+from decimal import Decimal
+
+from quotes.tax_policy import PNG_GST_REFERENCE_RATE, apply_gst_policy
+
+STANDARD_RATE_PERCENT = PNG_GST_REFERENCE_RATE * Decimal('100')
 
 
 class MockVersion:
@@ -28,7 +32,7 @@ def test_air_freight_is_zero_rated():
     version = MockVersion("PG", "AU", "EXPORT")
     charge = MockCharge("FRT_AIR", "AIR")
 
-    apply_gst_policy(version, charge)
+    apply_gst_policy(version, charge, standard_rate_percent=STANDARD_RATE_PERCENT)
 
     assert charge.is_taxable is False
     assert charge.gst_percentage == 0
@@ -39,7 +43,7 @@ def test_png_domestic_is_taxable():
     version = MockVersion("PG", "PG", "DOMESTIC")
     charge = MockCharge("CART_ORG", "ORIGIN")
 
-    apply_gst_policy(version, charge)
+    apply_gst_policy(version, charge, standard_rate_percent=STANDARD_RATE_PERCENT)
 
     assert charge.is_taxable is True
     assert charge.gst_percentage == 10
@@ -50,12 +54,12 @@ def test_png_import_services_taxable():
     version = MockVersion("AU", "PG", "IMPORT")
 
     charge = MockCharge("HAND_DEST", "DESTINATION")
-    apply_gst_policy(version, charge)
+    apply_gst_policy(version, charge, standard_rate_percent=STANDARD_RATE_PERCENT)
     assert charge.is_taxable is True
     assert charge.gst_percentage == 10
 
     charge_au = MockCharge("HAND_ORG", "ORIGIN")
-    apply_gst_policy(version, charge_au)
+    apply_gst_policy(version, charge_au, standard_rate_percent=STANDARD_RATE_PERCENT)
     assert charge_au.is_taxable is False
     assert charge_au.gst_percentage == 0
 
@@ -65,7 +69,7 @@ def test_png_export_default_taxable():
     version = MockVersion("PG", "AU", "EXPORT", export_evidence=False)
 
     charge = MockCharge("CART_ORG", "ORIGIN")
-    apply_gst_policy(version, charge)
+    apply_gst_policy(version, charge, standard_rate_percent=STANDARD_RATE_PERCENT)
 
     assert charge.is_taxable is True
     assert charge.gst_percentage == 10
@@ -76,7 +80,7 @@ def test_png_export_with_evidence_zero_rated():
     version = MockVersion("PG", "AU", "EXPORT", export_evidence=True)
 
     charge = MockCharge("CART_ORG", "ORIGIN")
-    apply_gst_policy(version, charge)
+    apply_gst_policy(version, charge, standard_rate_percent=STANDARD_RATE_PERCENT)
 
     assert charge.is_taxable is False
     assert charge.gst_percentage == 0
@@ -87,7 +91,7 @@ def test_disbursements_always_exempt():
     version = MockVersion("PG", "PG", "DOMESTIC")
     charge = MockCharge("IMPORT_GST", "DESTINATION")
 
-    apply_gst_policy(version, charge)
+    apply_gst_policy(version, charge, standard_rate_percent=STANDARD_RATE_PERCENT)
 
     assert charge.is_taxable is False
     assert charge.gst_percentage == 0
