@@ -2,15 +2,15 @@
   "manifest_version": 1,
   "parties": [
     {
-      "legal_name": "Air Niugini",
-      "trade_name": "",
+      "legal_name": "Air Niugini Limited",
+      "trade_name": "Air Niugini",
       "entity_type": "COMPANY",
       "country_code": "PG",
       "roles": [
         "CARRIER"
       ],
       "identifiers": [],
-      "evidence": "Carrier PX (Air Niugini) named as BUY supplier by Commercial Manager 2026-10-12. Registered legal name and tax identifier are not evidenced in the repository; legal_name is the trading name recorded on carriers#1 and must be confirmed before apply."
+      "evidence": "Carrier PX named as BUY supplier by Commercial Manager 2026-10-12. Existing General Sales Agency agreement identifies Air Niugini Limited operating as AIR NIUGINI (trade name). Tax identifier not evidenced in the repository."
     }
   ],
   "legacy_product_codes": [],

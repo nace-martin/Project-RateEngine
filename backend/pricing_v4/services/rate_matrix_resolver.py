@@ -47,6 +47,15 @@ DIRECTIONS = tuple(RateApplicability.Direction.values)
 PAYMENT_TERMS = ("",) + tuple(RateApplicability.PaymentTerm.values)
 SERVICE_LEVELS = ("",) + tuple(RateApplicability.ServiceLevel.values)
 PILOT_TRANSPORT_MODE = RateSheet.TransportMode.AIR.value
+# RateTier.min_quantity / max_quantity are DecimalField(decimal_places=4).
+TIER_QUANTITY_PLACES = 4
+
+
+def _within_tier_precision(weight: Decimal) -> bool:
+    if not weight.is_finite():
+        return False
+    exponent = weight.normalize().as_tuple().exponent
+    return exponent >= -TIER_QUANTITY_PLACES
 
 
 @dataclass(frozen=True)
@@ -230,6 +239,16 @@ def resolve(context: ResolutionContext, *, using: str = "default") -> Resolution
                     reasons=("chargeable_weight is required to resolve a tiered rate.",),
                 )
             return Resolution(EXACT_MATCH, context, tariff=tariffs[0])
+        if not _within_tier_precision(context.chargeable_weight):
+            # RateTier bounds carry TIER_QUANTITY_PLACES decimal places. A weight with more precision could
+            # sit between two representable bounds and cross a break incorrectly, so it is never priced.
+            return Resolution(
+                INVALID_CONTEXT, context, candidates=tariffs,
+                reasons=(
+                    f"chargeable_weight {context.chargeable_weight} has more than {TIER_QUANTITY_PLACES} decimal "
+                    "places, which tier bounds cannot represent; it is not priced.",
+                ),
+            )
         selected = [
             tier for tier in tariffs[0].tiers
             if tier.min_quantity <= context.chargeable_weight

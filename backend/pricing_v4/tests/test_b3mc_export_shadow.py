@@ -262,11 +262,43 @@ class TestManifests:
         data = json.loads(tariff_text())
         for sheet in data["rate_sheets"]:
             if sheet["rate_type"] == "BUY":
-                assert sheet["supplier"] == {"legal_name": "Air Niugini", "country_code": "PG", "role": "CARRIER"}
+                assert sheet["supplier"] == {
+                    "legal_name": "Air Niugini Limited", "country_code": "PG", "role": "CARRIER",
+                }
                 assert sheet["valid_until"] is None
                 assert all(line["applicability"]["payment_term"] == "" for line in sheet["lines"])
             else:
                 assert sheet["supplier"] is None and sheet["customer"] is None
+
+    def test_every_sheet_is_valid_from_the_cm_pilot_approval_date_without_an_end(self):
+        data = json.loads(tariff_text())
+        assert len(data["rate_sheets"]) == 7
+        for sheet in data["rate_sheets"]:
+            assert (sheet["valid_from"], sheet["valid_until"]) == ("2026-10-12", None), sheet["name"]
+            assert "2026-01-01..2026-12-31" not in sheet["name"]
+
+    def test_stored_legacy_dates_are_kept_as_provenance_not_authority(self):
+        sheets = {s["name"]: s for s in json.loads(tariff_text())["rate_sheets"]}
+        card = sheets["Pilot export SELL air freight POM-BNE POM-SYD PGK"]["source_reference"]
+        assert "printed 2025 expiry" in card and "until superseded" in card
+        origin = sheets["Pilot export SELL origin charges POM PGK"]["source_reference"]
+        assert "printed 2025 expiry" in origin and "stored 2026-01-01..2026-12-31" in origin
+        for name in ("Pilot export SELL EXP-HANDLE POM PGK database value only",
+                     "Pilot export SELL EXP-FSC-AIR POM PGK database value only",
+                     "Pilot export BUY EXP-HANDLE POM PGK database value only"):
+            reference = sheets[name]["source_reference"]
+            assert reference.startswith("DATABASE-ONLY, no external document")
+            assert "CM-approved Pilot carry-forward 2026-10-12" in reference
+        assert "stored 2025-01-01..2030-12-31" in sheets[
+            "Pilot export SELL EXP-FSC-AIR POM PGK database value only"]["source_reference"]
+
+    def test_px_party_is_air_niugini_limited_trading_as_air_niugini(self):
+        data = json.loads(MASTER_FILE.read_text(encoding="utf-8"))
+        party = data["parties"][0]
+        assert (party["legal_name"], party["trade_name"], party["country_code"], party["roles"]) == (
+            "Air Niugini Limited", "Air Niugini", "PG", ["CARRIER"])
+        assert "General Sales Agency" in party["evidence"]
+        assert all(not c["gst_approval"]["approved"] for c in data["commercial_product_codes"])
 
     def test_buildup_buy_carries_its_minimum_on_the_tiers_not_the_line(self):
         data = json.loads(tariff_text())
@@ -521,6 +553,50 @@ class TestBuildupBuyBreakpoints:
         assert D(cost.legacy) == D("30.00")  # the superseded row (0.15/kg, K30 at every weight)
         assert D(cost.shadow) == D("0.00")  # the locked rule: nothing below 100 kg
         assert cost.classification == EXPECTED_DIFFERENCE
+
+    def _buildup_context(self, weight):
+        from parties.party_models import PartyMaster
+        from pricing_v4.services import rate_matrix_resolver as rmr
+
+        supplier = PartyMaster.objects.get(legal_name="Air Niugini Limited", country_code="PG")
+        return rmr.resolve(rmr.ResolutionContext(
+            rate_type=rmr.BUY, direction="EXPORT", effective_date=QUOTE_DATE, product_code="EXP-BUILDUP",
+            origin_iata="POM", destination_iata="BNE", supplier_id=supplier.id, chargeable_weight=D(weight),
+        )), rmr
+
+    def test_2000_is_the_lower_tier_and_2000_0001_is_the_upper_tier(self, loaded):
+        lower, rmr = self._buildup_context("2000")
+        upper, _ = self._buildup_context("2000.0001")
+        assert lower.outcome == upper.outcome == rmr.EXACT_MATCH
+        assert lower.tariff.selected_tier.unit_rate == D("0.10")
+        assert upper.tariff.selected_tier.unit_rate == D("0.15")
+        assert lower.tariff.selected_tier.max_quantity == upper.tariff.selected_tier.min_quantity == D("2000.0001")
+        report = run(weights=(D("2000"), D("2000.0001")), lanes=(("POM", "BNE"),), currencies=("PGK",))
+        assert D(one(report, scenario="2000kg|D2A|PGK", product_code="EXP-BUILDUP",
+                     aspect="cost_amount").shadow) == D("200.00")
+        assert D(one(report, scenario="2000.0001kg|D2A|PGK", product_code="EXP-BUILDUP",
+                     aspect="cost_amount").shadow) == D("300.00")  # 0.15 x 2000.0001 = 300.000015
+
+    @pytest.mark.parametrize("weight", ["2000.00005", "2000.000049", "1999.99999", "100.12345", "0.00001"])
+    def test_a_weight_with_unsupported_precision_fails_closed(self, loaded, weight):
+        result, rmr = self._buildup_context(weight)
+        assert result.outcome == rmr.INVALID_CONTEXT
+        assert "decimal places" in result.reasons[0]
+        report = run(weights=(D(weight),), lanes=(("POM", "BNE"),), currencies=("PGK",))
+        blocked = pick(report, product_code="-", aspect="scenario")
+        assert blocked and all(r.classification == BLOCKED for r in blocked)
+        assert "INVALID_CONTEXT" in blocked[0].reason
+        assert pick(report, classification=MATCH) == []  # nothing is priced for that weight
+
+    @pytest.mark.parametrize("weight", ["2000.0001", "2000.00010", "100.1234", "30", "30.0"])
+    def test_supported_precision_is_priced_including_trailing_zeros(self, loaded, weight):
+        result, rmr = self._buildup_context(weight)
+        assert result.outcome == rmr.EXACT_MATCH
+
+    def test_precision_is_checked_for_every_tiered_tariff_not_only_build_up(self, loaded):
+        report = run(weights=(D("100.00005"),), lanes=(("POM", "BNE"),), currencies=("PGK",))
+        assert pick(report, product_code="EXP-FRT-AIR") == []
+        assert all(r.classification == BLOCKED for r in report.records)
 
     def test_a_line_wide_minimum_would_misstate_the_rule(self):
         # Documents why the minimum lives on the tier: one line minimum charges K30 at 30 kg.

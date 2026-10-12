@@ -9,7 +9,9 @@ Matrix.** Scope: AIR / EXPORT / direct / General Cargo, POM to BNE and POM to SY
 | Rule | Value |
 |---|---|
 | BUY freight | Existing `ExportCOGS` for BNE and SYD, PGK, approved 2026-10-12 until superseded; supplier Air Niugini (PX) |
-| SELL freight | **Current EFM PGK Export Rate Card**; continuation approved 2026-10-12 despite the printed 2025 expiry; PGK tariffs only, no AUD SELL tariff |
+| SELL freight | **Current EFM PGK Export Rate Card**; Commercial Manager continuation approved 2026-10-12 until superseded despite the printed 2025 expiry; PGK tariffs only, no AUD SELL tariff |
+| Validity | Every SELL and BUY sheet is `valid_from = 2026-10-12`, `valid_until = null`. Printed and stored legacy dates are kept in `source_reference` as provenance, not as authority |
+| Database-only carry-forward | `EXP-HANDLE` (SELL 50, BUY 35) and `EXP-FSC-AIR` (SELL 0.80/kg) are Commercial Manager-approved Pilot carry-forward as at 2026-10-12. They are labelled `DATABASE-ONLY, no external document`; no documentary evidence is implied |
 | AUD quote | `AUD SELL = (PGK SELL / TT BUY) x 1.10` from `FxMarketRate`; export CAF 10% applies only when a conversion occurs; no conversion means no FX and no CAF |
 | Margin | An explicit SELL tariff receives no additional margin |
 
@@ -33,7 +35,7 @@ The legacy `ExportSellRate` rows (#307 and #319: minimum K200; BNE 7.90 / 7.40 /
 
 | File | Loader / tool | Role |
 |---|---|---|
-| `export-pilot-master-data-2026-10-12.json` | `load_rate_matrix_master_data` | PX carrier party and 12 mirrors; GST and category approval flags false, so the loader reports BLOCKED |
+| `export-pilot-master-data-2026-10-12.json` | `load_rate_matrix_master_data` | PX carrier party (legal name **Air Niugini Limited**, trade name Air Niugini, PG, CARRIER; evidence: existing General Sales Agency) and 12 mirrors; GST and category approval flags false, so the loader reports BLOCKED |
 | `export-pilot-tariffs-2026-10-12.json` | `load_rate_matrix_manifest` | 3 BUY and 4 SELL sheets, 21 lines, 21 tiers, native PGK |
 | `export-approved-differences-2026-10-12.json` | `shadow_price_rate_matrix_export --approved-differences` | Approved-authority evidence for the differences between legacy rows and the manifest |
 
@@ -44,15 +46,17 @@ changes).
 
 ### Sheets
 
-| Sheet | Side | Validity | Supplier |
-|---|---|---|---|
-| Air freight POM-BNE POM-SYD (`EXP-FRT-AIR`), min K160 | BUY | 2026-10-12, open | Air Niugini (PX) |
-| Terminal charges POM: DOC 35, AWB 35, TERM 35, SCREEN 0.17/kg + 35, **BUILDUP per-tier** | BUY | 2026-10-12, open | Air Niugini (PX) |
-| `EXP-HANDLE` 35 (database value only) | BUY | 2026-10-12, open | Air Niugini (PX) |
-| Air freight POM-BNE POM-SYD, min K180, tiers above | SELL | 2026-01-01..2026-12-31 | none |
-| Origin charges POM: DOC 50, AWB 50, SCREEN 0.20/kg + 45, TERM 50, BUILDUP 0.20/kg min 50, CLEAR 300, AGENCY 250, PICKUP 1.50/kg min 95 cap 500, FSC-PICKUP 10% of PICKUP | SELL | 2026-01-01..2026-12-31 | none |
-| `EXP-HANDLE` 50 (database value only) | SELL | 2026-01-01..2026-12-31 | none |
-| `EXP-FSC-AIR` 0.80/kg (database value only) | SELL | 2025-01-01..2030-12-31 | none |
+All sheets: AIR, EXPORT, native PGK, `valid_from` 2026-10-12, `valid_until` null.
+
+| Sheet | Side | Supplier |
+|---|---|---|
+| Air freight POM-BNE POM-SYD (`EXP-FRT-AIR`), min K160 | BUY | Air Niugini Limited (PX) |
+| Terminal charges POM: DOC 35, AWB 35, TERM 35, SCREEN 0.17/kg + 35, BUILDUP per-tier | BUY | Air Niugini Limited (PX) |
+| `EXP-HANDLE` 35 (database-only carry-forward) | BUY | Air Niugini Limited (PX) |
+| Air freight POM-BNE POM-SYD, min K180, tiers above | SELL | none |
+| Origin charges POM: DOC 50, AWB 50, SCREEN 0.20/kg + 45, TERM 50, BUILDUP 0.20/kg min 50, CLEAR 300, AGENCY 250, PICKUP 1.50/kg min 95 cap 500, FSC-PICKUP 10% of PICKUP | SELL | none |
+| `EXP-HANDLE` 50 (database-only carry-forward) | SELL | none |
+| `EXP-FSC-AIR` 0.80/kg (database-only carry-forward) | SELL | none |
 
 Freight BUY tiers (PGK per kg, minimum K160): BNE 6.30 / 5.90 / 5.70 / 5.40; SYD 8.00 / 7.50 / 7.10 / 6.80 at
 0 / 100 / 200 / 500 kg. Payment term is blank (ANY) on every line. Origin SELL charges are unchanged.
@@ -80,11 +84,12 @@ export rules (`quotes/tax_policy.py`, `enable_export_gst`). Special cargo is exc
 
 ## Facts reported before inclusion
 
-- **`EXP-HANDLE`**: `local_sell_rates#114` (ANY) and `#139` (PREPAID), POM EXPORT, PGK FIXED 50.00, valid
-  2026-01-01..2026-12-31; BUY `local_cogs_rates#23` PGK FIXED 35.00, valid 2026-01-01..2026-12-31. The PX reference
-  file has no handling line, so the BUY value is database-only.
-- **`EXP-FSC-AIR`**: `local_sell_rates#206`, POM EXPORT, PGK PER_KG 0.8000, payment term ANY, valid
-  2025-01-01..2030-12-31. No BUY row and no AUD row. The five-year validity is the stored value.
+- **`EXP-HANDLE`**: `local_sell_rates#114` (ANY) and `#139` (PREPAID), POM EXPORT, PGK FIXED 50.00, stored validity
+  2026-01-01..2026-12-31; BUY `local_cogs_rates#23` PGK FIXED 35.00, stored validity 2026-01-01..2026-12-31. The PX
+  reference file has no handling line. Database-only; Commercial Manager-approved Pilot carry-forward 2026-10-12.
+- **`EXP-FSC-AIR`**: `local_sell_rates#206`, POM EXPORT, PGK PER_KG 0.8000, payment term ANY, stored validity
+  2025-01-01..2030-12-31 (kept as provenance only). No BUY row and no AUD row. Database-only; Commercial Manager-approved
+  Pilot carry-forward 2026-10-12, valid from that date.
 
 ## Rate Matrix contract change: per-tier minimum
 
@@ -101,7 +106,13 @@ expressed without misstating either 30-45 kg or 100-299 kg. **`RateTier.min_char
   `Tier.min_charge` and emits it in `as_dict()` only when present.
 - The build-up is loaded as `[0,100)` rate 0.00; `[100,2000.0001)` rate 0.10 minimum 30.00; `[2000.0001,open)` rate
   0.15 minimum 30.00. Tier quantities carry four decimal places and the upper bound is exclusive, so ">2000 kg" is
-  encoded as 2000.0001; 2000 kg prices at 0.10 and 2000.5 kg at 0.15.
+  encoded as 2000.0001: 2000 kg prices at 0.10 and 2000.0001 kg at 0.15.
+- **Precision fail-closed.** `RateTier` bounds hold four decimal places, so a weight with more precision could sit
+  between two representable bounds and cross a break wrongly (2000.00005 kg is above 2000 but below 2000.0001). The
+  resolver therefore returns `INVALID_CONTEXT` for any tiered resolution whose `chargeable_weight` has more than four
+  decimal places (trailing zeros are fine). The shadow turns that into `BLOCKED`; nothing is priced. The check applies
+  to every tiered tariff, not only build-up. The adapter does not round chargeable weight today, so production wiring must supply
+  weights at tier precision or round them under an approved rule.
 - **Production rule function unchanged.** `core.charge_rules.evaluate_tiered_break_rule` applies one minimum
   to the whole line. The shadow evaluates a tariff whose tiers carry minimums with that same production rule,
   passing the selected tier's minimum. Wiring the Rate Matrix into the production engine will need the same
