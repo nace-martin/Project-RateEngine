@@ -43,7 +43,7 @@ from pricing_v4.engine.import_engine import (
     PaymentTerm,
     ServiceScope,
 )
-from pricing_v4.models import ProductCode
+from pricing_v4.models import LocalSellRate, ProductCode
 from pricing_v4.services import rate_matrix_resolver as resolver
 from pricing_v4.services.fx_resolver import FxResolutionError
 from pricing_v4.services.rate_matrix_manifest import read_only_database
@@ -110,11 +110,36 @@ class Line:
         return " -> ".join(steps) + (" (explicit SELL tariff)" if self.leg == "DESTINATION" else " (cost-plus)")
 
 
+@dataclass(frozen=True)
+class SourceRow:
+    """The legacy destination SELL row the production engine actually selected for a charge.
+
+    ``facts`` are the row's native pricing facts (currency, rate type, amounts, breaks, validity). They let a
+    converted line be tied to the native tariff it was converted from.
+    """
+
+    row_id: int
+    currency: str
+    payment_term: str
+    facts: tuple
+
+
 @dataclass
 class Priced:
     lines: dict[str, Line]
     totals: dict[str, Decimal]
     conversions: list = field(default_factory=list)
+    sources: dict[str, tuple] = field(default_factory=dict)  # product code -> distinct SourceRow tuple
+
+
+def native_row_facts(row) -> tuple:
+    """Native pricing facts of one legacy LocalSellRate row, comparable across rows."""
+    breaks = json.dumps(row.weight_breaks, sort_keys=True, default=str) if row.weight_breaks else ""
+    return (
+        row.product_code_id, row.location, row.direction, row.currency, row.rate_type, str(row.amount),
+        bool(row.is_additive), str(row.additive_flat_amount), str(row.min_charge), str(row.max_charge),
+        row.percent_of_product_code_id, breaks, row.valid_from.isoformat(), row.valid_until.isoformat(),
+    )
 
 
 @dataclass
@@ -243,6 +268,26 @@ def _shadow_rate(tariff: resolver.ResolvedTariff, *, supplier: str | None) -> Sh
     else:  # pragma: no cover - the contract has no other basis
         raise ShadowBlocked("UNSUPPORTED_BASIS", f"Rate basis {basis} is not supported by the shadow.")
     return rate
+
+
+class LegacyRecordingImportEngine(ImportPricingEngine):
+    """The production import engine, unchanged, that also remembers which legacy destination SELL row it chose.
+
+    Pure pass-through: the returned rate is exactly what the production lookup returns. The recorded rows
+    are provenance only; they never alter an amount.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.source_rows: dict[str, dict[int, SourceRow]] = {}
+
+    def _get_destination_sell_rate(self, pc):
+        record = super()._get_destination_sell_rate(pc)
+        if record is not None and isinstance(getattr(record, "pk", None), int) and hasattr(record, "payment_term"):
+            self.source_rows.setdefault(pc.code, {})[record.pk] = SourceRow(
+                record.pk, record.currency, record.payment_term, native_row_facts(record)
+            )
+        return record
 
 
 class _MatrixLookup:
@@ -397,6 +442,8 @@ class _Stage2:
         self.max_fx_age_days, self.using = max_fx_age_days, using
         self.report = Stage2Report(quote_date=quote_date)
         self._fx_seen: dict[str, dict[str, Any]] = {}
+        # Stage-1 legacy native source rows by (side, charge, context): (row id, native facts, currency).
+        self._stage1_rows: dict[tuple[str, str, str], tuple[int, tuple, str]] = {}
 
     # ---------------------------------------------------------------- policy
 
@@ -472,7 +519,7 @@ class _Stage2:
         stage1 = self._stage1_records(origin, destination)
         for scenario in self._scenarios(origin, destination):
             try:
-                legacy = self._price(ImportPricingEngine, scenario, origin, destination, policy)
+                legacy = self._price(LegacyRecordingImportEngine, scenario, origin, destination, policy)
                 shadow = self._price(MatrixShadowImportEngine, scenario, origin, destination, policy, matrix=True)
             except ShadowBlocked as blocked:
                 self._emit(scenario, "-", "scenario", BLOCKED, reason=f"{blocked.code}: {blocked.message}")
@@ -507,7 +554,8 @@ class _Stage2:
         if matrix:
             kwargs["matrix"] = _MatrixLookup(scenario, origin, destination, self.quote_date, self.using)
             kwargs["legacy_codes"] = legacy_codes
-        result = engine_class(**kwargs).calculate_quote()
+        engine = engine_class(**kwargs)
+        result = engine.calculate_quote()
         lines = {}
         for item in result.line_items:
             lines[item.product_code] = Line(
@@ -523,7 +571,11 @@ class _Stage2:
             "total_sell_incl_gst": result.total_sell_incl_gst, "total_cost_pgk": result.total_cost_pgk,
             "total_margin": result.total_margin,
         }
-        return Priced(lines, totals, list((result.audit_metadata or {}).get("conversions") or []))
+        sources = {
+            code: tuple(rows[key] for key in sorted(rows))
+            for code, rows in (getattr(engine, "source_rows", None) or {}).items()
+        }
+        return Priced(lines, totals, list((result.audit_metadata or {}).get("conversions") or []), sources)
 
     def _fx_checks(self, scenario: Scenario, *priced: Priced) -> None:
         # Provenance comes from the conversions the engine actually performed. Nothing is resolved here,
@@ -564,6 +616,22 @@ class _Stage2:
         for record in stage1.records:
             if record.classification != "MATCH":
                 index.setdefault((record.side, record.product_code, record.context), []).append(record)
+        # Which legacy row Stage-1 compared in each context, with that row's native facts.
+        self._stage1_rows = {}
+        row_ids = {
+            (p["side"], p["product_code"], p["context"]): p["legacy"]["id"]
+            for p in stage1.provenance
+            if p.get("side") == "SELL" and isinstance(p.get("legacy"), dict)
+            and p["legacy"].get("model") == "LocalSellRate" and isinstance(p["legacy"].get("id"), int)
+        }
+        if row_ids:
+            rows = {
+                row.pk: row
+                for row in LocalSellRate.objects.using(self.using).filter(pk__in=set(row_ids.values()))
+            }
+            for key, pk in row_ids.items():
+                if pk in rows:
+                    self._stage1_rows[key] = (pk, native_row_facts(rows[pk]), rows[pk].currency)
         return index
 
     def _chain(self, code: str) -> list[str]:
@@ -598,6 +666,64 @@ class _Stage2:
             if record.aspect in wanted:
                 (explained if record.evidence else unexplained).append(record.aspect)
         return sorted(set(explained)), sorted(set(unexplained))
+
+    def _converted_fallback_evidence(
+        self, s: Scenario, code: str, legacy: Priced, shadow: Priced, index
+    ) -> tuple[list[str], list[str]]:
+        """Approved native evidence for a charge the legacy engine priced from a converted fallback row.
+
+        Legacy PREPAID AUD can select a PGK row and convert it, so Stage-1 (which compares native rows in
+        the context's own currency) has no record under ``PREPAID/AUD``. The approved native difference is
+        attributed to that line only when every link is proven:
+
+        - the engine itself reports exactly one legacy source row for this charge;
+        - the line was converted from that row's currency (explicit lineage; any conversion evidence the
+          engine recorded for this charge must agree);
+        - the Rate Matrix side prices nothing for this charge in the same scenario;
+        - a Stage-1 context in the source row's native currency compared a legacy row with identical native
+          facts, and its only pricing-relevant record is an approved ``presence`` difference
+          (legacy present, Rate Matrix absent) with registry evidence.
+
+        Anything missing, ambiguous or different returns nothing, so the line stays UNEXPLAINED.
+        """
+        none: tuple[list[str], list[str]] = ([], [])
+        line = legacy.lines.get(code)
+        sources = legacy.sources.get(code) or ()
+        if line is None or len(sources) != 1:
+            return none
+        source = sources[0]
+        right = shadow.lines.get(code)
+        if right is not None and not right.is_rate_missing:
+            return none
+        if not line.fx_applied or source.currency == line.sell_currency or line.sell_currency != s.quote_currency:
+            return none
+        for conversion in legacy.conversions:
+            if conversion.get("product_code") == code and (
+                conversion.get("role") != "SELL" or conversion.get("from_currency") != source.currency
+                or conversion.get("to_currency") != s.quote_currency
+            ):
+                return none
+        wanted = set(PRICING_ASPECTS) | {weight_aspect(s.weight)}
+        proven: list[tuple[str, int]] = []
+        for (side, member, context), (row_id, facts, currency) in sorted(self._stage1_rows.items()):
+            if side != "SELL" or member != code or context.partition("/")[2] != source.currency:
+                continue
+            if currency != source.currency or facts != source.facts:
+                continue
+            records = [r for r in index.get((side, member, context), []) if r.aspect in wanted]
+            if not records or any(
+                r.aspect != "presence" or r.legacy != "present" or r.matrix != "absent" or not r.evidence
+                for r in records
+            ):
+                return none  # any other pricing-relevant record, or unapproved evidence, blocks inheritance
+            proven.append((context, row_id))
+        if not proven:
+            return none
+        context, row_id = proven[0]
+        return [
+            f"presence (converted {source.currency} fallback row LocalSellRate#{source.row_id} has the native "
+            f"facts of Stage-1 {context} row LocalSellRate#{row_id})"
+        ], []
 
     def _emit(self, scenario, product_code, aspect, classification, legacy=None, shadow=None, currency="",
               stage="", reason=""):
@@ -649,6 +775,10 @@ class _Stage2:
                     continue
                 side, context = self._side_context(line, s)
                 found_explained, found_unexplained = self._native_evidence(index, side, member, context, s.weight)
+                if side == "SELL" and not found_explained and not found_unexplained:
+                    found_explained, found_unexplained = self._converted_fallback_evidence(
+                        s, member, legacy, shadow, index
+                    )
                 tag = "" if member == code else f"{member}:"
                 explained += [f"{tag}{a}" for a in found_explained]
                 unexplained += [f"{tag}{a}" for a in found_unexplained]
