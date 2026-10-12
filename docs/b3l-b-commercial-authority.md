@@ -81,10 +81,6 @@ business sign-off of the shadow report.
   with no PGK equivalent.
 - A destination SELL tariff stored only in PGK on a PREPAID AUD quote genuinely converts and needs FX.
   In the local data this is `IMP-LOADING-DEST`, so real PREPAID AUD scenarios still need an AUD/PGK rate.
-- **BSP side-labelling blocks loading real rates (open, needs a decision).** A read-only fetch of the
-  BSP page on 2026-10-11 returned, for AUD, a customer-buy rate of 3.2489 and a customer-sell rate of
-  3.0979 PGK per AUD. `fetch_fx` rejects that data with `TT SELL is below TT BUY for AUD/PGK`, because the
-  provider labels the higher figure BUY and the loader requires `tt_sell >= tt_buy`. Until the label
-  mapping is confirmed against the BSP column meaning, no real BSP rate can be loaded, and the approved
-  rule "FCY supplier cost converts at TT SELL" cannot be mapped to a stored column with certainty (the
-  two candidate figures differ by about 4.9%). This gate does not change the loader or seed any rate.
+- **BSP side labelling (resolved in B3L-C).** The loader inverted the bank side, so `fetch_fx` rejected real
+  BSP data with `TT SELL is below TT BUY`. See `docs/b3l-c-bsp-fx-mapping.md`: stored TT BUY is
+  `1 / BSP TT Buy` and stored TT SELL is `1 / BSP TT Sell`, so supplier cost converts at the higher rate.
