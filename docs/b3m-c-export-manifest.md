@@ -164,3 +164,16 @@ minimums, and the export CAF being approved for AUD conversion of explicit SELL 
 
 No manifest applied, no FX or policy change, no ServiceComponent twin, no Rate Matrix flag, no corridor
 automation, no production wiring, and no import behaviour change.
+
+## B3M-D: category/GST approval and local apply
+
+Commercial Manager approved the 12 export categories and GST treatments on 2026-10-12 (FREIGHT/ZERO_RATED for
+`EXP-FRT-AIR`; CLEARANCE/STANDARD for `EXP-CLEAR`; ORIGIN/STANDARD for the rest). Only the approval flags,
+references and evidence in the master-data manifest changed; categories, treatments and every tariff value are
+unchanged. Reviewed hashes: master data `d7d39aab031737a67e1752b376fbe4b7ef975aa2e4dd85464063df3b34d5b1b1`,
+tariffs `c72d62900bf2e380030ed37c62e6cbd5a80e951db50d08d33b76f933d2988fad`.
+
+Applied to the **local** development database only, with the reviewed hashes: migration 0046, 14 master-data rows
+(1 party and role, 12 mirrors, plus the `commercial_product_code` and party rows counted in the apply report) and
+70 tariff rows (7 sheets, 21 lines, 21 applicabilities, 21 tiers). Re-running both dry runs and both applies writes
+nothing (REUSE). Legacy rate tables are unchanged. The Rate Matrix remains unwired from production.
