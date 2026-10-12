@@ -173,7 +173,6 @@ references and evidence in the master-data manifest changed; categories, treatme
 unchanged. Reviewed hashes: master data `d7d39aab031737a67e1752b376fbe4b7ef975aa2e4dd85464063df3b34d5b1b1`,
 tariffs `c72d62900bf2e380030ed37c62e6cbd5a80e951db50d08d33b76f933d2988fad`.
 
-Applied to the **local** development database only, with the reviewed hashes: migration 0046, 14 master-data rows
-(1 party and role, 12 mirrors, plus the `commercial_product_code` and party rows counted in the apply report) and
+Applied to the **local** development database only, with the reviewed hashes: migration 0046, 14 master-data rows (1 party, 1 party role, 12 mirrors) and
 70 tariff rows (7 sheets, 21 lines, 21 applicabilities, 21 tiers). Re-running both dry runs and both applies writes
 nothing (REUSE). Legacy rate tables are unchanged. The Rate Matrix remains unwired from production.
