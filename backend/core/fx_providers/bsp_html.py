@@ -63,6 +63,15 @@ class BspHtmlProvider:
             date_node = section.select_one("header h2 time") if section else None
             if date_node is None:
                 raise RuntimeError("BSP published FX effective date missing")
+            # Orientation guard: every figure below is read as FOREIGN CURRENCY PER 1 KINA. The page
+            # states this in its heading ("Exchange rates for Kina"). If the heading changes, the
+            # orientation is no longer proven and nothing may be loaded.
+            heading = section.select_one("header h2")
+            heading_text = heading.get_text(" ", strip=True).lower() if heading else ""
+            if "for kina" not in heading_text:
+                raise RuntimeError(
+                    "BSP rate table orientation not confirmed: heading is not 'Exchange rates for Kina'"
+                )
             try:
                 effective_date = datetime.strptime(
                     date_node.get_text(strip=True), "%a, %d %B %Y"
@@ -124,18 +133,17 @@ class BspHtmlProvider:
                     if raw_sell != Decimal("0.0000"):
                         out.append(RateRow(observed_at, base, quote, self._round4(raw_sell), "SELL", "bsp_html", effective_date))
                 elif quote == "PGK" and base in table:
-                    # Invert rates and SWAP labels:
-                    # BSP TT_BUY = rate when bank buys FCY from you (you SELL FCY) → becomes our SELL
-                    # BSP TT_SELL = rate when bank sells FCY to you (you BUY FCY) → becomes our BUY
+                    # Invert to PGK per 1 FCY and KEEP the bank side:
+                    # BSP "TT Buy"  = bank buys FCY  -> normalized TT BUY  = 1 / TT Buy  (the lower PGK per FCY)
+                    # BSP "TT Sell" = bank sells FCY -> normalized TT SELL = 1 / TT Sell (the higher PGK per FCY)
+                    # Inverting a rate quoted as FCY per PGK reverses the numeric order but not the side.
                     buy_raw = table[base]["TT_BUY"]
                     sell_raw = table[base]["TT_SELL"]
-                    if sell_raw and sell_raw != Decimal("0.0000"):
-                        # Customer BUY rate = inverted BSP TT_SELL
-                        inv_buy = self._round4(Decimal(1) / sell_raw)
-                        out.append(RateRow(observed_at, base, quote, inv_buy, "BUY", "bsp_html", effective_date))
                     if buy_raw and buy_raw != Decimal("0.0000"):
-                        # Customer SELL rate = inverted BSP TT_BUY
-                        inv_sell = self._round4(Decimal(1) / buy_raw)
+                        inv_buy = (Decimal(1) / buy_raw).quantize(Decimal("0.00000001"))
+                        out.append(RateRow(observed_at, base, quote, inv_buy, "BUY", "bsp_html", effective_date))
+                    if sell_raw and sell_raw != Decimal("0.0000"):
+                        inv_sell = (Decimal(1) / sell_raw).quantize(Decimal("0.00000001"))
                         out.append(RateRow(observed_at, base, quote, inv_sell, "SELL", "bsp_html", effective_date))
             except Exception as e:
                 logger.error(f"BSP FX Scraper: Unexpected error processing pair {base}:{quote}. Error: {e}")

@@ -68,7 +68,9 @@ class Command(BaseCommand):
                 raise CommandError(f"Nonpositive FX rate for {base}/{quote}")
             if base == 'PGK' and quote != 'PGK':
                 fcy = quote
-                tt_buy, tt_sell = Decimal(1) / sell.rate, Decimal(1) / buy.rate
+                # Rows are FCY per 1 PGK with the bank side kept (BUY = bank buys FCY). Invert each to
+                # PGK per 1 FCY WITHOUT swapping sides: the lower PGK per FCY is TT BUY, the higher TT SELL.
+                tt_buy, tt_sell = Decimal(1) / buy.rate, Decimal(1) / sell.rate
             elif quote == 'PGK' and base != 'PGK':
                 fcy = base
                 tt_buy, tt_sell = buy.rate, sell.rate
