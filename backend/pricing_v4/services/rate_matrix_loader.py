@@ -430,7 +430,10 @@ def _line_payload(raw: dict, geography: dict[str, uuid.UUID], codes: dict[str, C
         "origin_id": geography[applicability["origin_iata"]] if applicability["origin_iata"] else None,
         "destination_id": geography[applicability["destination_iata"]] if applicability["destination_iata"] else None,
         "tiers": [
-            (_decimal(tier["min_quantity"]), _decimal(tier["max_quantity"]), _decimal(tier["unit_rate"]))
+            (
+                _decimal(tier["min_quantity"]), _decimal(tier["max_quantity"]), _decimal(tier["unit_rate"]),
+                _decimal(tier.get("min_charge")),
+            )
             for tier in raw["tiers"]
         ],
         "product_code_ref": codes[raw["product_code"]],
@@ -459,7 +462,7 @@ def _line_key(line: dict[str, Any]) -> tuple:
         line["direction"], str(line["origin_id"]) if line["origin_id"] else None,
         str(line["destination_id"]) if line["destination_id"] else None,
         line["payment_term"], line["service_level"], line["commodity_category"], line["equipment_type"],
-        tuple(sorted((_q(lo), _q(hi), _q(rate)) for lo, hi, rate in line["tiers"])),
+        tuple(sorted((_q(lo), _q(hi), _q(rate), _q(minimum)) for lo, hi, rate, minimum in line["tiers"])),
     )
 
 
@@ -477,7 +480,7 @@ def _stored_line(line: RateLine) -> dict[str, Any]:
         "commodity_category": applicability.commodity_category,
         "equipment_type": applicability.equipment_type,
         "origin_id": applicability.origin_id, "destination_id": applicability.destination_id,
-        "tiers": [(t.min_quantity, t.max_quantity, t.unit_rate) for t in line.tiers.all()],
+        "tiers": [(t.min_quantity, t.max_quantity, t.unit_rate, t.min_charge) for t in line.tiers.all()],
     }
 
 
@@ -553,7 +556,9 @@ def _execute(plan: TariffPlan, operator, using: str) -> None:
             applicability.full_clean()
             applicability.save(using=using, force_insert=True)
 
-            for lower, upper, rate in raw["tiers"]:
-                tier = RateTier(rate_line=line, min_quantity=lower, max_quantity=upper, unit_rate=rate)
+            for lower, upper, rate, minimum in raw["tiers"]:
+                tier = RateTier(
+                    rate_line=line, min_quantity=lower, max_quantity=upper, unit_rate=rate, min_charge=minimum
+                )
                 tier.save(using=using, force_insert=True)  # RateTier.save() runs full_clean()
             line.full_clean()

@@ -581,6 +581,16 @@ class RateTier(models.Model):
         decimal_places=4,
         help_text="Unit rate applicable to this tier quantity bracket",
     )
+    min_charge = models.DecimalField(
+        max_digits=18,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text=(
+            "Optional minimum charge that applies only when this tier prices the weight. "
+            "NULL means this tier has no minimum. Not allowed together with a line minimum."
+        ),
+    )
 
     class Meta:
         db_table = "rate_tier"
@@ -593,6 +603,10 @@ class RateTier(models.Model):
                 condition=models.Q(max_quantity__isnull=True)
                 | models.Q(max_quantity__gt=models.F("min_quantity")),
                 name="rate_tier_max_quantity_gt_min",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(min_charge__isnull=True) | models.Q(min_charge__gte=0),
+                name="rate_tier_min_charge_non_negative",
             ),
             models.CheckConstraint(
                 condition=models.Q(unit_rate__gte=0),
@@ -610,6 +624,16 @@ class RateTier(models.Model):
             )
         if self.unit_rate is not None and self.unit_rate < 0:
             raise ValidationError({"unit_rate": "Unit rate must be non-negative."})
+        if self.min_charge is not None and self.min_charge < 0:
+            raise ValidationError({"min_charge": "Tier minimum charge must be non-negative."})
+        if (
+            self.min_charge is not None
+            and self.rate_line_id
+            and self.rate_line.min_charge is not None
+        ):
+            raise ValidationError(
+                {"min_charge": "A tier minimum is not allowed on a line that also has a line minimum."}
+            )
 
         # max_quantity > min_quantity when present
         if (

@@ -1,0 +1,235 @@
+{
+  "manifest_version": 1,
+  "parties": [
+    {
+      "legal_name": "Air Niugini Limited",
+      "trade_name": "Air Niugini",
+      "entity_type": "COMPANY",
+      "country_code": "PG",
+      "roles": [
+        "CARRIER"
+      ],
+      "identifiers": [],
+      "evidence": "Carrier PX named as BUY supplier by Commercial Manager 2026-10-12. Existing General Sales Agency agreement identifies Air Niugini Limited operating as AIR NIUGINI (trade name). Tax identifier not evidenced in the repository."
+    }
+  ],
+  "legacy_product_codes": [],
+  "commercial_product_codes": [
+    {
+      "code": "EXP-FRT-AIR",
+      "name": "Export Air Freight",
+      "category": "FREIGHT",
+      "sub_category": "",
+      "gst_treatment": "ZERO_RATED",
+      "charge_basis_default": "TIERED_WEIGHT",
+      "is_active": true,
+      "legacy_product_code": {
+        "id": 1001,
+        "code": "EXP-FRT-AIR"
+      },
+      "gst_approval": {
+        "approved": false,
+        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+      },
+      "evidence": "Legacy ProductCode 1001 EXP-FRT-AIR; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+    },
+    {
+      "code": "EXP-FSC-AIR",
+      "name": "Airline Export Fuel Surcharge",
+      "category": "ORIGIN",
+      "sub_category": "",
+      "gst_treatment": "STANDARD",
+      "charge_basis_default": "PER_KG",
+      "is_active": true,
+      "legacy_product_code": {
+        "id": 1002,
+        "code": "EXP-FSC-AIR"
+      },
+      "gst_approval": {
+        "approved": false,
+        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+      },
+      "evidence": "Legacy ProductCode 1002 EXP-FSC-AIR; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+    },
+    {
+      "code": "EXP-DOC",
+      "name": "Export Documentation Fee",
+      "category": "ORIGIN",
+      "sub_category": "",
+      "gst_treatment": "STANDARD",
+      "charge_basis_default": "FLAT",
+      "is_active": true,
+      "legacy_product_code": {
+        "id": 1010,
+        "code": "EXP-DOC"
+      },
+      "gst_approval": {
+        "approved": false,
+        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+      },
+      "evidence": "Legacy ProductCode 1010 EXP-DOC; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+    },
+    {
+      "code": "EXP-AWB",
+      "name": "Export AWB Fee",
+      "category": "ORIGIN",
+      "sub_category": "",
+      "gst_treatment": "STANDARD",
+      "charge_basis_default": "FLAT",
+      "is_active": true,
+      "legacy_product_code": {
+        "id": 1011,
+        "code": "EXP-AWB"
+      },
+      "gst_approval": {
+        "approved": false,
+        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+      },
+      "evidence": "Legacy ProductCode 1011 EXP-AWB; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+    },
+    {
+      "code": "EXP-CLEAR",
+      "name": "Export Customs Clearance",
+      "category": "CLEARANCE",
+      "sub_category": "",
+      "gst_treatment": "STANDARD",
+      "charge_basis_default": "FLAT",
+      "is_active": true,
+      "legacy_product_code": {
+        "id": 1020,
+        "code": "EXP-CLEAR"
+      },
+      "gst_approval": {
+        "approved": false,
+        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+      },
+      "evidence": "Legacy ProductCode 1020 EXP-CLEAR; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+    },
+    {
+      "code": "EXP-AGENCY",
+      "name": "Export Agency Fee",
+      "category": "ORIGIN",
+      "sub_category": "",
+      "gst_treatment": "STANDARD",
+      "charge_basis_default": "FLAT",
+      "is_active": true,
+      "legacy_product_code": {
+        "id": 1021,
+        "code": "EXP-AGENCY"
+      },
+      "gst_approval": {
+        "approved": false,
+        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+      },
+      "evidence": "Legacy ProductCode 1021 EXP-AGENCY; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+    },
+    {
+      "code": "EXP-TERM",
+      "name": "Export Terminal Fee",
+      "category": "ORIGIN",
+      "sub_category": "",
+      "gst_treatment": "STANDARD",
+      "charge_basis_default": "FLAT",
+      "is_active": true,
+      "legacy_product_code": {
+        "id": 1030,
+        "code": "EXP-TERM"
+      },
+      "gst_approval": {
+        "approved": false,
+        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+      },
+      "evidence": "Legacy ProductCode 1030 EXP-TERM; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+    },
+    {
+      "code": "EXP-BUILDUP",
+      "name": "Export Build-Up Fee",
+      "category": "ORIGIN",
+      "sub_category": "",
+      "gst_treatment": "STANDARD",
+      "charge_basis_default": "PER_KG",
+      "is_active": true,
+      "legacy_product_code": {
+        "id": 1031,
+        "code": "EXP-BUILDUP"
+      },
+      "gst_approval": {
+        "approved": false,
+        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+      },
+      "evidence": "Legacy ProductCode 1031 EXP-BUILDUP; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+    },
+    {
+      "code": "EXP-HANDLE",
+      "name": "Export Handling Fee",
+      "category": "ORIGIN",
+      "sub_category": "",
+      "gst_treatment": "STANDARD",
+      "charge_basis_default": "FLAT",
+      "is_active": true,
+      "legacy_product_code": {
+        "id": 1032,
+        "code": "EXP-HANDLE"
+      },
+      "gst_approval": {
+        "approved": false,
+        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+      },
+      "evidence": "Legacy ProductCode 1032 EXP-HANDLE; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+    },
+    {
+      "code": "EXP-SCREEN",
+      "name": "Export Security Screening",
+      "category": "ORIGIN",
+      "sub_category": "",
+      "gst_treatment": "STANDARD",
+      "charge_basis_default": "PER_KG",
+      "is_active": true,
+      "legacy_product_code": {
+        "id": 1040,
+        "code": "EXP-SCREEN"
+      },
+      "gst_approval": {
+        "approved": false,
+        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+      },
+      "evidence": "Legacy ProductCode 1040 EXP-SCREEN; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+    },
+    {
+      "code": "EXP-PICKUP",
+      "name": "Export Pickup/Collection",
+      "category": "ORIGIN",
+      "sub_category": "",
+      "gst_treatment": "STANDARD",
+      "charge_basis_default": "PER_KG",
+      "is_active": true,
+      "legacy_product_code": {
+        "id": 1050,
+        "code": "EXP-PICKUP"
+      },
+      "gst_approval": {
+        "approved": false,
+        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+      },
+      "evidence": "Legacy ProductCode 1050 EXP-PICKUP; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+    },
+    {
+      "code": "EXP-FSC-PICKUP",
+      "name": "Export Fuel Surcharge on Pickup",
+      "category": "ORIGIN",
+      "sub_category": "",
+      "gst_treatment": "STANDARD",
+      "charge_basis_default": "PERCENTAGE",
+      "is_active": true,
+      "legacy_product_code": {
+        "id": 1060,
+        "code": "EXP-FSC-PICKUP"
+      },
+      "gst_approval": {
+        "approved": false,
+        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+      },
+      "evidence": "Legacy ProductCode 1060 EXP-FSC-PICKUP; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+    }
+  ]
+}

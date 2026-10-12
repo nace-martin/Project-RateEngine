@@ -60,6 +60,9 @@ APPLICABILITY_KEYS = (
     "service_level", "commodity_category", "equipment_type",
 )
 TIER_KEYS = ("min_quantity", "max_quantity", "unit_rate")
+# A tier may also state its own minimum charge. The key is optional so existing manifests stay valid;
+# absent means null (no tier minimum).
+TIER_OPTIONAL_KEYS = ("min_charge",)
 
 # Applicability and scope dimensions where a blank value means "any".
 WILDCARD_DIMENSIONS = (
@@ -849,7 +852,7 @@ class _Validator:
 
         category = self.resolved_codes[code]["category"] if code_ok else None
         applicability = self._applicability(obj["applicability"], f"{path}.applicability", sheet, category)
-        tier_count = self._tiers(obj["tiers"], f"{path}.tiers", basis)
+        tier_count = self._tiers(obj["tiers"], f"{path}.tiers", basis, line_min_charge=obj.get("min_charge"))
 
         essentials = (sheet["rate_type"], sheet["transport_mode"], sheet["currency_code"], sheet["valid_from"], sheet["is_active"])
         if (
@@ -971,7 +974,7 @@ class _Validator:
 
     # ------------------------------------------------------------------ tiers
 
-    def _tiers(self, entry: Any, path: str, basis: str | None) -> int:
+    def _tiers(self, entry: Any, path: str, basis: str | None, line_min_charge: Any = None) -> int:
         tiers = self._list(entry, path)
         if tiers is None:
             return 0
@@ -986,9 +989,22 @@ class _Validator:
         parsed = []
         for index, tier in enumerate(tiers):
             tier_path = f"{path}[{index}]"
-            obj = self._object(tier, tier_path, TIER_KEYS)
+            checked = (
+                {k: v for k, v in tier.items() if k not in TIER_OPTIONAL_KEYS} if isinstance(tier, dict) else tier
+            )
+            obj = self._object(checked, tier_path, TIER_KEYS)
             if obj is None:
                 return len(tiers)
+            if "min_charge" in tier:
+                tier_minimum = self._decimal(tier, "min_charge", tier_path, nullable=True, max_digits=18, decimal_places=4)
+                if tier["min_charge"] is not None and tier_minimum is None:
+                    return len(tiers)
+                if tier_minimum is not None and line_min_charge is not None:
+                    self.report.error(
+                        "TIER_MINIMUM_WITH_LINE_MINIMUM", f"{tier_path}.min_charge",
+                        "A tier minimum is not allowed on a line that also states a line minimum.",
+                    )
+                    return len(tiers)
             lower = self._decimal(obj, "min_quantity", tier_path, nullable=False, max_digits=12, decimal_places=4)
             upper = self._decimal(obj, "max_quantity", tier_path, nullable=True, max_digits=12, decimal_places=4)
             rate = self._decimal(obj, "unit_rate", tier_path, nullable=False, max_digits=18, decimal_places=4)
