@@ -100,14 +100,23 @@ def load_matrix(world, tariffs=None):
     apply_tariffs([("tariffs.json", body)], operator=world["user"], reviewed_sha256=manifest_sha256(body))
 
 
+@pytest.fixture(autouse=True)
+def _fresh_export_code_cache():
+    """The export engine memoises ProductCode ids at module level; test rows are rolled back, so drop it."""
+    from pricing_v4.engine import export_engine
+
+    export_engine._RESOLVED_EXPORT_IDS_CACHE.clear()
+    yield
+    export_engine._RESOLVED_EXPORT_IDS_CACHE.clear()
+
+
 @pytest.fixture
 def world(db):
     for code in ("PGK", "AUD"):
         Currency.objects.get_or_create(code=code, defaults={"name": code})
     for iata, country in (("POM", "PG"), ("BNE", "AU"), ("SYD", "AU")):
-        location = GeoLocation.objects.create(
-            canonical_name=f"Test {iata}", country_code=country, location_type="AIRPORT"
-        )
+        location = GeoLocation(canonical_name=f"Test {iata}", country_code=country, location_type="AIRPORT")
+        location.save()
         GeoLocationIdentifier.objects.create(location=location, scheme="IATA", code=iata)
     carrier, _ = Carrier.objects.get_or_create(code="PX", defaults={"name": "Air Niugini", "carrier_type": "AIRLINE"})
     products = {}
