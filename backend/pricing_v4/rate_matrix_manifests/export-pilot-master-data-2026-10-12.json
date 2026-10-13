@@ -28,10 +28,10 @@
         "code": "EXP-FRT-AIR"
       },
       "gst_approval": {
-        "approved": false,
-        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+        "approved": true,
+        "reference": "Commercial Manager approval 2026-10-12 (Pilot Gate B3M-D): category and GST treatment as stated; treatment equals the legacy ProductCode and the PNG export rules (international freight zero-rated; origin services in PNG 10%)."
       },
-      "evidence": "Legacy ProductCode 1001 EXP-FRT-AIR; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+      "evidence": "Legacy ProductCode 1001 EXP-FRT-AIR; category and GST treatment approved by the Commercial Manager 2026-10-12 (Pilot Gate B3M-D)."
     },
     {
       "code": "EXP-FSC-AIR",
@@ -46,10 +46,10 @@
         "code": "EXP-FSC-AIR"
       },
       "gst_approval": {
-        "approved": false,
-        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+        "approved": true,
+        "reference": "Commercial Manager approval 2026-10-12 (Pilot Gate B3M-D): category and GST treatment as stated; treatment equals the legacy ProductCode and the PNG export rules (international freight zero-rated; origin services in PNG 10%)."
       },
-      "evidence": "Legacy ProductCode 1002 EXP-FSC-AIR; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+      "evidence": "Legacy ProductCode 1002 EXP-FSC-AIR; category and GST treatment approved by the Commercial Manager 2026-10-12 (Pilot Gate B3M-D)."
     },
     {
       "code": "EXP-DOC",
@@ -64,10 +64,10 @@
         "code": "EXP-DOC"
       },
       "gst_approval": {
-        "approved": false,
-        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+        "approved": true,
+        "reference": "Commercial Manager approval 2026-10-12 (Pilot Gate B3M-D): category and GST treatment as stated; treatment equals the legacy ProductCode and the PNG export rules (international freight zero-rated; origin services in PNG 10%)."
       },
-      "evidence": "Legacy ProductCode 1010 EXP-DOC; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+      "evidence": "Legacy ProductCode 1010 EXP-DOC; category and GST treatment approved by the Commercial Manager 2026-10-12 (Pilot Gate B3M-D)."
     },
     {
       "code": "EXP-AWB",
@@ -82,10 +82,10 @@
         "code": "EXP-AWB"
       },
       "gst_approval": {
-        "approved": false,
-        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+        "approved": true,
+        "reference": "Commercial Manager approval 2026-10-12 (Pilot Gate B3M-D): category and GST treatment as stated; treatment equals the legacy ProductCode and the PNG export rules (international freight zero-rated; origin services in PNG 10%)."
       },
-      "evidence": "Legacy ProductCode 1011 EXP-AWB; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+      "evidence": "Legacy ProductCode 1011 EXP-AWB; category and GST treatment approved by the Commercial Manager 2026-10-12 (Pilot Gate B3M-D)."
     },
     {
       "code": "EXP-CLEAR",
@@ -100,10 +100,10 @@
         "code": "EXP-CLEAR"
       },
       "gst_approval": {
-        "approved": false,
-        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+        "approved": true,
+        "reference": "Commercial Manager approval 2026-10-12 (Pilot Gate B3M-D): category and GST treatment as stated; treatment equals the legacy ProductCode and the PNG export rules (international freight zero-rated; origin services in PNG 10%)."
       },
-      "evidence": "Legacy ProductCode 1020 EXP-CLEAR; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+      "evidence": "Legacy ProductCode 1020 EXP-CLEAR; category and GST treatment approved by the Commercial Manager 2026-10-12 (Pilot Gate B3M-D)."
     },
     {
       "code": "EXP-AGENCY",
@@ -118,10 +118,10 @@
         "code": "EXP-AGENCY"
       },
       "gst_approval": {
-        "approved": false,
-        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+        "approved": true,
+        "reference": "Commercial Manager approval 2026-10-12 (Pilot Gate B3M-D): category and GST treatment as stated; treatment equals the legacy ProductCode and the PNG export rules (international freight zero-rated; origin services in PNG 10%)."
       },
-      "evidence": "Legacy ProductCode 1021 EXP-AGENCY; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+      "evidence": "Legacy ProductCode 1021 EXP-AGENCY; category and GST treatment approved by the Commercial Manager 2026-10-12 (Pilot Gate B3M-D)."
     },
     {
       "code": "EXP-TERM",
@@ -136,10 +136,10 @@
         "code": "EXP-TERM"
       },
       "gst_approval": {
-        "approved": false,
-        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+        "approved": true,
+        "reference": "Commercial Manager approval 2026-10-12 (Pilot Gate B3M-D): category and GST treatment as stated; treatment equals the legacy ProductCode and the PNG export rules (international freight zero-rated; origin services in PNG 10%)."
       },
-      "evidence": "Legacy ProductCode 1030 EXP-TERM; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+      "evidence": "Legacy ProductCode 1030 EXP-TERM; category and GST treatment approved by the Commercial Manager 2026-10-12 (Pilot Gate B3M-D)."
     },
     {
       "code": "EXP-BUILDUP",
@@ -154,10 +154,10 @@
         "code": "EXP-BUILDUP"
       },
       "gst_approval": {
-        "approved": false,
-        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+        "approved": true,
+        "reference": "Commercial Manager approval 2026-10-12 (Pilot Gate B3M-D): category and GST treatment as stated; treatment equals the legacy ProductCode and the PNG export rules (international freight zero-rated; origin services in PNG 10%)."
       },
-      "evidence": "Legacy ProductCode 1031 EXP-BUILDUP; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+      "evidence": "Legacy ProductCode 1031 EXP-BUILDUP; category and GST treatment approved by the Commercial Manager 2026-10-12 (Pilot Gate B3M-D)."
     },
     {
       "code": "EXP-HANDLE",
@@ -172,10 +172,10 @@
         "code": "EXP-HANDLE"
       },
       "gst_approval": {
-        "approved": false,
-        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+        "approved": true,
+        "reference": "Commercial Manager approval 2026-10-12 (Pilot Gate B3M-D): category and GST treatment as stated; treatment equals the legacy ProductCode and the PNG export rules (international freight zero-rated; origin services in PNG 10%)."
       },
-      "evidence": "Legacy ProductCode 1032 EXP-HANDLE; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+      "evidence": "Legacy ProductCode 1032 EXP-HANDLE; category and GST treatment approved by the Commercial Manager 2026-10-12 (Pilot Gate B3M-D)."
     },
     {
       "code": "EXP-SCREEN",
@@ -190,10 +190,10 @@
         "code": "EXP-SCREEN"
       },
       "gst_approval": {
-        "approved": false,
-        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+        "approved": true,
+        "reference": "Commercial Manager approval 2026-10-12 (Pilot Gate B3M-D): category and GST treatment as stated; treatment equals the legacy ProductCode and the PNG export rules (international freight zero-rated; origin services in PNG 10%)."
       },
-      "evidence": "Legacy ProductCode 1040 EXP-SCREEN; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+      "evidence": "Legacy ProductCode 1040 EXP-SCREEN; category and GST treatment approved by the Commercial Manager 2026-10-12 (Pilot Gate B3M-D)."
     },
     {
       "code": "EXP-PICKUP",
@@ -208,10 +208,10 @@
         "code": "EXP-PICKUP"
       },
       "gst_approval": {
-        "approved": false,
-        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+        "approved": true,
+        "reference": "Commercial Manager approval 2026-10-12 (Pilot Gate B3M-D): category and GST treatment as stated; treatment equals the legacy ProductCode and the PNG export rules (international freight zero-rated; origin services in PNG 10%)."
       },
-      "evidence": "Legacy ProductCode 1050 EXP-PICKUP; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+      "evidence": "Legacy ProductCode 1050 EXP-PICKUP; category and GST treatment approved by the Commercial Manager 2026-10-12 (Pilot Gate B3M-D)."
     },
     {
       "code": "EXP-FSC-PICKUP",
@@ -226,10 +226,10 @@
         "code": "EXP-FSC-PICKUP"
       },
       "gst_approval": {
-        "approved": false,
-        "reference": "PENDING Commercial Manager approval of category and GST treatment. Treatment equals the legacy ProductCode and the PNG export rules in quotes/tax_policy.py (international freight zero-rated; origin services in PNG 10%)."
+        "approved": true,
+        "reference": "Commercial Manager approval 2026-10-12 (Pilot Gate B3M-D): category and GST treatment as stated; treatment equals the legacy ProductCode and the PNG export rules (international freight zero-rated; origin services in PNG 10%)."
       },
-      "evidence": "Legacy ProductCode 1060 EXP-FSC-PICKUP; category from the runtime leg the export engine assigns (B3E section 1 proposal); not yet approved."
+      "evidence": "Legacy ProductCode 1060 EXP-FSC-PICKUP; category and GST treatment approved by the Commercial Manager 2026-10-12 (Pilot Gate B3M-D)."
     }
   ]
 }

@@ -237,10 +237,30 @@ def aud(pgk):
 
 
 class TestManifests:
-    def test_controlled_master_data_file_is_blocked_pending_approval(self, world):
+    def test_controlled_master_data_file_is_approved_and_plans_clean(self, world):
         plan = plan_master_data_text(MASTER_FILE.read_text(encoding="utf-8"))
+        assert plan.counts()["BLOCKED"] == 0 and plan.counts()["CONFLICT"] == 0
+        assert plan.ready
+
+    def test_an_unapproved_copy_of_the_master_data_is_still_blocked(self, world):
+        plan = plan_master_data_text(master_text(approved=False))
         assert plan.counts()["BLOCKED"] == 12
         assert not plan.ready
+
+    def test_category_and_gst_match_the_commercial_manager_approval_exactly(self):
+        approved = {
+            "EXP-FRT-AIR": ("FREIGHT", "ZERO_RATED"), "EXP-CLEAR": ("CLEARANCE", "STANDARD"),
+            "EXP-FSC-AIR": ("ORIGIN", "STANDARD"), "EXP-DOC": ("ORIGIN", "STANDARD"),
+            "EXP-AWB": ("ORIGIN", "STANDARD"), "EXP-AGENCY": ("ORIGIN", "STANDARD"),
+            "EXP-TERM": ("ORIGIN", "STANDARD"), "EXP-BUILDUP": ("ORIGIN", "STANDARD"),
+            "EXP-HANDLE": ("ORIGIN", "STANDARD"), "EXP-SCREEN": ("ORIGIN", "STANDARD"),
+            "EXP-PICKUP": ("ORIGIN", "STANDARD"), "EXP-FSC-PICKUP": ("ORIGIN", "STANDARD"),
+        }
+        data = json.loads(MASTER_FILE.read_text(encoding="utf-8"))
+        stored = {c["code"]: (c["category"], c["gst_treatment"]) for c in data["commercial_product_codes"]}
+        assert stored == approved
+        assert all(c["gst_approval"]["approved"] is True and "2026-10-12" in c["gst_approval"]["reference"]
+                   for c in data["commercial_product_codes"])
 
     def test_tariff_manifest_validates_once_master_data_exists(self, world):
         text = master_text()
@@ -298,7 +318,6 @@ class TestManifests:
         assert (party["legal_name"], party["trade_name"], party["country_code"], party["roles"]) == (
             "Air Niugini Limited", "Air Niugini", "PG", ["CARRIER"])
         assert "General Sales Agency" in party["evidence"]
-        assert all(not c["gst_approval"]["approved"] for c in data["commercial_product_codes"])
 
     def test_buildup_buy_carries_its_minimum_on_the_tiers_not_the_line(self):
         data = json.loads(tariff_text())
