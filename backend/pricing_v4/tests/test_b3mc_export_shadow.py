@@ -702,11 +702,12 @@ class TestPgkAndAud:
         assert freight_gst == D("0.00")
         assert D(one(report, scenario=key, product_code="EXP-FRT-AIR", aspect="sell_incl_gst").shadow) == D("238.79")
 
-    def test_production_collect_is_reported_not_reconciled(self, loaded):
+    def test_production_rate_matrix_engine_reproduces_the_shadow(self, loaded):
         report = run(lanes=(("POM", "BNE"),), currencies=("AUD",))
-        note = one(report, scenario="100kg|D2A|AUD", product_code="TOTAL", aspect="production_collect_total_sell")
-        assert note.classification == NOT_COMPARABLE
-        assert "Not reconciled" in note.reason
+        parity = one(report, scenario="100kg|D2A|AUD", product_code="TOTAL", aspect="production_rate_matrix_parity")
+        assert parity.classification == MATCH
+        assert parity.legacy == parity.shadow
+        assert pick(report, classification=NOT_COMPARABLE) == []
 
 
 # --------------------------------------------------------------------------- fail closed
@@ -808,8 +809,9 @@ class TestSafetyAndCoverage:
         assert report.counts()[BLOCKED] == 0
         assert report.counts()[MATCH] > 1000
         assert report.stale_registry_entries == [] and report.registry_errors == []
-        noncomparable = {r.aspect for r in report.records if r.classification == NOT_COMPARABLE}
-        assert noncomparable == {"production_collect_total_sell"}
+        assert report.counts()[NOT_COMPARABLE] == 0  # the AUD wiring gap closed with B3M-E
+        parity = pick(report, aspect="production_rate_matrix_parity")
+        assert len(parity) == 2 * 8 * 2 * 2 and all(r.classification == MATCH for r in parity)
         explained = {(r.product_code, r.aspect) for r in report.records if r.classification == EXPECTED_DIFFERENCE}
         assert {code for code, _ in explained} == {"EXP-FRT-AIR", "EXP-BUILDUP", "TOTAL"}
 

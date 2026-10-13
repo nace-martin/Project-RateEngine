@@ -25,9 +25,12 @@ an approved registry entry exactly, and re-pricing with the legacy native facts 
 the legacy amount. Anything else is ``UNEXPLAINED_DIFFERENCE``. The same fail-closed principle as the
 import shadow applies; nothing is forced to MATCH.
 
-The production export engine does not yet implement these conventions (it applies margin, then divides
-by TT SELL x (1 + CAF) for COLLECT). That gap is reported per AUD scenario as ``NOT_COMPARABLE``; this
-module does not change production behaviour.
+Since Pilot Gate B3M-E the production Rate Matrix export engine
+(``pricing_v4.services.rate_matrix_export_pricing``, behind the OFF-by-default
+``RATE_MATRIX_EXPORT_PRICING_ENABLED`` flag) implements these conventions. Every scenario is also priced
+through that production engine and must reproduce the shadow exactly (``production_rate_matrix_parity``);
+any divergence is UNEXPLAINED. The legacy engine remains the comparison baseline. This module does not
+change production behaviour.
 
 Safety: diagnostic only; runs in a read-only, rolled-back transaction; writes nothing; invents no rate,
 FX, CAF or margin; any missing, stale or ambiguous input is ``BLOCKED`` for the scenario.
@@ -67,7 +70,9 @@ DEFAULT_LANES = (("POM", "BNE"), ("POM", "SYD"))
 DEFAULT_WEIGHTS = tuple(Decimal(w) for w in ("30", "45", "100", "200", "500", "999", "1000", "1001"))
 DEFAULT_SCOPES = ("A2A", "D2A")
 DEFAULT_CURRENCIES = ("PGK", "AUD")
-NOT_APPROVED = "EXPORT CAF AND CONVENTIONS PER LOCKED RULE 2026-10-12. NOT LIVE. NOT WIRED INTO PRODUCTION."
+NOT_APPROVED = (
+    "EXPORT CAF AND CONVENTIONS PER LOCKED RULE 2026-10-12. PRODUCTION PATH IS FLAG-CONTROLLED AND OFF BY DEFAULT."
+)
 NONE_TEXT = "none"
 # Native facts compared between a legacy row and a Rate Matrix tariff. Validity and source metadata
 # cannot change an amount and are not compared here.
@@ -668,8 +673,7 @@ class _ExportShadow:
             self._emit(s, "-", "scenario", BLOCKED, reason=f"{type(exc).__name__}: {exc}")
             return
         self._compare(s, legacy, shadow, explained, counterfactual)
-        if s.currency == "AUD":
-            self._production_note(s, shadow)
+        self._production_parity(s, shadow, policy)
 
     # ---------------------------------------------------------------- approved-authority evidence
 
@@ -833,29 +837,57 @@ class _ExportShadow:
                 self._emit(s, "TOTAL", name, UNEXPLAINED_DIFFERENCE, a, b, ccy, "totals",
                            "Approved line differences do not reproduce the legacy total.")
 
-    def _production_note(self, s: Scenario, approved: Priced) -> None:
-        """The production COLLECT engine does not implement the locked AUD rule; report, never reconcile."""
+    def _production_parity(self, s: Scenario, shadow: Priced, policy) -> None:
+        """The flagged production Rate Matrix engine must reproduce the shadow's locked-rule result exactly.
+
+        Compares the charge set and, per charge, sell, GST, sell including GST and cost. Any difference is
+        UNEXPLAINED: the shadow's own native-fact evidence is not an excuse for the production path to
+        diverge from it.
+        """
+        from pricing_v4.services.rate_matrix_export_pricing import (
+            RateMatrixExportPricingEngine,
+            RateMatrixExportPricingError,
+        )
+
+        label = "production Rate Matrix engine vs shadow"
+        term = PaymentTerm.COLLECT if s.currency == "AUD" else PaymentTerm.PREPAID
         try:
-            engine = ExportPricingEngine(
+            engine = RateMatrixExportPricingEngine(
                 quote_date=self.quote_date, origin=s.origin, destination=s.destination,
-                chargeable_weight_kg=s.weight, payment_term=PaymentTerm.COLLECT, destination_currency="AUD",
+                chargeable_weight_kg=s.weight, payment_term=term, quote_currency=s.currency,
+                caf_rate=policy.export_caf_rate, policy_code=policy.policy_code, using=self.using,
             )
             ids = ExportPricingEngine.get_product_codes(
                 is_dg=False, service_scope=s.scope, origin=s.origin, destination=s.destination,
-                payment_term="COLLECT", quote_date=self.quote_date,
+                payment_term=term.value, quote_date=self.quote_date,
             )
             result = engine.calculate_quote(ids, service_scope=s.scope)
-            legacy_total = _q(sum((item.sell_amount for item in result.line_items), Decimal("0")))
-            reason = (
-                "Production COLLECT uses native AUD tariffs where they exist and otherwise margin then "
-                "PGK / (TT SELL x (1 + CAF)); the locked rule is PGK SELL / TT BUY x 1.10 with no margin. "
-                "Not reconciled; wiring is a separate gate."
-            )
-        except Exception as exc:
-            legacy_total = None
-            reason = f"Production COLLECT AUD could not be priced ({type(exc).__name__}: {exc}). Not reconciled."
-        self._emit(s, "TOTAL", "production_collect_total_sell", NOT_COMPARABLE, legacy_total,
-                   approved.totals["total_sell"], "AUD", "production engine vs locked export rule", reason)
+        except (RateMatrixExportPricingError, FxResolutionError, MissingCommercialPolicyError, ValueError) as exc:
+            self._emit(s, "TOTAL", "production_rate_matrix_parity", UNEXPLAINED_DIFFERENCE, None,
+                       shadow.totals["total_sell"], s.currency, label,
+                       f"The production Rate Matrix path could not price a scenario the shadow priced: "
+                       f"{type(exc).__name__}: {exc}")
+            return
+        production = {item.product_code: item for item in result.line_items}
+        problems = []
+        for code in sorted(set(production) | set(shadow.lines)):
+            left, right = production.get(code), shadow.lines.get(code)
+            if left is None or right is None:
+                problems.append(f"{code}: charge present only in the {'shadow' if left is None else 'production path'}")
+                continue
+            for aspect in ("sell_amount", "gst_amount", "sell_incl_gst", "cost_amount"):
+                if getattr(left, aspect) != getattr(right, aspect):
+                    problems.append(f"{code} {aspect}: production {getattr(left, aspect)} != shadow {getattr(right, aspect)}")
+        production_total = sum((item.sell_amount for item in result.line_items), Decimal("0.00"))
+        shadow_total = shadow.totals["total_sell"]
+        if production_total != shadow_total:
+            problems.append(f"total_sell: production {production_total} != shadow {shadow_total}")
+        if problems:
+            self._emit(s, "TOTAL", "production_rate_matrix_parity", UNEXPLAINED_DIFFERENCE, shadow_total,
+                       production_total, s.currency, label, "; ".join(problems))
+        else:
+            self._emit(s, "TOTAL", "production_rate_matrix_parity", MATCH, shadow_total, production_total,
+                       s.currency, label)
 
 
 def run_export_shadow(
