@@ -40,7 +40,8 @@ def make_policy(code="SYNTH-POLICY", valid_from=date(2030, 1, 1), valid_until=No
     values = {
         "policy_code": code, "valid_from": valid_from, "valid_until": valid_until, "margin_percent": D("16.67"),
         "margin_method": "TARGET_GROSS_MARGIN", "import_caf_percent": D("5.00"), "export_caf_percent": D("10.00"),
-        "gst_standard_percent": D("10.00"), "caf_method": "UPLIFT_AFTER_FX", "fx_side_convention": "COST_AT_TT_SELL",
+        "gst_standard_percent": D("10.00"), "caf_method": "TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT",
+        "fx_side_convention": "FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL",
         "fx_max_age_days": 5, "fx_primary_source": BSP, "fx_fallback_source": MANUAL, "is_active": True,
     }
     values.update(overrides)
@@ -221,7 +222,8 @@ def manifest(**policy_overrides):
     policy = {
         "policy_code": "PILOT-POLICY-SYNTH", "valid_from": "2030-10-11", "margin_percent": "16.67",
         "margin_method": "TARGET_GROSS_MARGIN", "import_caf_percent": "5.00", "export_caf_percent": "10.00",
-        "gst_standard_percent": "10.00", "caf_method": "UPLIFT_AFTER_FX", "fx_side_convention": "COST_AT_TT_SELL",
+        "gst_standard_percent": "10.00", "caf_method": "TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT",
+        "fx_side_convention": "FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL",
         "fx_max_age_days": 5, "fx_primary_source": BSP, "fx_fallback_source": MANUAL,
     }
     policy.update(policy_overrides)
@@ -279,7 +281,8 @@ class TestPolicyLoader:
         new = CommercialTermsPolicy.objects.get(policy_code="PILOT-POLICY-SYNTH")
         assert old.valid_until == date(2030, 10, 10)
         assert new.valid_from == date(2030, 10, 11) and new.valid_until is None
-        assert (new.caf_method, new.fx_side_convention, new.fx_max_age_days) == ("UPLIFT_AFTER_FX", "COST_AT_TT_SELL", 5)
+        assert (new.caf_method, new.fx_side_convention, new.fx_max_age_days) == (
+            "TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT", "FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL", 5)
         assert (new.margin_method, new.margin_percent, new.import_caf_percent) == ("TARGET_GROSS_MARGIN", D("16.67"), D("5.00"))
         # Exactly one policy resolves on every date, and the boundary falls where intended.
         assert require_unique_commercial_terms_policy(date(2030, 10, 10)).policy_code == "OLD-POLICY"

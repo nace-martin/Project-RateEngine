@@ -13,7 +13,7 @@ Locked commercial rules (Commercial Manager, 2026-10-12) that this harness prove
 
 - Export SELL tariffs are **PGK only**. No AUD SELL tariff exists or is created.
 - A PGK quote has no conversion, so it needs no FX and carries no CAF.
-- An AUD quote converts each explicit PGK SELL line once: ``AUD = (PGK / TT BUY) * (1 + export CAF)``,
+- An AUD quote converts each explicit PGK SELL line once: ``AUD = (PGK / TT SELL) * (1 + export CAF)`` (TT SELL stored as PGK per AUD; BSP: PGK to FCY uses TT Sell),
   FX from ``FxMarketRate`` through the policy-driven resolver (source priority, age limit, fail closed).
   The CAF is a separate uplift after pure FX and is applied only because a conversion occurred.
 - An explicit SELL tariff receives no additional margin.
@@ -479,16 +479,16 @@ def _q(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def convert_pgk_to_aud(amount: Decimal, tt_buy: Decimal, caf_rate: Decimal) -> tuple[Decimal, Decimal, Decimal]:
-    """Locked export rule: pure FX at TT BUY first (rounded), then the CAF as a separate uplift (rounded).
+def convert_pgk_to_aud(amount: Decimal, tt_sell: Decimal, caf_rate: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+    """Locked export rule: pure FX at TT SELL first (rounded), then the CAF as a separate uplift (rounded).
 
     Returns (pure, caf, commercial). The CAF is never folded into the rate.
     """
     if amount == 0:
         return Decimal("0.00"), Decimal("0.00"), Decimal("0.00")
-    if tt_buy <= 0:
-        raise ExportShadowBlocked("FX_NOT_POSITIVE", "TT BUY must be strictly positive.")
-    pure = _q(amount / tt_buy)
+    if tt_sell <= 0:
+        raise ExportShadowBlocked("FX_NOT_POSITIVE", "TT SELL must be strictly positive.")
+    pure = _q(amount / tt_sell)
     commercial = _q(pure * (Decimal("1") + caf_rate))
     return pure, commercial - pure, commercial
 
@@ -608,13 +608,13 @@ class _ExportShadow:
             raise cached
         return cached
 
-    def _to_aud(self, priced: Priced, policy, tt_buy: Decimal) -> Priced:
+    def _to_aud(self, priced: Priced, policy, tt_sell: Decimal) -> Priced:
         """Apply the locked conversion to every explicit PGK SELL line. No margin; GST on the converted amount."""
         converted: dict[str, Line] = {}
         conversions: list[dict[str, Any]] = []
         caf = policy.export_caf_rate
         for code, line in priced.lines.items():
-            pure, caf_amount, commercial = convert_pgk_to_aud(line.sell_amount, tt_buy, caf)
+            pure, caf_amount, commercial = convert_pgk_to_aud(line.sell_amount, tt_sell, caf)
             gst = _q(commercial * line.gst_rate)
             evidence = None
             if line.sell_amount != 0:
@@ -622,7 +622,7 @@ class _ExportShadow:
                     "product_code": code, "role": "SELL", "from_currency": "PGK", "to_currency": "AUD",
                     "amount_in": str(line.sell_amount), "pure_market_amount": str(pure),
                     "caf_percent": str(caf * 100), "caf_amount": str(caf_amount), "commercial_amount": str(commercial),
-                    "side": "TT_BUY",
+                    "side": "TT_SELL",
                 }
                 conversions.append(evidence)
             converted[code] = Line(
@@ -636,15 +636,15 @@ class _ExportShadow:
     def _fx(self, policy) -> Any:
         pair = resolve_market_fx_pair("AUD", "PGK", self.quote_date)
         if pair.is_inverse or pair.is_cross:
-            # The locked rule names TT BUY of the stored AUD/PGK market fact. A rate that exists only as the
+            # The locked rule names TT SELL of the stored AUD/PGK market fact. A rate that exists only as the
             # reverse pair, or only through a cross, is never inferred into it.
             raise ExportShadowBlocked(
                 "FX_NOT_DIRECT",
                 "AUD/PGK resolved only as an inverse or cross pair; the locked export rule requires the stored "
-                "AUD/PGK TT BUY.",
+                "AUD/PGK TT SELL.",
             )
         info = {
-            "pair": "AUD/PGK", "side": "TT_BUY", "rate": str(pair.tt_buy), "source": pair.source,
+            "pair": "AUD/PGK", "side": "TT_SELL", "rate": str(pair.tt_sell), "source": pair.source,
             "source_role": pair.source_role, "effective_date": pair.effective_date.isoformat(),
             "age_days": pair.age_days, "max_age_days": pair.max_age_days, "policy_code": pair.policy_code,
             "export_caf_percent": str(policy.export_caf_percent), "status": NOT_APPROVED,
@@ -656,16 +656,16 @@ class _ExportShadow:
     def _scenario(self, s: Scenario, policy) -> None:
         try:
             legacy, shadow = self._pgk_pair(s)
-            tt_buy = None
+            tt_sell = None
             if s.currency == "AUD":
-                tt_buy = self._fx(policy).tt_buy
+                tt_sell = self._fx(policy).tt_sell
             elif s.currency != "PGK":
                 raise ExportShadowBlocked("CURRENCY_UNSUPPORTED", f"Currency {s.currency} has no approved export rule.")
             explained = self._explain(s, legacy, shadow)
             counterfactual = self._counterfactual(s, explained)
             if s.currency == "AUD":
-                counterfactual = self._to_aud(counterfactual, policy, tt_buy) if counterfactual else None
-                legacy, shadow = self._to_aud(legacy, policy, tt_buy), self._to_aud(shadow, policy, tt_buy)
+                counterfactual = self._to_aud(counterfactual, policy, tt_sell) if counterfactual else None
+                legacy, shadow = self._to_aud(legacy, policy, tt_sell), self._to_aud(shadow, policy, tt_sell)
         except ExportShadowBlocked as blocked:
             self._emit(s, "-", "scenario", BLOCKED, reason=f"{blocked.code}: {blocked.message}")
             return

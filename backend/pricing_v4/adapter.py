@@ -18,6 +18,7 @@ from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm as 
 from pricing_v4.engine.import_engine import ImportPricingEngine, PaymentTerm, ServiceScope
 from pricing_v4.engine.domestic_engine import DomesticPricingEngine
 from pricing_v4.models import ProductCode, CustomerDiscount
+from pricing_v4.services import fx_conventions
 from services.models import ServiceComponent
 from quotes.completeness import evaluate_from_lines
 from pricing_v4.services.commercial_policy import (
@@ -217,7 +218,7 @@ class PricingServiceV4Adapter:
         metadata = getattr(result, "audit_metadata", {}) or {}
         conversions = list(metadata.get("conversions") or [])
         convention = metadata.get("commercial_convention") or {}
-        approved = convention.get("caf_method") == "UPLIFT_AFTER_FX"
+        approved = fx_conventions.uses_engine_conversions(convention.get("caf_method"))
         fx_snapshot = getattr(self, "fx_snapshot", None)
         first = conversions[0] if conversions else None
         leg = (first.get("legs") or [{}])[0] if first else {}
@@ -231,8 +232,13 @@ class PricingServiceV4Adapter:
             "base_rate_type": leg.get("side"),
             "base_rate": leg.get("rate"),
             "caf_percent": first.get("caf_percent") if first else None,
-            "caf_operation": (("UPLIFTED_AFTER_FX" if approved else "DEDUCTED_FROM_RATE") if first else None),
-            "effective_rate_after_caf": None,
+            # The engine records the CAF operation per conversion (import FCY to PGK reduces the rate;
+            # PGK to FCY is an uplift after FX). The superseded uplift-only method recorded none.
+            "caf_operation": (
+                (first.get("caf_operation") or ("UPLIFTED_AFTER_FX" if approved else "DEDUCTED_FROM_RATE"))
+                if first else None
+            ),
+            "effective_rate_after_caf": first.get("effective_rate_after_caf") if first else None,
             "fx_snapshot_source": getattr(fx_snapshot, "source", None),
             "fx_snapshot_timestamp": (
                 getattr(fx_snapshot, "as_of_timestamp", None).isoformat()
@@ -871,7 +877,7 @@ class PricingServiceV4Adapter:
         # Structure: { code: { 'cost': ..., 'sell': ..., 'description': ... } }
         
         convention = (getattr(result, "audit_metadata", {}) or {}).get("commercial_convention") or {}
-        approved_conventions = convention.get("caf_method") == "UPLIFT_AFTER_FX"
+        approved_conventions = fx_conventions.uses_engine_conversions(convention.get("caf_method"))
         self._conversion_rates = {}
         for conversion in (getattr(result, "audit_metadata", {}) or {}).get("conversions") or []:
             legs = conversion.get("legs") or []

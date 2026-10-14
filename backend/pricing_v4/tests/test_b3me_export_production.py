@@ -43,7 +43,7 @@ from pricing_v4.services.rate_matrix_export_pricing import (
 )
 from pricing_v4.tests.test_b3mc_export_shadow import (  # noqa: F401  (fixtures and helpers of the B3M-C world)
     QUOTE_DATE,
-    TT_BUY,
+    TT_SELL,
     _fresh_export_code_cache,
     aud,
     cents,
@@ -296,21 +296,31 @@ class TestProductionPricing:
         assert lines(result)["EXP-FRT-AIR"].sell_amount == D("675.00")
         assert not result.fx_applied and result.caf_rate is None
 
-    def test_aud_collect_is_pgk_over_tt_buy_then_ten_percent_caf_with_no_margin(self, loaded):
+    def test_aud_collect_is_pgk_over_tt_sell_then_ten_percent_caf_with_no_margin(self, loaded):
         result = price(term=PaymentTerm.COLLECT, currency="AUD")
         frt = lines(result)["EXP-FRT-AIR"]
-        assert frt.sell_amount == aud("675.00") == D("238.79")
-        assert cents(D("675.00") / TT_BUY) == D("217.08")          # pure FX first, then the uplift
+        assert frt.sell_amount == aud("675.00") == D("227.66")
+        assert cents(D("675.00") / TT_SELL) == D("206.96")         # pure FX at TT SELL first, then the uplift
         assert frt.sell_currency == "AUD" and frt.cost_currency == "PGK" and frt.cost_amount == D("590.00")
         assert frt.sell_pgk == D("675.00") and frt.cost_pgk == D("590.00")
         assert frt.margin_applied is False and frt.fx_applied and frt.caf_applied
-        # No margin: neither the policy margin nor a TT SELL divisor appears in any amount.
+        # No margin: the policy margin does not appear in any amount.
         assert frt.sell_amount != cents(aud("675.00") / (D("1") - D("0.1667")))
         convention = result.audit_metadata["commercial_convention"]
-        assert convention["caf_method"] == "UPLIFT_AFTER_FX" and convention["margin_on_explicit_sell"] is False
+        assert convention["caf_method"] == "TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT" and convention["margin_on_explicit_sell"] is False
         leg = result.audit_metadata["conversions"][0]["legs"][0]
-        assert leg["side"] == "TT_BUY" and D(leg["rate"]) == TT_BUY and leg["source"] == "bsp_html"
-        assert result.fx_rate_used == TT_BUY and result.caf_rate == D("0.10")
+        assert leg["side"] == "TT_SELL" and D(leg["rate"]) == TT_SELL and leg["source"] == "bsp_html"
+        assert result.audit_metadata["conversions"][0]["caf_operation"] == "UPLIFTED_AFTER_FX"
+        assert result.fx_rate_used == TT_SELL and result.caf_rate == D("0.10")
+
+    def test_bsp_2026_10_14_worked_example_pgk_1000_is_aud_337_15(self, loaded):
+        # BSP published TT Buy 0.3215 / TT Sell 0.3065 AUD per PGK; stored inverted with the side kept.
+        FxMarketRate.objects.update(tt_buy_rate=D("3.11041991"), tt_sell_rate=D("3.26264274"))
+        eng = engine(term=PaymentTerm.COLLECT, currency="AUD")
+        assert eng._to_quote_currency(D("1000.00"), "EXP-FRT-AIR") == (D("337.15"), True)
+        conversion = eng._conversions[0]
+        assert (conversion["pure_market_amount"], conversion["caf_amount"]) == ("306.50", "30.65")
+        assert conversion["legs"][0]["side"] == "TT_SELL" and D(conversion["legs"][0]["rate"]) == D("3.26264274")
 
     def test_changing_the_policy_margin_changes_no_explicit_sell_amount(self, loaded):
         baseline = {c: l.sell_amount for c, l in lines(price(term=PaymentTerm.COLLECT, currency="AUD")).items()}
@@ -552,17 +562,17 @@ class TestAdapter:
         persisted = build_persisted_quote_total_metadata(charges.totals)
         stored = json.loads(json.dumps(persisted["audit_metadata_json"]))
         assert stored["rate_matrix_export"]["tariffs"] and stored["export_pricing_path"]["reason"] == "IN_SCOPE"
-        assert stored["fx_audit"]["conversions"] and stored["fx_audit"]["conversions"][0]["legs"][0]["side"] == "TT_BUY"
+        assert stored["fx_audit"]["conversions"] and stored["fx_audit"]["conversions"][0]["legs"][0]["side"] == "TT_SELL"
         assert {t["side"] for t in stored["rate_matrix_export"]["tariffs"]} == {"BUY", "SELL"}
 
     def test_flag_on_aud_collect_applies_the_locked_rule_and_records_the_conversion(self, twins, flag_on):
         adapter, charges, by = adapter_lines(term="COLLECT")
         frt = by["EXP-FRT-AIR"]
-        assert frt.sell_fcy == D("238.79") and frt.sell_fcy_currency == "AUD"
+        assert frt.sell_fcy == D("227.66") and frt.sell_fcy_currency == "AUD"
         assert frt.sell_pgk == D("675.00") and frt.cost_pgk == D("590.00")
-        assert frt.sell_fcy_incl_gst == D("238.79")
+        assert frt.sell_fcy_incl_gst == D("227.66")
         fx = charges.totals.audit_metadata["fx_audit"]
-        assert fx["applied"] is True and fx["base_rate_type"] == "TT_BUY" and D(fx["base_rate"]) == TT_BUY
+        assert fx["applied"] is True and fx["base_rate_type"] == "TT_SELL" and D(fx["base_rate"]) == TT_SELL
         assert fx["caf_operation"] == "UPLIFTED_AFTER_FX" and fx["fx_market_source"] == "bsp_html"
         assert charges.totals.total_sell_fcy == sum((l.sell_fcy for l in charges.lines), D("0.00"))
         assert charges.totals.total_sell_pgk == sum((l.sell_pgk for l in charges.lines), D("0.00"))

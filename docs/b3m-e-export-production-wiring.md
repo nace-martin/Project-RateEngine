@@ -39,14 +39,15 @@ PricingServiceV4Adapter._calculate_standard_lines (EXPORT)
        selected     -> RateMatrixExportPricingEngine    (subclass of ExportPricingEngine)
                          BUY / SELL: Rate Matrix resolver (exact match only; native PGK)
                          rules: production rate rules (core.charge_rules)
-                         AUD: PGK / TT BUY, rounded, then x (1 + export CAF), rounded
+                         AUD: PGK / TT SELL, rounded, then x (1 + export CAF), rounded
                          audit_metadata: conversions, commercial_convention, rate_matrix_export
        -> ServiceComponent twin check (missing twin = failure, never a dropped line)
        -> existing line conversion (approved-convention path, as import already uses)
 ```
 
-Locked rules enforced: SELL is PGK only and receives no margin; AUD is `(PGK SELL / TT BUY) x 1.10`
-with the CAF as a separate uplift applied only on an actual conversion; FX is the stored AUD/PGK TT BUY
+Locked rules enforced: SELL is PGK only and receives no margin; AUD is `(PGK SELL / TT SELL) x 1.10`
+(= PGK x published BSP TT Sell x 1.10; BSP converts PGK to FCY at TT Sell) with the CAF as a separate
+uplift applied only on an actual conversion; FX is the stored AUD/PGK TT SELL
 from `FxMarketRate` under the policy source priority with a hard 5-day maximum age (stricter of policy and
 5 days); missing, stale, ambiguous, inverse-only and cross-only FX fails closed; GST is the
 CommercialProductCode treatment (must equal the ProductCode the classifier reads) at the policy
@@ -55,6 +56,36 @@ CommercialProductCode treatment (must equal the ProductCode the classifier reads
 Supported mechanics: TIERED_WEIGHT with selected-tier `min_charge`, line minimum and maximum, PER_KG,
 FLAT, additive flat (security), percentage-of-product, pickup cap and pickup FSC dependency. An unknown
 basis, a non-PGK tariff, a CPC/GST mismatch or a missing CPC raises.
+
+## BSP FX-side correction (amendment to this PR)
+
+BSP's published rates and calculator (2026-10-14, AUD TT Buy 0.3215 / TT Sell 0.3065 per PGK) show that
+PGK to FCY uses **TT Sell** and FCY to PGK uses **TT Buy**. The first version of this PR, and Pilot Gate
+B3L-B before it, had the sides reversed. Corrected here:
+
+| Conversion | Side | Stored formula (PGK per FCY) | CAF |
+|---|---|---|---|
+| PGK to FCY (export, and import PREPAID) | TT SELL | FCY = PGK ÷ TT SELL | + CAF after pure conversion |
+| FCY to PGK (import cost) | TT BUY | PGK = FCY × TT BUY ÷ (1 − import CAF) | reduces the published TT Buy |
+
+Worked: PGK 1,000 to AUD = 1000 × 0.3065 = 306.50 × 1.10 = **AUD 337.15**; AUD 100 to PGK =
+100 ÷ (0.3215 × 0.95) = **K 327.41**.
+
+- `pricing_v4/services/fx_conventions.py` is the single definition of the sides and CAF operations.
+- `ImportPricingEngine._convert_with_caf` now converts FCY to PGK at TT BUY with the CAF as a rate
+  reduction, PGK to FCY at TT SELL with the CAF as an uplift, and fails closed on FCY to FCY.
+- `RateMatrixExportPricingEngine` and the export shadow convert PGK to AUD at TT SELL.
+- Evidence: every conversion records `legs[].side` (`TT_BUY` / `TT_SELL`), `caf_operation`
+  (`PUBLISHED_RATE_REDUCED` / `UPLIFTED_AFTER_FX`) and, for FCY to PGK, `effective_rate_after_caf`; the
+  adapter's `fx_audit` reports them.
+- Policy: migration `0047` adds `TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT` and
+  `FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL` and relabels the old values as superseded. The historical
+  row `COMMERCIAL-POLICY-2026-10-11` is not edited; a conversion under it now fails closed
+  (`SupersededFxConventionError`). The new version is the manifest
+  `policy_manifests/commercial-policy-2026-10-14.json` (dry run READY, sha256
+  `ff978d4192e88e4816002c8506b874c790bb81bdec72c8cb04d46001ad30456f`), **not applied** to any database.
+- Legacy conventions (`LEGACY_RATE_ADJUSTMENT` / `LEGACY_COST_AT_TT_BUY`), the legacy export engine and the
+  BSP loader are unchanged.
 
 ## Weight precision
 

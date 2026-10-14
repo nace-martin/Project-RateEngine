@@ -58,8 +58,7 @@ from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult, build_tax
 logger = logging.getLogger(__name__)
 
 # Policy-versioned calculation conventions (CommercialTermsPolicy.caf_method / fx_side_convention).
-CAF_UPLIFT_AFTER_FX = 'UPLIFT_AFTER_FX'
-FX_COST_AT_TT_SELL = 'COST_AT_TT_SELL'
+from pricing_v4.services import fx_conventions  # noqa: E402
 
 class PaymentTerm(Enum):
     COLLECT = "COLLECT"
@@ -256,13 +255,13 @@ class ImportPricingEngine:
 
     @property
     def _approved_caf(self) -> bool:
-        """CAF is a separate uplift after pure FX conversion (approved Pilot authority)."""
-        return self.caf_method == CAF_UPLIFT_AFTER_FX
+        """Conversions are performed and recorded by ``_convert_with_caf`` (not the legacy rate adjustment)."""
+        return fx_conventions.uses_engine_conversions(self.caf_method)
 
     @property
     def _approved_fx_sides(self) -> bool:
-        """Supplier cost converts at TT SELL; a PGK amount converts to a customer quote at TT BUY."""
-        return self.fx_side_convention == FX_COST_AT_TT_SELL
+        """FCY to PGK at TT BUY; PGK to FCY at TT SELL (BSP calculator)."""
+        return self.fx_side_convention == fx_conventions.FX_APPROVED
 
     @property
     def _standard_gst_rate(self) -> Decimal:
@@ -310,46 +309,55 @@ class ImportPricingEngine:
     def _convert_with_caf(
         self, amount: Decimal, from_curr: str, to_curr: str, *, role: str, product_code: str = ""
     ) -> Decimal:
-        """Approved conversion: pure market FX first, then CAF as a separate uplift.
+        """Approved BSP conversion (see ``pricing_v4.services.fx_conventions``).
 
-        FCY supplier cost to PGK uses TT SELL. A PGK amount to a customer FCY quote uses TT BUY
-        (PGK per FCY divided into the PGK amount). FCY to FCY runs the two legs through PGK. The CAF is
-        applied once, only because a conversion happened, and is never folded into the FX rate. An FCY
-        amount that is not a supplier cost has no approved side and fails closed.
+        FCY to PGK uses the stored TT BUY; the import CAF reduces the published TT Buy, so the PGK amount
+        is ``FCY x TT BUY / (1 - CAF)``. PGK to FCY uses the stored TT SELL and the CAF is a separate uplift
+        after pure conversion: ``(PGK / TT SELL) x (1 + CAF)``. CAF applies only because a conversion
+        happened. A policy that still carries the superseded sides, an FCY amount that is not a supplier
+        cost, and FCY to FCY (no approved single CAF treatment) all fail closed.
         """
         if from_curr == to_curr or amount == Decimal('0'):
             return Decimal('0.00') if amount == Decimal('0') else amount
+        fx_conventions.require_approved_convention(self.caf_method, self.fx_side_convention)
         if self.caf_rate is None:
             raise MissingCommercialPolicyError(
                 "Import CAF rate is required when a currency conversion occurs; calculation fails closed."
             )
-        legs = []
-        pgk = amount
+        if from_curr != 'PGK' and to_curr != 'PGK':
+            raise MissingCommercialPolicyError(
+                f"No approved FX rule converts {from_curr} directly to {to_curr}; calculation fails closed."
+            )
+        from pricing_v4.services.fx_resolver import MissingFxMarketRateError
         if from_curr != 'PGK':
             if role != 'COST':
                 raise MissingCommercialPolicyError(
                     f"No approved FX side converts a {from_curr} sell amount to {to_curr}; calculation fails closed."
                 )
-            rate = self._get_rate_for_currency(from_curr, 'tt_sell')
-            if rate <= 0:
-                from pricing_v4.services.fx_resolver import MissingFxMarketRateError
+            rate = self._get_rate_for_currency(from_curr, 'tt_buy')
+            if rate is None or rate <= 0:
                 raise MissingFxMarketRateError("FX rate must be strictly positive.")
-            pgk = (amount * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            legs.append(self._leg_evidence(from_curr, 'TT_SELL', rate))
-        pure = pgk
-        if to_curr != 'PGK':
-            rate = self._get_rate_for_currency(to_curr, 'tt_buy')
-            if rate <= 0:
-                from pricing_v4.services.fx_resolver import MissingFxMarketRateError
+            pure = (amount * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            effective = fx_conventions.fcy_to_pgk_rate(rate, self.caf_rate)
+            commercial = (amount * effective).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            leg = self._leg_evidence(from_curr, fx_conventions.SIDE_FCY_TO_PGK, rate)
+            caf_operation = fx_conventions.CAF_OPERATION_TO_PGK
+            effective_rate = str(effective.quantize(Decimal('0.00000001'), rounding=ROUND_HALF_UP))
+        else:
+            rate = self._get_rate_for_currency(to_curr, 'tt_sell')
+            if rate is None or rate <= 0:
                 raise MissingFxMarketRateError("FX rate must be strictly positive.")
-            pure = (pgk / rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            legs.append(self._leg_evidence(to_curr, 'TT_BUY', rate))
-        commercial = (pure * (Decimal('1') + self.caf_rate)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            pure = (amount / rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            commercial = (pure * (Decimal('1') + self.caf_rate)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            leg = self._leg_evidence(to_curr, fx_conventions.SIDE_PGK_TO_FCY, rate)
+            caf_operation = fx_conventions.CAF_OPERATION_FROM_PGK
+            effective_rate = None
         self._record_conversion(
             product_code=product_code, role=role, from_currency=from_curr, to_currency=to_curr,
             amount_in=str(amount), pure_market_amount=str(pure), caf_percent=str(self.caf_rate * 100),
-            caf_amount=str(commercial - pure), commercial_amount=str(commercial),
-            caf_method=self.caf_method, fx_side_convention=self.fx_side_convention, legs=legs,
+            caf_amount=str(commercial - pure), commercial_amount=str(commercial), caf_operation=caf_operation,
+            effective_rate_after_caf=effective_rate,
+            caf_method=self.caf_method, fx_side_convention=self.fx_side_convention, legs=[leg],
         )
         return commercial
 
@@ -400,7 +408,7 @@ class ImportPricingEngine:
         """
         PGK → FCY conversion.
         Legacy convention: TT SELL in PGK per FCY, CAF subtracted from the rate, DIVIDE.
-        Approved convention: see ``_convert_with_caf`` (TT BUY, then CAF uplift).
+        Approved convention: see ``_convert_with_caf`` (TT SELL, then CAF uplift).
         """
         if amount == Decimal('0'):
             return Decimal('0.00')

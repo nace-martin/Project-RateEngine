@@ -262,18 +262,26 @@ class CommercialTermsPolicy(models.Model):
     # the legacy meaning through the defaults.
     class CafMethod(models.TextChoices):
         LEGACY_RATE_ADJUSTMENT = "LEGACY_RATE_ADJUSTMENT", "Legacy: import CAF deducted from the TT rate"
-        UPLIFT_AFTER_FX = "UPLIFT_AFTER_FX", "CAF is a separate uplift applied after pure FX conversion"
+        UPLIFT_AFTER_FX = "UPLIFT_AFTER_FX", "Superseded (B3M-E): CAF uplift after FX in both directions"
+        TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT = (
+            "TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT",
+            "FCY to PGK: CAF reduces the published TT Buy; PGK to FCY: CAF uplift after FX",
+        )
 
     class FxSideConvention(models.TextChoices):
         LEGACY_COST_AT_TT_BUY = "LEGACY_COST_AT_TT_BUY", "Legacy: FCY cost at TT BUY, PGK to FCY at TT SELL"
-        COST_AT_TT_SELL = "COST_AT_TT_SELL", "FCY cost at TT SELL, PGK to FCY customer quote at TT BUY"
+        COST_AT_TT_SELL = "COST_AT_TT_SELL", "Superseded (B3M-E, wrong sides): FCY to PGK at TT SELL, PGK to FCY at TT BUY"
+        FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL = (
+            "FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL",
+            "BSP sides: FCY to PGK at TT BUY, PGK to FCY at TT SELL",
+        )
 
     caf_method = models.CharField(
-        max_length=32, choices=CafMethod.choices, default=CafMethod.LEGACY_RATE_ADJUSTMENT,
+        max_length=64, choices=CafMethod.choices, default=CafMethod.LEGACY_RATE_ADJUSTMENT,
         help_text="How import_caf_percent is applied. Export CAF is unchanged.",
     )
     fx_side_convention = models.CharField(
-        max_length=32, choices=FxSideConvention.choices, default=FxSideConvention.LEGACY_COST_AT_TT_BUY,
+        max_length=64, choices=FxSideConvention.choices, default=FxSideConvention.LEGACY_COST_AT_TT_BUY,
         help_text="Which TT side converts supplier cost and which converts a PGK amount to a customer quote.",
     )
     fx_max_age_days = models.PositiveSmallIntegerField(
@@ -339,11 +347,15 @@ class CommercialTermsPolicy(models.Model):
                 name="comm_policy_gst_standard_range",
             ),
             models.CheckConstraint(
-                condition=models.Q(caf_method__in=["LEGACY_RATE_ADJUSTMENT", "UPLIFT_AFTER_FX"]),
+                condition=models.Q(caf_method__in=[
+                    "LEGACY_RATE_ADJUSTMENT", "UPLIFT_AFTER_FX", "TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT",
+                ]),
                 name="comm_policy_caf_method_valid",
             ),
             models.CheckConstraint(
-                condition=models.Q(fx_side_convention__in=["LEGACY_COST_AT_TT_BUY", "COST_AT_TT_SELL"]),
+                condition=models.Q(fx_side_convention__in=[
+                    "LEGACY_COST_AT_TT_BUY", "COST_AT_TT_SELL", "FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL",
+                ]),
                 name="comm_policy_fx_side_valid",
             ),
             models.CheckConstraint(

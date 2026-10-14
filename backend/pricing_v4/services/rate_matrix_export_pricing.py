@@ -14,7 +14,8 @@ Locked commercial rules (Commercial Manager, 2026-10-12):
 - BUY: approved export freight BUY and approved terminal BUY from Rate Matrix sheets; a tier may carry
   its own minimum (``RateTier.min_charge``).
 - SELL: approved PGK Rate Matrix SELL. There is no AUD SELL tariff. An explicit SELL receives no margin.
-- AUD: ``AUD = (PGK SELL / TT BUY) x (1 + export CAF)``. Pure FX at TT BUY is rounded first, then the CAF
+- AUD: ``AUD = (PGK SELL / TT SELL) x (1 + export CAF)`` with TT SELL stored as PGK per AUD, i.e. PGK x
+  published BSP TT Sell (BSP calculator: PGK to FCY uses TT Sell). Pure FX is rounded first, then the CAF
   is a separate uplift. The CAF and FX apply only when a conversion actually occurs; a PGK quote needs
   neither. FX is the stored AUD/PGK market fact (policy source priority, maximum age 5 days); missing,
   stale, ambiguous, inverse-only or cross-only FX fails closed.
@@ -49,6 +50,7 @@ from pricing_v4.commercial_models import CommercialProductCode
 from pricing_v4.engine.export_engine import ChargeLineResult, ExportPricingEngine, PaymentTerm
 from pricing_v4.engine.result_types import QuoteResult, build_tax_breakdown
 from pricing_v4.models import ProductCode
+from pricing_v4.services import fx_conventions
 from pricing_v4.services import rate_matrix_resolver as resolver
 from pricing_v4.services.commercial_policy import MissingCommercialPolicyError
 from pricing_v4.services.fx_resolver import StaleFxMarketRateError, resolve_market_fx_pair
@@ -62,8 +64,9 @@ PILOT_SCOPES = frozenset({"A2A", "D2A"})
 PILOT_MODE = "AIR"
 PILOT_QUOTE_CURRENCIES = {"PREPAID": "PGK", "COLLECT": "AUD"}
 MAX_FX_AGE_DAYS = 5
-CAF_METHOD = "UPLIFT_AFTER_FX"
-FX_SIDE_CONVENTION = "EXPORT_PGK_TO_FCY_AT_TT_BUY"
+# Locked export rule: PGK to FCY at the stored TT SELL, then the export CAF as a separate uplift.
+CAF_METHOD = fx_conventions.CAF_APPROVED
+FX_SIDE_CONVENTION = fx_conventions.FX_APPROVED
 PRICING_PATH = "RATE_MATRIX_EXPORT"
 LEGACY_PATH = "LEGACY_EXPORT"
 
@@ -431,7 +434,7 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
                 raise RateMatrixExportPricingError(
                     "FX_NOT_DIRECT",
                     f"{self.quote_currency}/PGK resolved only as an inverse or cross pair; the locked export rule "
-                    f"requires the stored {self.quote_currency}/PGK TT BUY.",
+                    f"requires the stored {self.quote_currency}/PGK TT SELL.",
                 )
             age = (self.quote_date - pair.effective_date).days
             if age < 0 or age > MAX_FX_AGE_DAYS:
@@ -439,8 +442,8 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
                     f"{self.quote_currency}/PGK rate dated {pair.effective_date} is {age} days old on "
                     f"{self.quote_date}; the export maximum is {MAX_FX_AGE_DAYS} days."
                 )
-            if pair.tt_buy is None or pair.tt_buy <= 0:
-                raise RateMatrixExportPricingError("FX_NOT_POSITIVE", "TT BUY must be strictly positive.")
+            if pair.tt_sell is None or pair.tt_sell <= 0:
+                raise RateMatrixExportPricingError("FX_NOT_POSITIVE", "TT SELL must be strictly positive.")
             self._pair = pair
         return self._pair
 
@@ -453,15 +456,17 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
                 "Export CAF rate is required when a currency conversion occurs; calculation fails closed."
             )
         pair = self._fx_pair()
-        pure = _money(pgk / pair.tt_buy)
+        # BSP: PGK to FCY uses TT SELL. Stored PGK per FCY, so FCY = PGK / TT SELL (= PGK x published TT Sell).
+        pure = _money(pgk / pair.tt_sell)
         commercial = _money(pure * (Decimal("1") + self.caf_rate))
         self._conversions.append({
             "product_code": product_code, "role": "SELL", "from_currency": "PGK", "to_currency": self.quote_currency,
             "amount_in": str(pgk), "pure_market_amount": str(pure), "caf_percent": str(self.caf_rate * 100),
             "caf_amount": str(commercial - pure), "commercial_amount": str(commercial),
+            "caf_operation": fx_conventions.CAF_OPERATION_FROM_PGK,
             "caf_method": CAF_METHOD, "fx_side_convention": FX_SIDE_CONVENTION,
             "legs": [{
-                "pair": f"{self.quote_currency}/PGK", "side": "TT_BUY", "rate": str(pair.tt_buy),
+                "pair": f"{self.quote_currency}/PGK", "side": fx_conventions.SIDE_PGK_TO_FCY, "rate": str(pair.tt_sell),
                 "source": pair.source, "source_role": pair.source_role,
                 "effective_date": pair.effective_date.isoformat(), "age_days": (self.quote_date - pair.effective_date).days,
                 "max_age_days": min(pair.max_age_days, MAX_FX_AGE_DAYS) if pair.max_age_days is not None else MAX_FX_AGE_DAYS,
@@ -617,7 +622,7 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
             total_margin=sum((line.margin_amount for line in lines), Decimal("0")),
             total_gst=sum((line.gst_amount for line in lines), Decimal("0")),
             total_sell_incl_gst=sum((line.sell_incl_gst for line in lines), Decimal("0")),
-            fx_rate_used=pair.tt_buy if pair is not None else None, effective_fx_rate=None,
+            fx_rate_used=pair.tt_sell if pair is not None else None, effective_fx_rate=None,
             caf_rate=self.caf_rate if self._conversions else None,
             audit_metadata={
                 "commercial_convention": {
