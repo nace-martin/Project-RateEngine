@@ -144,11 +144,12 @@ def load(html):
         call_command("fetch_fx", pairs="PGK:AUD")
 
 
-def import_engine(quote_date, caf_rate=D("0.05")):
+def import_engine(quote_date, caf_rate=D("0.05"), export_caf_rate=D("0.10")):
     return ImportPricingEngine(
         quote_date=quote_date, origin="SYD", destination="POM", chargeable_weight_kg=D("100"),
         payment_term=PaymentTerm.COLLECT, service_scope=ServiceScope.D2D, caf_rate=caf_rate,
-        margin_rate=D("0.1667"), margin_method="TARGET_GROSS_MARGIN", **APPROVED_CONVENTION,
+        margin_rate=D("0.1667"), margin_method="TARGET_GROSS_MARGIN", export_caf_rate=export_caf_rate,
+        **APPROVED_CONVENTION,
     )
 
 
@@ -167,10 +168,10 @@ class TestEconomicsEndToEnd:
         leg = engine._conversions[0]["legs"][0]
         assert leg["side"] == "TT_BUY" and D(leg["rate"]) == D("3.10945274")
 
-    def test_pgk_to_aud_converts_at_tt_sell_then_caf_uplift(self):
+    def test_pgk_to_aud_converts_at_tt_sell_then_export_caf_uplift(self):
         engine = import_engine(EFFECTIVE)
-        # 1000 PGK x 0.3066 = 1000 / 3.26157860 = 306.60 AUD ; CAF uplift x 1.05 = 321.93
-        assert engine._convert_pgk_to_fcy(D("1000"), "AUD") == D("321.93")
+        # 1000 PGK x 0.3066 = 1000 / 3.26157860 = 306.60 AUD ; export CAF uplift x 1.10 = 337.26
+        assert engine._convert_pgk_to_fcy(D("1000"), "AUD") == D("337.26")
         leg = engine._conversions[0]["legs"][0]
         assert leg["side"] == "TT_SELL" and D(leg["rate"]) == D("3.26157860")
 

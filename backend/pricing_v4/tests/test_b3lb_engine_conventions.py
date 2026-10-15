@@ -70,13 +70,14 @@ class TestConversionConventions(ApprovedConventionFixture):
         assert D(str(e._conversions[0]["legs"][0]["rate"])) == D("2.50")  # the market leg is recorded untouched
         assert D(e._conversions[0]["effective_rate_after_caf"]) == (D("2.50") / D("0.95")).quantize(D("0.00000001"))
 
-    def test_pgk_to_customer_fcy_uses_tt_sell_then_caf_uplift(self):
+    def test_pgk_to_customer_fcy_uses_tt_sell_then_export_caf_uplift(self):
         e = engine()
-        # pure: 260.00 / 2.60 = 100.00 AUD ; CAF uplift 100.00 x 1.05 = 105.00
-        assert e._convert_pgk_to_fcy(D("260.00"), "AUD") == D("105.00")
+        # pure: 260.00 / 2.60 = 100.00 AUD ; export CAF uplift (policy 10%) 100.00 x 1.10 = 110.00
+        assert e._convert_pgk_to_fcy(D("260.00"), "AUD") == D("110.00")
         conversion = e._conversions[0]
         assert conversion["legs"][0]["side"] == "TT_SELL" and D(str(conversion["legs"][0]["rate"])) == D("2.60")
         assert (conversion["pure_market_amount"], conversion["caf_operation"]) == ("100.00", "UPLIFTED_AFTER_FX")
+        assert D(conversion["caf_percent"]) == D("10")
 
     def test_superseded_cost_at_tt_sell_policy_fails_closed_on_conversion(self):
         from pricing_v4.services.fx_conventions import SupersededFxConventionError

@@ -22,7 +22,7 @@ from pricing_v4.tests.test_rate_matrix_stage2_shadow import (  # noqa: F401  (wo
 )
 
 APPROVED = dict(
-    margin_percent=D("16.67"), margin_method="TARGET_GROSS_MARGIN",
+    margin_percent=D("16.67"), margin_method="TARGET_GROSS_MARGIN", export_caf_percent=D("10.00"),
     caf_method="TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT",
     fx_side_convention="FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL", fx_max_age_days=5, fx_primary_source="SYNTHETIC",
     fx_fallback_source="MANUAL",

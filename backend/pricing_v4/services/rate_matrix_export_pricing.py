@@ -306,6 +306,7 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
         self._pair = None
         self._supplier: Optional[tuple[Any, str]] = None
         self._tariffs: dict[tuple[str, str], Optional[MatrixRate]] = {}
+        self._native_sell: set[str] = set()  # SELL tariffs native in the (non-PGK) quote currency
         self._conversions: list[dict[str, Any]] = []
         self._audit: dict[str, Any] = {}
 
@@ -370,18 +371,21 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
             return self._tariffs[key]
         if side == "BUY":
             supplier_id, supplier_name = self._lane_supplier()
-            context = resolver.ResolutionContext(
+            result = resolver.resolve(resolver.ResolutionContext(
                 rate_type=resolver.BUY, direction="EXPORT", effective_date=self.quote_date, product_code=pc.code,
                 origin_iata=self.origin, destination_iata=self.destination, supplier_id=supplier_id,
                 chargeable_weight=self.chargeable_weight_kg,
-            )
+            ), using=self.using)
         else:
-            context = resolver.ResolutionContext(
-                rate_type=resolver.SELL, direction="EXPORT", effective_date=self.quote_date, product_code=pc.code,
-                origin_iata=self.origin, destination_iata=self.destination, quote_currency="PGK",
-                chargeable_weight=self.chargeable_weight_kg,
-            )
-        result = resolver.resolve(context, using=self.using)
+            # Native SELL in the quote currency wins: used directly, no FX, no CAF, no margin. Only when none
+            # exists does the locked export rule allow the PGK SELL to be converted (PGK to FCY at TT SELL).
+            result = None
+            if self.converts:
+                result = self._resolve_sell(pc, self.quote_currency)
+                if result.outcome == resolver.NO_MATCH:
+                    result = None
+            if result is None:
+                result = self._resolve_sell(pc, "PGK")
         if result.outcome == resolver.NO_MATCH:
             self._tariffs[key] = None
             return None
@@ -390,6 +394,12 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
                 f"RESOLVER_{result.outcome}", f"{pc.code} {side}: {'; '.join(result.reasons)}"
             )
         tariff = result.tariff
+        if side == "SELL" and self.converts and tariff.currency_code == self.quote_currency:
+            self._check_mirror(pc, tariff)
+            rate = _legacy_shaped(tariff)
+            self._native_sell.add(pc.code)
+            self._tariffs[key] = rate
+            return rate
         if tariff.currency_code != "PGK":
             raise RateMatrixExportPricingError(
                 "TARIFF_CURRENCY_NOT_PGK",
@@ -401,6 +411,13 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
             rate.agent = SimpleNamespace(name=tariff.supplier_name) if tariff.supplier_name else None
         self._tariffs[key] = rate
         return rate
+
+    def _resolve_sell(self, pc: ProductCode, currency: str):
+        return resolver.resolve(resolver.ResolutionContext(
+            rate_type=resolver.SELL, direction="EXPORT", effective_date=self.quote_date, product_code=pc.code,
+            origin_iata=self.origin, destination_iata=self.destination, quote_currency=currency,
+            chargeable_weight=self.chargeable_weight_kg,
+        ), using=self.using)
 
     def _get_cogs(self, product_code_id: int):
         pc = self._get_product_code(product_code_id)
@@ -484,12 +501,18 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
 
     def _line(self, pc: ProductCode, *, cogs, sell_pgk: Decimal, cost: RuleEvaluation, sell_rule: str,
               note: str = "", cost_source: Optional[str] = None, rate_missing: bool = False,
-              description: Optional[str] = None) -> tuple[ChargeLineResult, Decimal, Decimal]:
+              description: Optional[str] = None, native: bool = False):
+        """Build one line. ``native`` means ``sell_pgk`` is already a native quote-currency SELL amount:
+        it is used directly (no FX, no CAF, no margin) and has no PGK equivalent."""
         gst_category, gst_rate = self._classify(pc)
-        sell_amount, converted = self._to_quote_currency(sell_pgk, pc.code)
+        if native:
+            sell_amount, converted = sell_pgk, False
+        else:
+            sell_amount, converted = self._to_quote_currency(sell_pgk, pc.code)
         gst_amount = _money(sell_amount * gst_rate)
         gst_pgk = _money(sell_pgk * gst_rate)
-        margin = sell_pgk - cost.amount
+        # Margin is reported only when sell and cost share a currency (cost is PGK).
+        margin = Decimal("0") if native else sell_pgk - cost.amount
         agent = getattr(cogs, "agent", None)
         line = ChargeLineResult(
             product_code_id=pc.id, product_code=pc.code, description=description or pc.description,
@@ -501,6 +524,8 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
             sell_incl_gst=sell_amount + gst_amount, is_rate_missing=rate_missing, notes=note,
             fx_applied=converted, caf_applied=converted, margin_applied=False, rule_family=sell_rule,
         )
+        if native:
+            return line, None, None
         return line, sell_pgk, sell_pgk + gst_pgk
 
     def _regular_line(self, pc_id: int, requested: list[int]):
@@ -528,10 +553,13 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
         line, sell_pgk, sell_pgk_incl = self._line(
             pc, cogs=cogs, sell_pgk=sell.amount, cost=cost,
             sell_rule=sell.rule_family if sell.amount > 0 else cost.rule_family,
+            native=pc.code in self._native_sell,
         )
         return line, sell_pgk, sell_pgk_incl, cost.amount
 
-    def _percentage_line(self, pc_id: int, sell_base: dict[int, Decimal], cost_base: dict[int, Decimal]):
+    def _percentage_line(
+        self, pc_id: int, sell_base: dict[int, tuple[Decimal, str]], cost_base: dict[int, Decimal]
+    ):
         pc = self._get_product_code(pc_id)
         base_pc = pc.percent_of_product_code if pc else None
         if not pc or not base_pc:
@@ -539,14 +567,23 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
         sell_rate = self._get_sell_rate(pc_id)
         if not sell_rate or not sell_rate.percent_rate:
             return None
-        base_sell = sell_base.get(base_pc.id, Decimal("0"))
+        native = pc.code in self._native_sell
+        currency = self.quote_currency if native else "PGK"
+        base_sell, base_currency = sell_base.get(base_pc.id, (Decimal("0"), currency))
+        if base_currency != currency:
+            # A percentage is computed in one currency. A native FCY dependant on a PGK base (or the
+            # reverse) would need a conversion no rule approves, so it fails closed.
+            raise RateMatrixExportPricingError(
+                "NATIVE_CURRENCY_MIX",
+                f"{pc.code} SELL is {currency} but its base {base_pc.code} is {base_currency}.",
+            )
         base_cost = cost_base.get(base_pc.id, Decimal("0"))
         sell = evaluate_percent_of_base_rule(sell_rate.percent_rate, base_sell)
         cost = evaluate_percent_of_base_rule(sell_rate.percent_rate, base_cost)
         line, sell_pgk, sell_pgk_incl = self._line(
             pc, cogs=None, sell_pgk=sell.amount, cost=cost, sell_rule=CALCULATION_PERCENT_OF_BASE,
-            note=f"Based on {base_pc.code}: K{base_sell}", cost_source=f"{sell_rate.percent_rate}% of COGS",
-            description=f"{pc.description} ({sell_rate.percent_rate}% of {base_pc.code})",
+            note=f"Based on {base_pc.code}: {currency} {base_sell}", cost_source=f"{sell_rate.percent_rate}% of COGS",
+            description=f"{pc.description} ({sell_rate.percent_rate}% of {base_pc.code})", native=native,
         )
         return line, sell_pgk, sell_pgk_incl, cost.amount
 
@@ -574,9 +611,10 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
             pc = self._get_product_code(pc_id)
             (percent if pc and pc.default_unit == ProductCode.UNIT_PERCENT else regular).append(pc_id)
 
-        # Dependants (percentage-of-product) are computed on the native PGK amounts and then converted, so a
-        # converted base never feeds a second conversion.
-        sell_base: dict[int, Decimal] = {}
+        # Dependants (percentage-of-product) are computed on the native tariff amounts (PGK, or the quote
+        # currency for a native FCY SELL) and then converted if PGK, so a converted base never feeds a second
+        # conversion.
+        sell_base: dict[int, tuple[Decimal, str]] = {}
         cost_base: dict[int, Decimal] = {}
         built: list[tuple[ChargeLineResult, Decimal, Decimal, Decimal]] = []
         for pc_id in regular:
@@ -584,7 +622,7 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
             if item is None:
                 continue
             built.append(item)
-            sell_base[pc_id] = item[1]
+            sell_base[pc_id] = (item[0].sell_amount, self.quote_currency) if item[1] is None else (item[1], "PGK")
             cost_base[pc_id] = item[3]
         for pc_id in percent:
             item = self._percentage_line(pc_id, sell_base, cost_base)
@@ -611,6 +649,9 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
                 if rate is not None
             ],
             "missing_tariffs": sorted(f"{side}:{code}" for (side, code), rate in self._tariffs.items() if rate is None),
+            # Precedence: a native SELL in the quote currency is used as is; otherwise the PGK SELL is
+            # converted under the locked export rule (the only conversion this path allows).
+            "native_quote_currency_sell": sorted(self._native_sell),
         }
         return QuoteResult(
             line_items=line_items, total_cost_pgk=total_cost_pgk, total_sell_pgk=total_sell_pgk,
@@ -630,7 +671,7 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
                     "margin_on_explicit_sell": False,
                 },
                 "conversions": list(self._conversions),
-                "pgk_equivalent_complete": True,
+                "pgk_equivalent_complete": all(i.sell_pgk is not None or not i.sell_amount for i in line_items),
                 "rate_matrix_export": self._audit,
             },
         )

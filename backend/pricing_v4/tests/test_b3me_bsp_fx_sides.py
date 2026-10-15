@@ -75,7 +75,7 @@ class TestPolicyVersion:
     def test_quotes_under_the_new_version_use_the_bsp_sides(self, policies):
         e = engine(date(2026, 10, 14))
         assert e._convert_fcy_to_pgk(D("100"), "AUD") == D("327.41")       # 100 / (0.3215 x 0.95)
-        assert e._convert_pgk_to_fcy(D("1000"), "AUD") == D("321.83")      # 1000 x 0.3065 = 306.50 x 1.05
+        assert e._convert_pgk_to_fcy(D("1000"), "AUD") == D("337.15")      # 1000 x 0.3065 = 306.50 x 1.10
         assert [c["legs"][0]["side"] for c in e._conversions] == ["TT_BUY", "TT_SELL"]
 
     def test_quotes_dated_under_the_superseded_version_fail_closed_on_conversion(self, policies):

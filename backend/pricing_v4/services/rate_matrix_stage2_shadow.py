@@ -402,9 +402,27 @@ class MatrixShadowImportEngine(ImportPricingEngine):
         return None  # Origin and freight sell is cost-plus, as in legacy (no import sell rows).
 
     def _get_destination_sell_rate(self, pc):
+        """Native SELL in the quote currency only: used directly, with no FX, no CAF and no margin.
+
+        No policy allows converting a Rate Matrix destination SELL from another currency, so a missing
+        native tariff is a visible missing line, never a PGK tariff converted in its place.
+        """
         if pc.code in self._legacy_codes:
             return super()._get_destination_sell_rate(pc)
-        return self._matrix.sell(pc)
+        rate = self._matrix.sell(pc)
+        if rate is not None and rate.currency != self.quote_currency:
+            raise ShadowBlocked(
+                "SELL_NOT_NATIVE",
+                f"{pc.code}: Rate Matrix SELL is {rate.currency}, quote is {self.quote_currency}; no conversion "
+                "of a destination SELL is allowed.",
+            )
+        return rate
+
+    def _missing_rate_line(self, pc, leg):
+        # The legacy PGK default (customs brokerage) is legacy behaviour; the Rate Matrix has no default.
+        if pc.code in self._legacy_codes:
+            return super()._missing_rate_line(pc, leg)
+        return self._missing_rate_placeholder(pc, leg)
 
     def _calculate_cogs_amount(self, cogs, pc) -> RuleEvaluation:
         if pc.code in self._legacy_codes and not isinstance(cogs, ShadowRate):
@@ -550,6 +568,7 @@ class _Stage2:
             "caf_rate": policy.import_caf_rate, "margin_rate": policy.margin_rate, "margin_method": policy.margin_method,
             "quote_currency": quote_currency,
             "caf_method": policy.caf_method, "fx_side_convention": policy.fx_side_convention,
+            "export_caf_rate": policy.export_caf_rate,
         }
         if matrix:
             kwargs["matrix"] = _MatrixLookup(scenario, origin, destination, self.quote_date, self.using)

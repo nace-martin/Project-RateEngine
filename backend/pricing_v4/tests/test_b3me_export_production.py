@@ -500,7 +500,7 @@ class TestFailClosedTariffs:
             price()
         assert caught.value.code == "TARIFF_CURRENCY_NOT_PGK"
 
-    def test_a_non_pgk_sell_tariff_is_never_selected(self, loaded):
+    def test_a_pgk_quote_never_selects_a_non_pgk_sell_tariff(self, loaded):
         from pricing_v4.rate_matrix_models import RateSheet
 
         RateSheet.objects.filter(rate_type="SELL", name__contains="origin charges").update(currency_code="AUD")
@@ -621,3 +621,63 @@ class TestAdapter:
         from pricing_v4.engine import export_engine
 
         assert "rate_matrix" not in inspect.getsource(export_engine).lower()
+
+
+@pytest.mark.django_db
+class TestExportNativeSell:
+    @staticmethod
+    def native_aud_copy_of_origin_charges(skip=()):
+        """A native AUD copy of the PGK origin-charges SELL sheet (values unchanged, currency AUD)."""
+        from pricing_v4.rate_matrix_models import RateLine, RateSheet
+
+        source = RateSheet.objects.get(rate_type="SELL", name__contains="origin charges")
+        lines = [line for line in RateLine.objects.filter(sheet=source).select_related("product_code")
+                 if line.product_code.code not in skip]
+        copies = [(line, line.applicability, list(line.tiers.all())) for line in lines]
+        source.pk = None
+        source.name, source.currency_code = f"{source.name} (AUD)", "AUD"
+        source.save()
+        for line, app, tiers in copies:
+            line.pk, line.sheet = None, source
+            line.save()
+            app.pk, app.rate_line = None, line
+            app.save()
+            for tier in tiers:
+                tier.pk, tier.rate_line = None, line
+                tier.save()
+        return {line.product_code.code for line, _app, _tiers in copies}
+
+    def test_native_aud_sell_is_used_directly_and_pgk_sell_is_converted_only_without_one(self, loaded):
+        native = self.native_aud_copy_of_origin_charges()
+        assert "EXP-DOC" in native
+        result = price(term=PaymentTerm.COLLECT, currency="AUD")
+        by = lines(result)
+        doc = by["EXP-DOC"]
+        assert (doc.sell_amount, doc.sell_currency) == (D("50.00"), "AUD")
+        assert doc.fx_applied is False and doc.caf_applied is False and doc.margin_applied is False
+        assert doc.sell_pgk is None  # native AUD has no PGK equivalent; nothing is invented
+        converted = {c["product_code"] for c in result.audit_metadata["conversions"]}
+        assert not converted & native
+        assert "EXP-FRT-AIR" in converted and by["EXP-FRT-AIR"].fx_applied  # no AUD freight tariff: converted
+        assert result.audit_metadata["rate_matrix_export"]["native_quote_currency_sell"] == sorted(native)
+        assert result.audit_metadata["pgk_equivalent_complete"] is False
+
+    def test_native_sell_receives_no_margin(self, loaded):
+        self.native_aud_copy_of_origin_charges()
+        before = lines(price(term=PaymentTerm.COLLECT, currency="AUD"))["EXP-DOC"].sell_amount
+        CommercialTermsPolicy.objects.update(margin_percent=D("40.00"), margin_method="MARKUP_ON_COST")
+        assert lines(price(term=PaymentTerm.COLLECT, currency="AUD"))["EXP-DOC"].sell_amount == before
+
+    def test_a_pgk_quote_never_uses_or_converts_a_foreign_sell(self, loaded):
+        self.native_aud_copy_of_origin_charges()
+        doc = lines(price())["EXP-DOC"]
+        assert (doc.sell_amount, doc.sell_currency, doc.fx_applied) == (D("50.00"), "PGK", False)
+
+    def test_a_native_dependant_on_a_converted_pgk_base_fails_closed(self, loaded):
+        from pricing_v4.services.rate_matrix_export_pricing import RateMatrixExportPricingError
+
+        native = self.native_aud_copy_of_origin_charges(skip={"EXP-PICKUP"})
+        assert "EXP-FSC-PICKUP" in native
+        with pytest.raises(RateMatrixExportPricingError) as caught:
+            price(term=PaymentTerm.COLLECT, currency="AUD")
+        assert caught.value.code == "NATIVE_CURRENCY_MIX"

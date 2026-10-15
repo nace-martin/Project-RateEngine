@@ -155,6 +155,7 @@ class ImportPricingEngine:
         buy_currency: Optional[str] = None,
         caf_method: Optional[str] = None,
         fx_side_convention: Optional[str] = None,
+        export_caf_rate: Any = _POLICY_DEFAULT,
     ):
         self.quote_date = quote_date
         self.origin = origin
@@ -177,6 +178,9 @@ class ImportPricingEngine:
                 margin_rate = policy.margin_rate
                 margin_method = policy.margin_method
         self.caf_rate = caf_rate
+        # PGK to FCY under the approved BSP rule carries the export CAF (uplift after conversion). Resolved
+        # from the policy on first use unless stated explicitly.
+        self._export_caf_rate = export_caf_rate
         self.margin_rate = margin_rate
         self.margin_method = margin_method or 'MARKUP_ON_COST'
         self.fx_rates = fx_rates or {}
@@ -312,18 +316,14 @@ class ImportPricingEngine:
         """Approved BSP conversion (see ``pricing_v4.services.fx_conventions``).
 
         FCY to PGK uses the stored TT BUY; the import CAF reduces the published TT Buy, so the PGK amount
-        is ``FCY x TT BUY / (1 - CAF)``. PGK to FCY uses the stored TT SELL and the CAF is a separate uplift
-        after pure conversion: ``(PGK / TT SELL) x (1 + CAF)``. CAF applies only because a conversion
-        happened. A policy that still carries the superseded sides, an FCY amount that is not a supplier
-        cost, and FCY to FCY (no approved single CAF treatment) all fail closed.
+        is ``FCY x TT BUY / (1 - import CAF)``. PGK to FCY uses the stored TT SELL and the export CAF is a
+        separate uplift after pure conversion: ``(PGK / TT SELL) x (1 + export CAF)``. CAF applies only
+        because a conversion happened. A policy that still carries the superseded sides, an FCY amount that
+        is not a supplier cost, and FCY to FCY (no approved single CAF treatment) all fail closed.
         """
         if from_curr == to_curr or amount == Decimal('0'):
             return Decimal('0.00') if amount == Decimal('0') else amount
         fx_conventions.require_approved_convention(self.caf_method, self.fx_side_convention)
-        if self.caf_rate is None:
-            raise MissingCommercialPolicyError(
-                "Import CAF rate is required when a currency conversion occurs; calculation fails closed."
-            )
         if from_curr != 'PGK' and to_curr != 'PGK':
             raise MissingCommercialPolicyError(
                 f"No approved FX rule converts {from_curr} directly to {to_curr}; calculation fails closed."
@@ -334,32 +334,49 @@ class ImportPricingEngine:
                 raise MissingCommercialPolicyError(
                     f"No approved FX side converts a {from_curr} sell amount to {to_curr}; calculation fails closed."
                 )
+            caf_rate = self.caf_rate
+            if caf_rate is None:
+                raise MissingCommercialPolicyError(
+                    "Import CAF rate is required when an FCY amount converts to PGK; calculation fails closed."
+                )
             rate = self._get_rate_for_currency(from_curr, 'tt_buy')
             if rate is None or rate <= 0:
                 raise MissingFxMarketRateError("FX rate must be strictly positive.")
             pure = (amount * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            effective = fx_conventions.fcy_to_pgk_rate(rate, self.caf_rate)
+            effective = fx_conventions.fcy_to_pgk_rate(rate, caf_rate)
             commercial = (amount * effective).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             leg = self._leg_evidence(from_curr, fx_conventions.SIDE_FCY_TO_PGK, rate)
             caf_operation = fx_conventions.CAF_OPERATION_TO_PGK
             effective_rate = str(effective.quantize(Decimal('0.00000001'), rounding=ROUND_HALF_UP))
         else:
+            caf_rate = self._pgk_to_fcy_caf_rate()
             rate = self._get_rate_for_currency(to_curr, 'tt_sell')
             if rate is None or rate <= 0:
                 raise MissingFxMarketRateError("FX rate must be strictly positive.")
             pure = (amount / rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            commercial = (pure * (Decimal('1') + self.caf_rate)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            commercial = (pure * (Decimal('1') + caf_rate)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             leg = self._leg_evidence(to_curr, fx_conventions.SIDE_PGK_TO_FCY, rate)
             caf_operation = fx_conventions.CAF_OPERATION_FROM_PGK
             effective_rate = None
         self._record_conversion(
             product_code=product_code, role=role, from_currency=from_curr, to_currency=to_curr,
-            amount_in=str(amount), pure_market_amount=str(pure), caf_percent=str(self.caf_rate * 100),
+            amount_in=str(amount), pure_market_amount=str(pure), caf_percent=str(caf_rate * 100),
             caf_amount=str(commercial - pure), commercial_amount=str(commercial), caf_operation=caf_operation,
             effective_rate_after_caf=effective_rate,
             caf_method=self.caf_method, fx_side_convention=self.fx_side_convention, legs=[leg],
         )
         return commercial
+
+    def _pgk_to_fcy_caf_rate(self) -> Decimal:
+        """Export CAF for a PGK to FCY conversion (approved BSP rule). Missing fails closed."""
+        if self._export_caf_rate is _POLICY_DEFAULT:
+            from pricing_v4.services.commercial_policy import require_commercial_terms_policy
+            self._export_caf_rate = require_commercial_terms_policy(self.quote_date).export_caf_rate
+        if self._export_caf_rate is None:
+            raise MissingCommercialPolicyError(
+                "Export CAF rate is required when a PGK amount converts to FCY; calculation fails closed."
+            )
+        return self._export_caf_rate
 
     def _convert_fcy_to_pgk(self, amount: Decimal, currency: Optional[str] = None) -> Decimal:
         """
@@ -636,50 +653,7 @@ class ImportPricingEngine:
             # If no line but the engine explicitly requested this ProductCode,
             # create a missing-rate placeholder so the gap remains visible.
             if not line and pc.id in requested_product_code_ids:
-                # [AMENDMENT] Requested Customs Brokerage Fee Default (PGK 300.00)
-                if pc.id == 2020:
-                    line = ChargeLine(
-                        product_code_id=pc.id, product_code=pc.code, description=pc.description,
-                        category=pc.category, leg=leg, cost_amount=Decimal('0'),
-                        cost_currency='PGK', cost_source='Default', agent_name=None, sell_amount=Decimal('300.00'),
-                        sell_currency=self.quote_currency, margin_amount=Decimal('300.00'),
-                        margin_percent=Decimal('100.00'), notes="Default Customs Brokerage Fee applied.",
-                        rule_family=CALCULATION_FLAT,
-                    )
-                    # Handle FCY conversion for PREPAID quotes
-                    if self.quote_currency != 'PGK':
-                        line.sell_amount = self._convert_pgk_to_fcy(Decimal('300.00'))
-                        line.fx_applied = True
-                        line.caf_applied = True
-                    
-                    # Apply GST Classification
-                    gst_cat, gst_r = get_png_gst_category(
-                        product_code=pc, shipment_type='IMPORT', leg=leg, standard_rate=self._standard_gst_rate
-                    )
-                    line.gst_category = gst_cat
-                    line.gst_rate = gst_r
-                    # Force GST to 0 if rate is missing to prevent AUD 0.00 base with non-zero GST
-                    line.gst_amount = Decimal('0.00')
-                    line.sell_incl_gst = Decimal('0.00')
-                else:
-                    line = ChargeLine(
-                        product_code_id=pc.id,
-                        product_code=pc.code,
-                        description=pc.description,
-                        category=pc.category,
-                        leg=leg,
-                        cost_amount=Decimal('0'),
-                        cost_currency='PGK',
-                        cost_source='N/A',
-                        agent_name=None,
-                        sell_amount=Decimal('0'),
-                        sell_currency=self.quote_currency,
-                        margin_amount=Decimal('0'),
-                        margin_percent=Decimal('0'),
-                        notes=f"Requested rate missing for {pc.code}",
-                        rule_family=CALCULATION_LOOKUP_RATE,
-                    )
-                    line.is_rate_missing = True # Dynamically added for adapter detection
+                line = self._missing_rate_line(pc, leg)
 
             if line:
                 if leg == 'ORIGIN':
@@ -946,6 +920,58 @@ class ImportPricingEngine:
             sell_pgk=sell_pgk,
             sell_pgk_incl_gst=sell_pgk_incl_gst,
         )
+
+    def _missing_rate_placeholder(self, pc: ProductCode, leg: str) -> ChargeLine:
+        """A visible missing-rate line: no amount, no FX, no CAF."""
+        line = ChargeLine(
+            product_code_id=pc.id,
+            product_code=pc.code,
+            description=pc.description,
+            category=pc.category,
+            leg=leg,
+            cost_amount=Decimal('0'),
+            cost_currency='PGK',
+            cost_source='N/A',
+            agent_name=None,
+            sell_amount=Decimal('0'),
+            sell_currency=self.quote_currency,
+            margin_amount=Decimal('0'),
+            margin_percent=Decimal('0'),
+            notes=f"Requested rate missing for {pc.code}",
+            rule_family=CALCULATION_LOOKUP_RATE,
+        )
+        line.is_rate_missing = True # Dynamically added for adapter detection
+        return line
+
+    def _missing_rate_line(self, pc: ProductCode, leg: str) -> ChargeLine:
+        """Line for a requested ProductCode with no rate. Legacy: the PGK 300 customs brokerage default."""
+        # [AMENDMENT] Requested Customs Brokerage Fee Default (PGK 300.00)
+        if pc.id != 2020:
+            return self._missing_rate_placeholder(pc, leg)
+        line = ChargeLine(
+            product_code_id=pc.id, product_code=pc.code, description=pc.description,
+            category=pc.category, leg=leg, cost_amount=Decimal('0'),
+            cost_currency='PGK', cost_source='Default', agent_name=None, sell_amount=Decimal('300.00'),
+            sell_currency=self.quote_currency, margin_amount=Decimal('300.00'),
+            margin_percent=Decimal('100.00'), notes="Default Customs Brokerage Fee applied.",
+            rule_family=CALCULATION_FLAT,
+        )
+        # Handle FCY conversion for PREPAID quotes
+        if self.quote_currency != 'PGK':
+            line.sell_amount = self._convert_pgk_to_fcy(Decimal('300.00'))
+            line.fx_applied = True
+            line.caf_applied = True
+        
+        # Apply GST Classification
+        gst_cat, gst_r = get_png_gst_category(
+            product_code=pc, shipment_type='IMPORT', leg=leg, standard_rate=self._standard_gst_rate
+        )
+        line.gst_category = gst_cat
+        line.gst_rate = gst_r
+        # Force GST to 0 if rate is missing to prevent AUD 0.00 base with non-zero GST
+        line.gst_amount = Decimal('0.00')
+        line.sell_incl_gst = Decimal('0.00')
+        return line
 
     @staticmethod
     def _to_quote_line_item(line: ChargeLine) -> QuoteLineItem:

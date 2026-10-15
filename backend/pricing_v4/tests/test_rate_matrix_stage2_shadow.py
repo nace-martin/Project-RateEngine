@@ -226,8 +226,9 @@ class TestIdenticalData:
 
     def test_shadow_engine_overrides_only_rate_lookups(self):
         own = {name for name, value in vars(MatrixShadowImportEngine).items() if callable(value)}
+        # _missing_rate_line: the Rate Matrix has no legacy PGK default for a missing rate (B3M-E).
         assert own == {"__init__", "_get_cogs", "_get_local_cogs", "_get_sell_rate",
-                       "_get_destination_sell_rate", "_calculate_cogs_amount"}
+                       "_get_destination_sell_rate", "_calculate_cogs_amount", "_missing_rate_line"}
         for name in ("_apply_margin", "_convert_fcy_to_pgk", "_convert_pgk_to_fcy", "_calculate_charge_line",
                      "_calculate_sell_amount", "calculate_quote"):
             assert getattr(MatrixShadowImportEngine, name) is getattr(ImportPricingEngine, name)

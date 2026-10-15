@@ -87,6 +87,32 @@ Worked: PGK 1,000 to AUD = 1000 × 0.3065 = 306.50 × 1.10 = **AUD 337.15**; AUD
 - Legacy conventions (`LEGACY_RATE_ADJUSTMENT` / `LEGACY_COST_AT_TT_BUY`), the legacy export engine and the
   BSP loader are unchanged.
 
+## Native SELL precedence (amendment to this PR)
+
+Pricing precedence for an explicit SELL, in Rate Matrix mode:
+
+1. Exact SELL tariff in the customer quote currency: used directly. No FX, no CAF, no margin.
+2. Otherwise, only where an approved rule explicitly allows it, the PGK SELL converted PGK to FCY at TT
+   SELL with the export CAF uplift (10%). Today the only such rule is the B3M-E export pilot (AUD COLLECT
+   from the PGK export tariffs).
+3. Otherwise the line is a visible missing rate (`is_rate_missing`); the quote is incomplete. Nothing is
+   silently converted from PGK.
+
+- Export (`RateMatrixExportPricingEngine`): a native quote-currency SELL is resolved first; lines priced
+  from it carry no conversion, no PGK equivalent (`pgk_equivalent_complete = false`), and are listed in
+  `rate_matrix_export.native_quote_currency_sell`. A percentage dependant whose base is in another
+  currency fails closed (`NATIVE_CURRENCY_MIX`).
+- Import (`MatrixShadowImportEngine`, the only import Rate Matrix path; shadow only): destination SELL is
+  resolved in the quote currency only and never converted; a non-native tariff fails closed
+  (`SELL_NOT_NATIVE`); a missing rate is a visible gap and the legacy PGK 300 customs-brokerage default is
+  not inherited.
+- Legacy production import pricing (LocalSellRate with the PREPAID PGK fallback) is unchanged.
+- Real local data (B3I POM destination sheets, read-only check 2026-10-14): IMP-AGENCY-DEST,
+  IMP-CARTAGE-DEST, IMP-CLEAR, IMP-DOC-DEST, IMP-FSC-CARTAGE-DEST, IMP-HANDLING-DEST and IMP-TERM-DEST each
+  resolve an exact native SELL in PGK, AUD and USD for COLLECT and PREPAID, so none needs a conversion.
+- Import PGK to FCY conversions (engine `_convert_with_caf`) now apply the export CAF (10%) as the uplift,
+  per the approved rule; FCY to PGK keeps the import CAF 5% rate reduction.
+
 ## Weight precision
 
 Tiered pricing accepts at most **four decimal places**. The resolver returns INVALID_CONTEXT above that and
