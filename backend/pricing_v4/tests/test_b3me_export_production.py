@@ -48,8 +48,10 @@ from pricing_v4.tests.test_b3mc_export_shadow import (  # noqa: F401  (fixtures 
     aud,
     cents,
     loaded,
+    one,
     world,
 )
+from pricing_v4.tests.test_b3mc_export_shadow import run as shadow_run
 from services.models import ServiceComponent
 
 PGK_LANES = (("POM", "BNE"), ("POM", "SYD"))
@@ -389,7 +391,7 @@ class TestProductionPricing:
         assert lines(price(weight="100"))["EXP-BUILDUP"].cost_amount == D("30.00")     # 10.00 -> minimum 30
         assert lines(price(weight="1001"))["EXP-BUILDUP"].cost_amount == D("100.10")   # 0.10 x 1001
         assert lines(price(weight="2000"))["EXP-BUILDUP"].cost_amount == D("200.00")   # lower tier at 2000
-        assert lines(price(weight="2000.0001"))["EXP-BUILDUP"].cost_amount == D("300.00")  # upper tier
+        assert lines(price(weight="2000.0001"))["EXP-BUILDUP"].cost_amount == D("300.15")  # 2001 kg, upper tier
 
     def test_2000kg_uses_the_lower_tier_and_2000_0001kg_the_upper(self, loaded):
         for weight, rate in (("2000", "0.10"), ("2000.0001", "0.15")):
@@ -400,15 +402,27 @@ class TestProductionPricing:
             )).tariff
             assert tariff.selected_tier.unit_rate == D(rate)
 
-    @pytest.mark.parametrize("weight", ["100.00001", "2000.00005", "20.833333333", "0.00001"])
-    def test_more_than_four_decimals_fails_closed_with_no_rounding(self, loaded, weight):
-        with pytest.raises(RateMatrixExportPricingError) as caught:
-            price(weight=weight)
-        assert "INVALID_CONTEXT" in caught.value.code and "decimal places" in caught.value.message
+    @pytest.mark.parametrize("raw, billable", [
+        ("44.1", "45"), ("99.01", "100"), ("100", "100"), ("1999.9", "2000"), ("2000.01", "2001"),
+        ("20.01", "21"), ("20.833333333", "21"), ("100.00001", "101"), ("0.00001", "1"),
+    ])
+    def test_chargeable_weight_is_rounded_up_to_the_next_whole_kg(self, loaded, raw, billable):
+        eng = engine(weight=raw)
+        assert eng.chargeable_weight_kg == D(billable) and eng.raw_chargeable_weight_kg == D(raw)
+        result = price(weight=raw)
+        audit = result.audit_metadata["rate_matrix_export"]
+        assert (audit["chargeable_weight_kg"], audit["raw_chargeable_weight_kg"]) == (billable, raw)
+        assert audit["weight_rule"] == "CEILING_WHOLE_KG"
+        # Every charge uses the whole kg: the result is identical to pricing the whole kg directly.
+        assert {c: l.sell_amount for c, l in lines(result).items()} == {
+            c: l.sell_amount for c, l in lines(price(weight=billable)).items()}
 
-    @pytest.mark.parametrize("weight", ["100.1234", "100.12340", "30", "2000.0001"])
-    def test_up_to_four_decimals_prices(self, loaded, weight):
-        assert lines(price(weight=weight))["EXP-FRT-AIR"].sell_amount > 0
+    def test_whole_kg_drives_tier_selection_at_the_boundaries(self, loaded):
+        # BNE card: 45 kg tier from 45, 100 kg tier from 100; build-up BUY lower tier to 2000, upper above.
+        assert lines(price(weight="44.1"))["EXP-FRT-AIR"].sell_amount == max(D("180.00"), cents(D("7.20") * 45))
+        assert lines(price(weight="99.01"))["EXP-FRT-AIR"].sell_amount == cents(D("6.75") * 100)
+        assert lines(price(weight="1999.9"))["EXP-BUILDUP"].cost_amount == D("200.00")   # 2000 kg, lower tier
+        assert lines(price(weight="2000.01"))["EXP-BUILDUP"].cost_amount == D("300.15")  # 2001 kg, upper tier
 
 
 class TestFxFailClosed:
@@ -445,12 +459,12 @@ class TestFxFailClosed:
         assert isinstance(caught.value, FxResolutionError) or caught.value.code == "FX_NOT_DIRECT"
 
     def test_errors_shown_to_users_carry_no_technical_codes(self, loaded):
-        for weight in ("100.00001",):
-            with pytest.raises(RateMatrixExportPricingError) as caught:
-                price(weight=weight)
-            shown = str(caught.value)
-            assert "EXP-" not in shown and "RESOLVER" not in shown and "decimal places" in shown
-            assert "EXP-FRT-AIR" in caught.value.message or "INVALID_CONTEXT" in caught.value.code
+        # Normal pricing rounds weight up to a whole kg, so the resolver's precision guard is defensive only;
+        # its text is still customer-safe if it is ever raised.
+        guard = RateMatrixExportPricingError(
+            "RESOLVER_INVALID_CONTEXT", "EXP-FRT-AIR BUY: chargeable weight has more than 4 decimal places"
+        )
+        assert "EXP-" not in str(guard) and "RESOLVER" not in str(guard) and "decimal places" in str(guard)
         CommercialProductCode.objects.filter(code="EXP-DOC").update(is_active=False)
         with pytest.raises(RateMatrixExportPricingError) as caught:
             price()
@@ -585,11 +599,21 @@ class TestAdapter:
         assert path["path"] == "LEGACY_EXPORT" and path["reason"].startswith("OUT_OF_SCOPE")
         assert "rate_matrix_export" not in charges.totals.audit_metadata
 
-    def test_flag_on_volumetric_weight_beyond_four_decimals_fails_closed(self, twins, flag_on):
-        # 50 x 50 x 50 cm / 6000 = 20.8333... kg, which exceeds the weight of 10 kg actual.
-        with pytest.raises(RateMatrixExportPricingError) as caught:
-            adapter_lines(weight="10", dims=(50, 50, 50))
-        assert "decimal places" in caught.value.message
+    def test_flag_on_volumetric_weight_is_rounded_up_to_a_whole_kg(self, twins, flag_on):
+        # 50 x 50 x 50 cm / 6000 = 20.8333... kg, which exceeds the 10 kg actual weight: billed as 21 kg.
+        adapter, charges, by = adapter_lines(weight="10", dims=(50, 50, 50))
+        audit = charges.totals.audit_metadata["rate_matrix_export"]
+        assert audit["chargeable_weight_kg"] == "21" and audit["raw_chargeable_weight_kg"].startswith("20.8333")
+        assert adapter._calculate_chargeable_weight() == D("21")
+        assert by["EXP-FRT-AIR"].sell_pgk == D("180.00")  # 7.20 x 21 = 151.20, minimum 180
+
+    def test_flag_on_preferred_agent_stays_on_the_legacy_engine(self, twins, flag_on):
+        from pricing_v4.models import Agent
+
+        agent = Agent.objects.create(code="B3ME-PREF", name="Preferred Agent", country_code="AU")
+        adapter, charges, by = adapter_lines(agent_id=agent.id)
+        path = charges.totals.audit_metadata["export_pricing_path"]
+        assert path["path"] == "LEGACY_EXPORT" and path["reason"].startswith("OUT_OF_SCOPE")
 
     def test_flag_on_missing_fx_fails_the_aud_quote_and_does_not_fall_back(self, twins, flag_on):
         FxMarketRate.objects.all().delete()
@@ -681,3 +705,23 @@ class TestExportNativeSell:
         with pytest.raises(RateMatrixExportPricingError) as caught:
             price(term=PaymentTerm.COLLECT, currency="AUD")
         assert caught.value.code == "NATIVE_CURRENCY_MIX"
+
+    def test_shadow_applies_the_same_native_sell_precedence_as_production(self, loaded):
+        from pricing_v4.services.rate_matrix_export_shadow import BLOCKED, MATCH
+
+        native = self.native_aud_copy_of_origin_charges()
+        report = shadow_run(lanes=(("POM", "BNE"),), currencies=("AUD",))
+        key = "100kg|D2A|AUD"
+        assert not [r for r in report.records if r.classification == BLOCKED]
+        parity = one(report, scenario=key, product_code="TOTAL", aspect="production_rate_matrix_parity")
+        assert parity.classification == MATCH, parity.as_dict()
+        assert D(one(report, scenario=key, product_code="EXP-DOC", aspect="sell_amount").shadow) == D("50.00")
+        assert "EXP-DOC" in native
+
+    def test_shadow_fails_closed_on_a_mixed_currency_dependant_like_production(self, loaded):
+        from pricing_v4.services.rate_matrix_export_shadow import BLOCKED
+
+        self.native_aud_copy_of_origin_charges(skip={"EXP-PICKUP"})
+        report = shadow_run(lanes=(("POM", "BNE"),), currencies=("AUD",))
+        blocked = one(report, scenario="100kg|D2A|AUD", aspect="scenario")
+        assert blocked.classification == BLOCKED and "NATIVE_CURRENCY_MIX" in blocked.reason

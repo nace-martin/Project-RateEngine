@@ -848,7 +848,8 @@ class TestSafetyAndCoverage:
     def test_shadow_engine_overrides_only_the_lookups_and_the_per_tier_minimum_rule(self):
         own = {n for n in vars(MatrixShadowExportEngine) if not n.startswith("__")}
         # _calculate_amount differs from production only for a tariff whose tiers carry their own minimum.
-        assert own == {"_get_cogs", "_get_sell_rate", "_calculate_amount"}
+        # _convert_amount_to_pgk differs only in the native-SELL pass, whose PGK totals are never read (B3M-E).
+        assert own == {"_get_cogs", "_get_sell_rate", "_calculate_amount", "_convert_amount_to_pgk"}
 
     def test_command_text_json_and_bad_arguments(self, loaded, capsys):
         call_command("shadow_price_rate_matrix_export", "--date", "2026-10-12", "--weights", "100",

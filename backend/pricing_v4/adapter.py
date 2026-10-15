@@ -133,6 +133,7 @@ class PricingServiceV4Adapter:
         self._source_result_context = {}
         self._audit_warnings = []
         self._audit_metadata = {}
+        self._billable_weight_kg = None
 
     def _dedupe_strings(self, values: List[str]) -> List[str]:
         seen = set()
@@ -626,6 +627,8 @@ class PricingServiceV4Adapter:
             caf_rate=caf_rate,
             policy_code=str(getattr(self.commercial_terms_policy, "policy_code", "") or ""),
         )
+        # Approved Pilot weight rule: the whole-kg billable weight is the chargeable weight for this quote.
+        self._billable_weight_kg = engine.chargeable_weight_kg
         product_code_ids = ExportPricingEngine.get_product_codes(
             is_dg=shipment.is_dangerous_goods,
             service_scope=shipment.service_scope,
@@ -1313,6 +1316,9 @@ class PricingServiceV4Adapter:
             if piece.length_cm and piece.width_cm and piece.height_cm:
                 vol = (Decimal(str(piece.length_cm)) * Decimal(str(piece.width_cm)) * Decimal(str(piece.height_cm))) / Decimal('6000')
                 total_volumetric += piece_count * vol
+        billable = getattr(self, "_billable_weight_kg", None)
+        if billable is not None:
+            return billable  # Rate Matrix export Pilot: whole-kg ceiling of the value below
         return max(total_actual, total_volumetric)
 
     def _calculate_totals(self, lines: List[CalculatedChargeLine]) -> QuoteCharges:

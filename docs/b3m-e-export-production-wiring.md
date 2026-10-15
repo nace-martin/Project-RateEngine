@@ -113,14 +113,39 @@ Pricing precedence for an explicit SELL, in Rate Matrix mode:
 - Import PGK to FCY conversions (engine `_convert_with_caf`) now apply the export CAF (10%) as the uplift,
   per the approved rule; FCY to PGK keeps the import CAF 5% rate reduction.
 
-## Weight precision
+## Chargeable weight (approved 2026-10-15)
 
-Tiered pricing accepts at most **four decimal places**. The resolver returns INVALID_CONTEXT above that and
-the quote fails closed; nothing is rounded. **Operational consequence:** the adapter's chargeable weight is
-the larger of actual weight and `L x W x H / 6000`, which is non-terminating for most dimensions
-(for example 50 x 50 x 50 cm is 20.8333... kg). A quote whose volumetric weight is the chargeable weight
-and has more than four decimals fails closed in Rate Matrix mode until the Commercial Manager approves a
-rounding rule. That rule is deliberately not invented here.
+The chargeable weight is the greater of actual weight and `L x W x H / 6000`, **rounded UP to the next whole
+kilogram**. That whole kg is used for tier selection and every charge (44.1 -> 45, 99.01 -> 100, 100 -> 100,
+1999.9 -> 2000, 2000.01 -> 2001, 50 x 50 x 50 cm = 20.833... -> 21). It is applied in the Rate Matrix
+export engine (`billable_weight_kg`), reported by the adapter as the quote's chargeable weight, and both
+values are audited (`chargeable_weight_kg`, `raw_chargeable_weight_kg`, `weight_rule = CEILING_WHOLE_KG`).
+The earlier four-decimal fail-closed rule no longer applies to normal pricing; the resolver keeps it only as
+a defensive guard that a whole kg never reaches. Legacy (flag OFF and out-of-scope) weight handling is
+unchanged.
+
+## Approvals recorded (2026-10-15)
+
+| Decision | Outcome |
+|---|---|
+| Chargeable weight | Whole-kg ceiling (above). |
+| Corrected AUD totals | Approved. Changes caused by the corrected BSP convention are intentional: PGK to FCY = TT SELL + 10% CAF; FCY to PGK = TT BUY with the 5% published-rate reduction. |
+| Preferred agent / carrier | Intentional Pilot scope: an explicit preferred agent or carrier keeps the quote on the legacy path. |
+| FX refresh | Fresh BSP FX is a UAT operational prerequisite, not a merge blocker. No FX was refreshed or seeded. |
+| Policy | `COMMERCIAL-POLICY-2026-10-14` approved. |
+
+### Policy application evidence (local validation database only)
+
+Target: `backend/db.sqlite3` (local; no hosted or production database was touched).
+
+- Manifest `policy_manifests/commercial-policy-2026-10-14.json`, sha256
+  `ff978d4192e88e4816002c8506b874c790bb81bdec72c8cb04d46001ad30456f` (dry run READY, writes 0).
+- Apply by `nason.martin` with that reviewed hash: 2 rows written (new row created; the 2026-10-11 row's
+  `valid_until` set to 2026-10-13, its only change). Re-apply: 0 rows written (idempotent).
+- Resolution after apply: 2026-10-13 -> `COMMERCIAL-POLICY-2026-10-11`; 2026-10-14 and 2027-10-14 ->
+  `COMMERCIAL-POLICY-2026-10-14` (`TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT` /
+  `FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL`).
+- Database file sha256 before `86c34e75...3a3378`, after `9674f32f...0e22af`.
 
 ## Provenance
 
@@ -152,11 +177,11 @@ loader and derives each row exactly as `sync_v4_components` would. Local result:
 
 ## Known limits (record, do not hide)
 
-- Volumetric chargeable weights with more than four decimals fail closed (above).
-- Legacy AUD COLLECT used native AUD origin tariffs where they existed; Rate Matrix mode has no AUD SELL
-  tariff by rule, so those lines are the converted PGK SELL. AUD totals therefore change (see the PR).
-- A preferred agent or carrier selection keeps the quote on the legacy engine.
-- FX is usable only within five days of the quote date; the BSP rate dated 2026-10-12 is usable through
-  2026-10-17.
-- The shadow harness (`shadow_price_rate_matrix_export`) now also prices every scenario through the
-  production Rate Matrix engine (`production_rate_matrix_parity`) and requires an exact match.
+- Legacy AUD COLLECT used native AUD origin tariffs where they existed. The approved export tariffs have
+  no AUD SELL, so Rate Matrix AUD lines are the converted PGK SELL; the resulting AUD totals are approved.
+  A native AUD SELL, if one is ever approved, takes priority in both production and the shadow.
+- A preferred agent or carrier selection keeps the quote on the legacy engine (intentional Pilot scope).
+- FX is usable only within five days of the quote date; fresh BSP FX must be loaded before UAT.
+- The shadow harness (`shadow_price_rate_matrix_export`) prices every scenario through the production Rate
+  Matrix engine (`production_rate_matrix_parity`) and requires an exact match, with the same native-SELL
+  precedence and the same `NATIVE_CURRENCY_MIX` fail-closed rule.

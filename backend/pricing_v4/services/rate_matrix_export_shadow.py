@@ -313,10 +313,15 @@ def _shadow_rate(tariff: resolver.ResolvedTariff, *, supplier: str | None) -> Sh
 
 
 class _MatrixLookup:
-    """Resolves PGK Rate Matrix tariffs for one scenario. Fails closed on anything that is not exact."""
+    """Resolves Rate Matrix tariffs for one scenario. Fails closed on anything that is not exact.
 
-    def __init__(self, scenario: Scenario, quote_date: date, using: str):
+    ``sell_currency`` is the only SELL currency resolved: PGK for the PGK pass, or the quote currency for
+    the native-SELL pass (no fallback between them inside one lookup).
+    """
+
+    def __init__(self, scenario: Scenario, quote_date: date, using: str, sell_currency: str = "PGK"):
         self.s, self.quote_date, self.using = scenario, quote_date, using
+        self.sell_currency = sell_currency
         self._cache: dict[tuple[str, str], ShadowRate | None] = {}
         self._supplier: tuple[Any, str] | None = None
 
@@ -389,12 +394,12 @@ class _MatrixLookup:
     def sell(self, pc: ProductCode) -> ShadowRate | None:
         key = ("SELL", pc.code)
         if key not in self._cache:
-            # PGK native tariffs only. A payment term is not part of the lookup: export SELL tariffs are
-            # term-independent and the resolver treats a blank applicability as ANY.
+            # Native tariffs in ``sell_currency`` only. A payment term is not part of the lookup: export SELL
+            # tariffs are term-independent and the resolver treats a blank applicability as ANY.
             self._cache[key] = self._resolve(pc, resolver.ResolutionContext(
                 rate_type=resolver.SELL, direction="EXPORT", effective_date=self.quote_date,
                 product_code=pc.code, origin_iata=self.s.origin, destination_iata=self.s.destination,
-                quote_currency="PGK", chargeable_weight=self.s.weight,
+                quote_currency=self.sell_currency, chargeable_weight=self.s.weight,
             ), None)
         return self._cache[key]
 
@@ -462,6 +467,13 @@ class MatrixShadowExportEngine(ExportPricingEngine):
         if pc.code in self._legacy_sell:
             return super()._get_sell_rate(product_code_id)
         return self._matrix.sell(pc)
+
+    def _convert_amount_to_pgk(self, amount, currency):
+        # The native-SELL pass prices lines in the quote currency; only its lines are read, never its PGK
+        # totals, so no FX is resolved for them. Every other pass is the production conversion unchanged.
+        if self._matrix.sell_currency != "PGK" and currency == self._matrix.sell_currency:
+            return amount
+        return super()._convert_amount_to_pgk(amount, currency)
 
     def _calculate_amount(self, rate):
         if isinstance(rate, ShadowRate) and rate.weight_breaks and any("min_charge" in b for b in rate.weight_breaks):
@@ -555,7 +567,7 @@ class _ExportShadow:
     # ---------------------------------------------------------------- pricing
 
     def _price_pgk(self, engine_class, scenario: Scenario, *, matrix: bool, legacy_buy=frozenset(),
-                   legacy_sell=frozenset()) -> Priced:
+                   legacy_sell=frozenset(), sell_currency: str = "PGK") -> Priced:
         kwargs = {
             "quote_date": self.quote_date, "origin": scenario.origin, "destination": scenario.destination,
             "chargeable_weight_kg": scenario.weight, "payment_term": PaymentTerm.PREPAID,
@@ -563,7 +575,7 @@ class _ExportShadow:
             "destination_currency": "PGK",
         }
         if matrix:
-            kwargs["matrix"] = _MatrixLookup(scenario, self.quote_date, self.using)
+            kwargs["matrix"] = _MatrixLookup(scenario, self.quote_date, self.using, sell_currency=sell_currency)
             kwargs["legacy_buy"], kwargs["legacy_sell"] = legacy_buy, legacy_sell
         engine = engine_class(**kwargs)
         ids = ExportPricingEngine.get_product_codes(
@@ -591,7 +603,7 @@ class _ExportShadow:
                 is_rate_missing=bool(getattr(item, "is_rate_missing", False)),
                 provenance=sell_rate.provenance if sell_rate is not None else "",
             )
-        return Priced(lines, _totals(lines), "PGK", facts=facts)
+        return Priced(lines, _totals(lines), sell_currency, facts=facts)
 
     def _pgk_pair(self, scenario: Scenario) -> tuple[Priced, Priced]:
         """Legacy and matrix PGK pricing for a scenario's lane, weight and scope (shared across currencies)."""
@@ -608,12 +620,41 @@ class _ExportShadow:
             raise cached
         return cached
 
-    def _to_aud(self, priced: Priced, policy, tt_sell: Decimal) -> Priced:
-        """Apply the locked conversion to every explicit PGK SELL line. No margin; GST on the converted amount."""
+    def _native(self, scenario: Scenario) -> Priced:
+        """Rate Matrix pricing from native quote-currency SELL tariffs only (the production precedence)."""
+        key = ("native", scenario.lane, scenario.weight, scenario.scope, scenario.currency)
+        if key not in self._pgk_cache:
+            self._pgk_cache[key] = self._price_pgk(
+                MatrixShadowExportEngine, scenario, matrix=True, sell_currency=scenario.currency
+            )
+        return self._pgk_cache[key]
+
+    def _to_aud(self, priced: Priced, policy, tt_sell: Decimal, native: Priced | None = None) -> Priced:
+        """Apply the production SELL precedence to an AUD quote.
+
+        A line with a native AUD SELL tariff (``native``) is used as is: no FX, no CAF, no margin. Every other
+        explicit PGK SELL line is converted under the locked rule; GST is on the quote-currency amount. A
+        percentage dependant whose base is in the other currency fails closed, as in production.
+        """
+        native_codes = {
+            code for (side, code), _facts in (native.facts if native else {}).items() if side == "SELL"
+        }
+        priced_codes = set(priced.lines) | set(native.lines if native else {})
+        for product in ProductCode.objects.using(self.using).filter(
+            code__in=priced_codes, percent_of_product_code__isnull=False
+        ).select_related("percent_of_product_code"):
+            base = product.percent_of_product_code.code
+            if base in priced_codes and (base in native_codes) != (product.code in native_codes):
+                raise ExportShadowBlocked(
+                    "NATIVE_CURRENCY_MIX", f"{product.code} and its base {base} have SELL tariffs in different currencies."
+                )
         converted: dict[str, Line] = {}
         conversions: list[dict[str, Any]] = []
         caf = policy.export_caf_rate
         for code, line in priced.lines.items():
+            if code in native_codes and code in native.lines:
+                converted[code] = native.lines[code]
+                continue
             pure, caf_amount, commercial = convert_pgk_to_aud(line.sell_amount, tt_sell, caf)
             gst = _q(commercial * line.gst_rate)
             evidence = None
@@ -631,6 +672,9 @@ class _ExportShadow:
                 gst_rate=line.gst_rate, is_rate_missing=line.is_rate_missing, provenance=line.provenance,
                 conversion=evidence,
             )
+        for code in sorted(native_codes - set(priced.lines)):
+            if code in native.lines:  # a native AUD tariff with no PGK counterpart is still priced, natively
+                converted[code] = native.lines[code]
         return Priced(converted, _totals(converted), "AUD", conversions, priced.facts)
 
     def _fx(self, policy) -> Any:
@@ -665,7 +709,8 @@ class _ExportShadow:
             counterfactual = self._counterfactual(s, explained)
             if s.currency == "AUD":
                 counterfactual = self._to_aud(counterfactual, policy, tt_sell) if counterfactual else None
-                legacy, shadow = self._to_aud(legacy, policy, tt_sell), self._to_aud(shadow, policy, tt_sell)
+                legacy = self._to_aud(legacy, policy, tt_sell)
+                shadow = self._to_aud(shadow, policy, tt_sell, native=self._native(s))
         except ExportShadowBlocked as blocked:
             self._emit(s, "-", "scenario", BLOCKED, reason=f"{blocked.code}: {blocked.message}")
             return

@@ -21,8 +21,10 @@ Locked commercial rules (Commercial Manager, 2026-10-12):
   stale, ambiguous, inverse-only or cross-only FX fails closed.
 - GST: CommercialProductCode GST treatment (must agree with the ProductCode the classifier reads) at the
   policy ``gst_standard_percent``.
-- Weight: tiered tariffs accept at most four decimal places; the resolver fails closed above that and
-  nothing is rounded silently.
+- Weight (approved B3M-E): the chargeable weight (greater of actual and volumetric) is rounded UP to the
+  next whole kilogram, and that whole kg is used for tier selection and every charge (20.01 -> 21,
+  2000.01 -> 2001). The resolver's four-decimal guard remains as a defensive check but a whole kg never
+  reaches it.
 
 This module does not read ExportCOGS, ExportSellRate, LocalCOGSRate, LocalSellRate or Surcharge rows.
 """
@@ -32,7 +34,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from types import SimpleNamespace
 from typing import Any, Optional
 
@@ -71,6 +73,14 @@ PRICING_PATH = "RATE_MATRIX_EXPORT"
 LEGACY_PATH = "LEGACY_EXPORT"
 
 _TWO_PLACES = Decimal("0.01")
+
+
+def billable_weight_kg(chargeable_weight_kg: Decimal) -> Decimal:
+    """Approved Pilot rule: round the chargeable weight UP to the next whole kilogram (100 stays 100)."""
+    weight = Decimal(str(chargeable_weight_kg))
+    if weight < 0:
+        raise RateMatrixExportPricingError("WEIGHT_INVALID", f"Chargeable weight {weight} is negative.")
+    return weight.to_integral_value(rounding=ROUND_CEILING)
 
 
 _USER_MESSAGES = {
@@ -295,10 +305,13 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
                 "CURRENCY_NOT_PILOT",
                 f"Payment term {payment_term} with currency {quote_currency} is not a Pilot combination.",
             )
+        # The whole-kg billable weight drives tier selection and every charge; the raw value is audited.
+        self.raw_chargeable_weight_kg = Decimal(str(chargeable_weight_kg))
+        billable = billable_weight_kg(chargeable_weight_kg)
         # Margin is never applied to an explicit SELL tariff: margin_rate stays None and is never read.
         super().__init__(
             quote_date=quote_date, origin=origin, destination=destination,
-            chargeable_weight_kg=chargeable_weight_kg, payment_term=payment_term, caf_rate=caf_rate,
+            chargeable_weight_kg=billable, payment_term=payment_term, caf_rate=caf_rate,
             margin_rate=None, margin_method="MARKUP_ON_COST", destination_currency=quote_currency,
         )
         self.policy_code = policy_code
@@ -642,7 +655,9 @@ class RateMatrixExportPricingEngine(ExportPricingEngine):
         self._audit = {
             "path": PRICING_PATH, "policy_code": self.policy_code, "quote_currency": self.quote_currency,
             "lane": f"{self.origin}-{self.destination}", "service_scope": service_scope,
-            "chargeable_weight_kg": str(self.chargeable_weight_kg), "margin_applied_to_explicit_sell": False,
+            "chargeable_weight_kg": str(self.chargeable_weight_kg),
+            "raw_chargeable_weight_kg": str(self.raw_chargeable_weight_kg),
+            "weight_rule": "CEILING_WHOLE_KG", "margin_applied_to_explicit_sell": False,
             "tariffs": [
                 _tariff_provenance(side, rate.tariff)
                 for (side, _code), rate in sorted(self._tariffs.items(), key=lambda kv: (kv[0][1], kv[0][0]))
