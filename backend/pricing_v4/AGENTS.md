@@ -2,6 +2,8 @@
 
 These instructions apply within `backend/pricing_v4/` in addition to the repository root guide.
 
+Business authority: read the relevant Nas Brain notes before changing or validating any pricing rule, and stop on conflict, silence, or unavailability, as root `AGENTS.md` §1 requires. Code and tests here are implementation truth, not business authority.
+
 ## Active Engine and Sources
 
 V4 is the active deterministic pricing engine. Start with:

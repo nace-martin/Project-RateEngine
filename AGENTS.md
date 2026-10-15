@@ -13,6 +13,12 @@ Authoritative business intent, commercial rules, product decisions, and pricing 
 - Location: `%USERPROFILE%\Nas-Brain`
 - When business, product, or pricing intent matters, agents should read `%USERPROFILE%\Nas-Brain\AGENTS.md`.
 - Nas Brain defines durable intent and business knowledge; RateEngine code, tests, and runtime evidence define implementation reality.
+- **Mandatory:** before changing, validating, or approving any RateEngine business rule (pricing, rates, COGS/SELL, FX, CAF, margin, GST, ProductCodes, quote/SPOT workflows, database/business architecture, Pilot approvals, or other commercial decisions), read the relevant Nas Brain canonical notes first: `02-Knowledge/RateEngine *.md` and `03-Projects/RateEngine/`. Record which notes you read.
+- Nas Brain = intended/approved business truth; repo/code/tests = current implementation truth. Passing tests or existing code are not business authority on their own.
+- If Nas Brain conflicts with repo/code/tests, or is silent on the rule, do not guess and do not silently choose the repo. Stop that decision and report the conflict or gap for review.
+- If the required Nas Brain notes cannot be accessed (path missing, unreadable, or not mounted in this environment), stop the business-rule decision and report it. Do not substitute repo/code/tests as the authority.
+- For a PR that changes, validates, or approves a business rule, record `Nas Brain notes reviewed: <paths>` in the PR body (see `.github/pull_request_template.md`). Purely technical, non-commercial PRs answer `Business-rule change: No` instead.
+- Only the `AGENTS.md` files in the current checkout apply. Copies under scratch directories or other worktrees (for example `.codex-temp-*/`, `tmp*/`) are stale snapshots, not authority.
 - Brain intent must not be assumed implemented.
 - Accidental implementation behaviour must not become Brain truth.
 
@@ -182,6 +188,7 @@ If manual verification is not possible, state why, what was verified instead, an
 Require an explicit decision before proceeding when the work would:
 
 - invent or choose an unsupported commercial rule;
+- resolve a conflict between Nas Brain and repo/code/tests on a business rule (see Section 1);
 - conceal a missing rate, mapping, coverage gap, mixed-currency issue, or unresolved charge;
 - change quote totals or customer-facing commercial output outside approved scope;
 - bypass operator review, ProductCode approval, RBAC, or audit controls;

@@ -2,6 +2,8 @@
 
 These instructions apply within `backend/quotes/` in addition to the repository root guide.
 
+Business authority: read the relevant Nas Brain notes before changing or validating any quote, SPOT, or ProductCode business rule, and stop on conflict, silence, or unavailability, as root `AGENTS.md` §1 requires. Code and tests here are implementation truth, not business authority.
+
 ## Active Boundaries
 
 Quote lifecycle and SPE/SPOT workflows live here. The active design uses the SPE envelope and V4 adapter. Do not revive `QuoteSpotRate`, `QuoteSpotCharge`, quote-scoped SPOT-rate CRUD, or `/api/v3/quotes/<quote_id>/ai-intake/`.

@@ -33,6 +33,13 @@ Routing rationale:
 
 -
 
+## Nas Brain Review
+
+Answer Yes if this PR changes, validates, or approves a business/commercial rule (see `AGENTS.md` §1); otherwise No.
+
+Business-rule change: Yes / No
+Nas Brain notes reviewed: <paths, required when Yes>
+
 ## Verification
 
 Automated:

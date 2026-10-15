@@ -59,6 +59,20 @@ jobs:
               return;
             }
 
+            const businessRuleMatch = body.match(/Business-rule change:\s*(Yes|No)\s*$/im);
+            if (!businessRuleMatch) {
+              core.setFailed('Declare "Business-rule change: Yes" or "Business-rule change: No" in the Nas Brain Review section.');
+              return;
+            }
+            if (businessRuleMatch[1].toLowerCase() === 'yes') {
+              const notesMatch = body.match(/Nas Brain notes reviewed:[ \t]*(.*)/i);
+              const notes = notesMatch ? notesMatch[1].trim() : '';
+              if (!notes || notes.startsWith('<') || /^(n\/?a|none|tbd|todo|pending)\b/i.test(notes)) {
+                core.setFailed('Business-rule change requires "Nas Brain notes reviewed: <paths>" listing the notes read (AGENTS.md section 1).');
+                return;
+              }
+            }
+
             const finalHeadMatch = body.match(/Final head SHA:\s*`?([0-9a-f]{40})`?/i);
             if (!finalHeadMatch) {
               core.setFailed('Record the 40-character Final head SHA in the PR body.');
