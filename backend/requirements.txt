@@ -38,7 +38,7 @@ gunicorn>=21.0
 
 # PDF generation
 fpdf2>=2.7.9
-xhtml2pdf>=0.2.11
+xhtml2pdf==0.2.23  # 0.2.24 requires pyHanko>=0.37 -> lxml>=5.4, incompatible with the lxml 5.2.2 pin above
 qrcode[pil]>=7.4.2
 
 # AI Rate Intake dependencies
