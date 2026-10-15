@@ -1,7 +1,7 @@
 """Pilot Gate B3M-C: export Rate Matrix manifests and the read-only export shadow harness.
 
 The commercial values here are the locked rules recorded by the Commercial Manager on 2026-10-12
-(BUY and SELL tariffs, AUD conversion at TT BUY with a 10% export CAF, no margin on explicit SELL).
+(BUY and SELL tariffs, AUD conversion at TT SELL (BSP: PGK to FCY) with a 10% export CAF, no margin on explicit SELL).
 The FX rates are test data. The manifests under test are the controlled repository files, loaded with
 the real master-data and tariff loaders into the test database.
 """
@@ -145,7 +145,8 @@ def world(db):
     CommercialTermsPolicy.objects.create(
         policy_code="TEST-LOCKED-2026-10-12", valid_from=date(2026, 10, 11), margin_percent=D("16.67"),
         margin_method="TARGET_GROSS_MARGIN", import_caf_percent=D("5.00"), export_caf_percent=D("10.00"),
-        gst_standard_percent=D("10.00"), caf_method="UPLIFT_AFTER_FX", fx_side_convention="COST_AT_TT_SELL",
+        gst_standard_percent=D("10.00"), caf_method="TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT",
+        fx_side_convention="FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL",
         fx_max_age_days=5, fx_primary_source="bsp_html", fx_fallback_source="MANUAL",
     )
     FxMarketRate.objects.create(
@@ -229,7 +230,7 @@ def cents(value):
 
 
 def aud(pgk):
-    pure = cents(D(pgk) / TT_BUY)
+    pure = cents(D(pgk) / TT_SELL)
     return cents(pure * D("1.10"))
 
 
@@ -654,7 +655,7 @@ class TestPgkAndAud:
         assert production - D(total.shadow) == D("740.00") - D("675.00")
         assert total.classification == EXPECTED_DIFFERENCE
 
-    def test_aud_converts_each_explicit_pgk_line_at_tt_buy_then_ten_percent_caf(self, loaded):
+    def test_aud_converts_each_explicit_pgk_line_at_tt_sell_then_ten_percent_caf(self, loaded):
         report = run(lanes=(("POM", "BNE"),), currencies=("AUD",))
         key = "100kg|D2A|AUD"
         for code, pgk in (("EXP-FRT-AIR", "675.00"), ("EXP-DOC", "50.00"), ("EXP-PICKUP", "150.00"),
@@ -662,27 +663,27 @@ class TestPgkAndAud:
             line = one(report, scenario=key, product_code=code, aspect="sell_amount")
             assert line.classification == (EXPECTED_DIFFERENCE if code == "EXP-FRT-AIR" else MATCH), code
             assert D(line.shadow) == aud(pgk), code
-        # 675.00 / 3.10945274 = 217.08 ; x 1.10 = 238.79
-        assert D(one(report, scenario=key, product_code="EXP-FRT-AIR", aspect="sell_amount").shadow) == D("238.79")
+        # 675.00 / 3.26157860 (= 675.00 x published TT Sell 0.3066) = 206.96 ; x 1.10 = 227.66
+        assert D(one(report, scenario=key, product_code="EXP-FRT-AIR", aspect="sell_amount").shadow) == D("227.66")
 
     def test_aud_helper_applies_the_caf_as_a_separate_uplift_after_pure_fx(self):
-        pure, caf, commercial = convert_pgk_to_aud(D("675.00"), TT_BUY, D("0.10"))
-        assert (pure, caf, commercial) == (D("217.08"), D("21.71"), D("238.79"))
-        assert convert_pgk_to_aud(D("0.00"), TT_BUY, D("0.10")) == (D("0.00"), D("0.00"), D("0.00"))
+        pure, caf, commercial = convert_pgk_to_aud(D("675.00"), TT_SELL, D("0.10"))
+        assert (pure, caf, commercial) == (D("206.96"), D("20.70"), D("227.66"))
+        assert convert_pgk_to_aud(D("0.00"), TT_SELL, D("0.10")) == (D("0.00"), D("0.00"), D("0.00"))
 
-    def test_tt_sell_is_not_used(self, loaded):
-        FxMarketRate.objects.update(tt_sell_rate=D("9.99999999"))
+    def test_tt_buy_is_not_used(self, loaded):
+        FxMarketRate.objects.update(tt_buy_rate=D("0.99999999"))
         report = run(lanes=(("POM", "BNE"),), currencies=("AUD",))
         frt = one(report, scenario="100kg|D2A|AUD", product_code="EXP-FRT-AIR", aspect="sell_amount")
-        assert D(frt.shadow) == D("238.79")
+        assert D(frt.shadow) == D("227.66")
 
     def test_conversion_evidence_records_side_rate_source_age_and_caf(self, loaded):
         report = run(lanes=(("POM", "BNE"),), currencies=("AUD",))
         info = report.fx_provenance[0]
         assert (info["pair"], info["side"], info["source"], info["source_role"]) == (
-            "AUD/PGK", "TT_BUY", "bsp_html", "PRIMARY")
+            "AUD/PGK", "TT_SELL", "bsp_html", "PRIMARY")
         assert (D(info["rate"]), info["age_days"], info["max_age_days"], info["export_caf_percent"]) == (
-            TT_BUY, 0, 5, "10.00")
+            TT_SELL, 0, 5, "10.00")
 
     def test_no_margin_is_added_to_an_explicit_sell(self, loaded):
         # TARGET_GROSS_MARGIN 16.67% is in force; an explicit SELL must be converted without it.
@@ -700,13 +701,14 @@ class TestPgkAndAud:
         assert incl == total + gst
         freight_gst = D(one(report, scenario=key, product_code="EXP-FRT-AIR", aspect="gst_amount").shadow)
         assert freight_gst == D("0.00")
-        assert D(one(report, scenario=key, product_code="EXP-FRT-AIR", aspect="sell_incl_gst").shadow) == D("238.79")
+        assert D(one(report, scenario=key, product_code="EXP-FRT-AIR", aspect="sell_incl_gst").shadow) == D("227.66")
 
-    def test_production_collect_is_reported_not_reconciled(self, loaded):
+    def test_production_rate_matrix_engine_reproduces_the_shadow(self, loaded):
         report = run(lanes=(("POM", "BNE"),), currencies=("AUD",))
-        note = one(report, scenario="100kg|D2A|AUD", product_code="TOTAL", aspect="production_collect_total_sell")
-        assert note.classification == NOT_COMPARABLE
-        assert "Not reconciled" in note.reason
+        parity = one(report, scenario="100kg|D2A|AUD", product_code="TOTAL", aspect="production_rate_matrix_parity")
+        assert parity.classification == MATCH
+        assert parity.legacy == parity.shadow
+        assert pick(report, classification=NOT_COMPARABLE) == []
 
 
 # --------------------------------------------------------------------------- fail closed
@@ -808,8 +810,9 @@ class TestSafetyAndCoverage:
         assert report.counts()[BLOCKED] == 0
         assert report.counts()[MATCH] > 1000
         assert report.stale_registry_entries == [] and report.registry_errors == []
-        noncomparable = {r.aspect for r in report.records if r.classification == NOT_COMPARABLE}
-        assert noncomparable == {"production_collect_total_sell"}
+        assert report.counts()[NOT_COMPARABLE] == 0  # the AUD wiring gap closed with B3M-E
+        parity = pick(report, aspect="production_rate_matrix_parity")
+        assert len(parity) == 2 * 8 * 2 * 2 and all(r.classification == MATCH for r in parity)
         explained = {(r.product_code, r.aspect) for r in report.records if r.classification == EXPECTED_DIFFERENCE}
         assert {code for code, _ in explained} == {"EXP-FRT-AIR", "EXP-BUILDUP", "TOTAL"}
 
@@ -845,7 +848,8 @@ class TestSafetyAndCoverage:
     def test_shadow_engine_overrides_only_the_lookups_and_the_per_tier_minimum_rule(self):
         own = {n for n in vars(MatrixShadowExportEngine) if not n.startswith("__")}
         # _calculate_amount differs from production only for a tariff whose tiers carry their own minimum.
-        assert own == {"_get_cogs", "_get_sell_rate", "_calculate_amount"}
+        # _convert_amount_to_pgk differs only in the native-SELL pass, whose PGK totals are never read (B3M-E).
+        assert own == {"_get_cogs", "_get_sell_rate", "_calculate_amount", "_convert_amount_to_pgk"}
 
     def test_command_text_json_and_bad_arguments(self, loaded, capsys):
         call_command("shadow_price_rate_matrix_export", "--date", "2026-10-12", "--weights", "100",

@@ -18,6 +18,7 @@ from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm as 
 from pricing_v4.engine.import_engine import ImportPricingEngine, PaymentTerm, ServiceScope
 from pricing_v4.engine.domestic_engine import DomesticPricingEngine
 from pricing_v4.models import ProductCode, CustomerDiscount
+from pricing_v4.services import fx_conventions
 from services.models import ServiceComponent
 from quotes.completeness import evaluate_from_lines
 from pricing_v4.services.commercial_policy import (
@@ -132,6 +133,7 @@ class PricingServiceV4Adapter:
         self._source_result_context = {}
         self._audit_warnings = []
         self._audit_metadata = {}
+        self._billable_weight_kg = None
 
     def _dedupe_strings(self, values: List[str]) -> List[str]:
         seen = set()
@@ -217,7 +219,7 @@ class PricingServiceV4Adapter:
         metadata = getattr(result, "audit_metadata", {}) or {}
         conversions = list(metadata.get("conversions") or [])
         convention = metadata.get("commercial_convention") or {}
-        approved = convention.get("caf_method") == "UPLIFT_AFTER_FX"
+        approved = fx_conventions.uses_engine_conversions(convention.get("caf_method"))
         fx_snapshot = getattr(self, "fx_snapshot", None)
         first = conversions[0] if conversions else None
         leg = (first.get("legs") or [{}])[0] if first else {}
@@ -231,8 +233,13 @@ class PricingServiceV4Adapter:
             "base_rate_type": leg.get("side"),
             "base_rate": leg.get("rate"),
             "caf_percent": first.get("caf_percent") if first else None,
-            "caf_operation": (("UPLIFTED_AFTER_FX" if approved else "DEDUCTED_FROM_RATE") if first else None),
-            "effective_rate_after_caf": None,
+            # The engine records the CAF operation per conversion (import FCY to PGK reduces the rate;
+            # PGK to FCY is an uplift after FX). The superseded uplift-only method recorded none.
+            "caf_operation": (
+                (first.get("caf_operation") or ("UPLIFTED_AFTER_FX" if approved else "DEDUCTED_FROM_RATE"))
+                if first else None
+            ),
+            "effective_rate_after_caf": first.get("effective_rate_after_caf") if first else None,
             "fx_snapshot_source": getattr(fx_snapshot, "source", None),
             "fx_snapshot_timestamp": (
                 getattr(fx_snapshot, "as_of_timestamp", None).isoformat()
@@ -561,6 +568,97 @@ class PricingServiceV4Adapter:
         charges.totals.audit_metadata = audit_metadata
         return charges
 
+    def _calculate_rate_matrix_export(
+        self, *, chargeable_weight: Decimal, origin_code: str, dest_code: str, commodity_code: str
+    ):
+        """Price an in-scope Pilot export through the Rate Matrix, or return None for the legacy engine.
+
+        Selection happens before any pricing. With the flag OFF nothing is read and nothing is recorded,
+        so legacy output is unchanged. Once selected there is no fallback: any failure raises.
+        """
+        from pricing_v4.services.rate_matrix_export_pricing import (
+            RateMatrixExportPricingEngine,
+            RateMatrixExportPricingError,
+            select_rate_matrix_export_pricing,
+        )
+
+        shipment = self.quote_input.shipment
+        selection = select_rate_matrix_export_pricing(
+            shipment_type=shipment.shipment_type,
+            mode=getattr(shipment, "mode", None),
+            origin=origin_code,
+            destination=dest_code,
+            service_scope=shipment.service_scope,
+            payment_term=shipment.payment_term,
+            quote_currency=self.get_output_currency(),
+            commodity_code=commodity_code,
+            is_dangerous_goods=bool(shipment.is_dangerous_goods),
+            spot_envelope_id=self.spot_envelope_id,
+            agent_id=self.quote_input.agent_id,
+            carrier_id=self.quote_input.carrier_id,
+            buy_currency=self.quote_input.buy_currency,
+            has_overrides=bool(getattr(self.quote_input, "overrides", None)),
+            has_spot_rates=bool(getattr(self.quote_input, "spot_rates", None)),
+        )
+        if not selection.flag_enabled:
+            return None
+        self._audit_metadata["export_pricing_path"] = selection.as_dict()
+        if not selection.selected:
+            return None
+
+        if not self.commercial_terms_policy:
+            raise MissingCommercialPolicyError(
+                "No active CommercialTermsPolicy found for quote calculation; calculation fails closed."
+            )
+        caf_rate = self.commercial_terms_policy.export_caf_rate
+        if caf_rate is None:
+            raise MissingCommercialPolicyError(
+                "Export CAF rate is missing in CommercialTermsPolicy; calculation fails closed."
+            )
+        quote_currency = str(self.get_output_currency()).upper()
+        payment_term = ExportPaymentTerm(shipment.payment_term)
+        engine = RateMatrixExportPricingEngine(
+            quote_date=self.quote_input.quote_date,
+            origin=origin_code,
+            destination=dest_code,
+            chargeable_weight_kg=chargeable_weight,
+            payment_term=payment_term,
+            quote_currency=quote_currency,
+            caf_rate=caf_rate,
+            policy_code=str(getattr(self.commercial_terms_policy, "policy_code", "") or ""),
+        )
+        # Approved Pilot weight rule: the whole-kg billable weight is the chargeable weight for this quote.
+        self._billable_weight_kg = engine.chargeable_weight_kg
+        product_code_ids = ExportPricingEngine.get_product_codes(
+            is_dg=shipment.is_dangerous_goods,
+            service_scope=shipment.service_scope,
+            commodity_code=commodity_code,
+            origin=origin_code,
+            destination=dest_code,
+            payment_term=shipment.payment_term,
+            quote_date=self.quote_input.quote_date,
+        )
+        result = engine.calculate_quote(
+            product_code_ids,
+            is_dg=shipment.is_dangerous_goods,
+            service_scope=shipment.service_scope,
+            commodity_code=commodity_code,
+        )
+        # A priced line without a ServiceComponent twin would be dropped silently by the line conversion.
+        # In Rate Matrix mode that is a pricing failure, not a warning.
+        codes = {item.product_code for item in result.line_items}
+        present = set(
+            ServiceComponent.objects.filter(code__in=codes, is_active=True).values_list("code", flat=True)
+        )
+        missing = sorted(codes - present)
+        if missing:
+            raise RateMatrixExportPricingError(
+                "SERVICE_COMPONENT_MISSING",
+                f"Active ServiceComponent twin(s) missing for priced export charge(s): {', '.join(missing)}.",
+            )
+        result.audit_metadata["export_pricing_path"] = selection.as_dict()
+        return result
+
     def _calculate_standard_lines(self) -> List[CalculatedChargeLine]:
         """Run standard V4 pricing engine and return raw charge lines."""
         shipment = self.quote_input.shipment
@@ -580,6 +678,16 @@ class PricingServiceV4Adapter:
         dest_code = _normalize_station_code(getattr(shipment.destination_location, "code", None))
 
         if shipment.shipment_type == 'EXPORT':
+            # Pilot Gate B3M-E: a flagged, exact-scope Rate Matrix path. It returns None whenever the flag is
+            # OFF or the shipment is outside the Pilot scope, and the legacy export engine below is unchanged.
+            rate_matrix_result = self._calculate_rate_matrix_export(
+                chargeable_weight=chargeable_weight, origin_code=origin_code, dest_code=dest_code,
+                commodity_code=commodity_code,
+            )
+            if rate_matrix_result is not None:
+                self._capture_fx_audit_from_conversions(rate_matrix_result)
+                return self._convert_result_to_lines(rate_matrix_result)
+
             # Export Engine - now supports payment term and FCY conversion
             # Get FX rates from snapshot
             fx_rates = self._get_fx_rates_dict()
@@ -772,7 +880,7 @@ class PricingServiceV4Adapter:
         # Structure: { code: { 'cost': ..., 'sell': ..., 'description': ... } }
         
         convention = (getattr(result, "audit_metadata", {}) or {}).get("commercial_convention") or {}
-        approved_conventions = convention.get("caf_method") == "UPLIFT_AFTER_FX"
+        approved_conventions = fx_conventions.uses_engine_conversions(convention.get("caf_method"))
         self._conversion_rates = {}
         for conversion in (getattr(result, "audit_metadata", {}) or {}).get("conversions") or []:
             legs = conversion.get("legs") or []
@@ -1208,6 +1316,9 @@ class PricingServiceV4Adapter:
             if piece.length_cm and piece.width_cm and piece.height_cm:
                 vol = (Decimal(str(piece.length_cm)) * Decimal(str(piece.width_cm)) * Decimal(str(piece.height_cm))) / Decimal('6000')
                 total_volumetric += piece_count * vol
+        billable = getattr(self, "_billable_weight_kg", None)
+        if billable is not None:
+            return billable  # Rate Matrix export Pilot: whole-kg ceiling of the value below
         return max(total_actual, total_volumetric)
 
     def _calculate_totals(self, lines: List[CalculatedChargeLine]) -> QuoteCharges:

@@ -22,8 +22,9 @@ from pricing_v4.tests.test_rate_matrix_stage2_shadow import (  # noqa: F401  (wo
 )
 
 APPROVED = dict(
-    margin_percent=D("16.67"), margin_method="TARGET_GROSS_MARGIN", caf_method="UPLIFT_AFTER_FX",
-    fx_side_convention="COST_AT_TT_SELL", fx_max_age_days=5, fx_primary_source="SYNTHETIC",
+    margin_percent=D("16.67"), margin_method="TARGET_GROSS_MARGIN", export_caf_percent=D("10.00"),
+    caf_method="TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT",
+    fx_side_convention="FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL", fx_max_age_days=5, fx_primary_source="SYNTHETIC",
     fx_fallback_source="MANUAL",
 )
 
@@ -44,12 +45,12 @@ class TestStage2UnderApprovedConventions:
         assert counts[BLOCKED] == 0, {r.reason for r in report.records if r.classification == BLOCKED}
         assert counts[MATCH] > 50
 
-    def test_conversion_is_tt_sell_then_caf_then_target_margin(self, approved):
+    def test_conversion_is_tt_buy_with_caf_rate_reduction_then_target_margin(self, approved):
         sell = one(run(weights=(D(100),)), scenario=scenario_key("100"), product_code="IMP-SYN-FRT",
                    aspect="sell_amount")
         assert sell.classification == MATCH
         assert D(sell.shadow) > 0
-        # cost AUD x 2.70 (TT SELL) x 1.05 (CAF), then / (1 - 0.1667): never the legacy 2.60 x 0.95 x 1.20
+        # cost AUD x TT BUY / 0.95 (CAF reduces the published rate), then / (1 - 0.1667)
         cost = one(run(weights=(D(100),)), scenario=scenario_key("100"), product_code="IMP-SYN-FRT",
                    aspect="cost_amount")
         assert cost.classification == MATCH
@@ -58,10 +59,10 @@ class TestStage2UnderApprovedConventions:
         report = run(weights=(D(100),))
         leg = report.fx_provenance[0]
         assert (leg["pair"], leg["side"], leg["source"], leg["source_role"]) == (
-            "AUD/PGK", "TT_SELL", "SYNTHETIC", "PRIMARY")
+            "AUD/PGK", "TT_BUY", "SYNTHETIC", "PRIMARY")
         assert leg["age_days"] == 5 and leg["max_age_days"] == 5
-        assert report.policy["caf_method"] == "UPLIFT_AFTER_FX"
-        assert report.policy["fx_side_convention"] == "COST_AT_TT_SELL"
+        assert report.policy["caf_method"] == "TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT"
+        assert report.policy["fx_side_convention"] == "FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL"
 
     def test_a_rate_one_day_past_the_policy_limit_blocks_conversion_scenarios(self, approved):
         FxMarketRate.objects.update(effective_date=TODAY - timedelta(days=6))

@@ -17,7 +17,11 @@ from pricing_v4.services.commercial_policy import MissingCommercialPolicyError
 from pricing_v4.services.fx_resolver import MissingFxMarketRateError
 
 TODAY = date.today()
-APPROVED = {"caf_method": "UPLIFT_AFTER_FX", "fx_side_convention": "COST_AT_TT_SELL"}
+APPROVED = {
+    "caf_method": "TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT",
+    "fx_side_convention": "FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL",
+}
+SUPERSEDED = {"caf_method": "UPLIFT_AFTER_FX", "fx_side_convention": "COST_AT_TT_SELL"}
 
 
 def engine(**kwargs):
@@ -37,7 +41,7 @@ class ApprovedConventionFixture(TestCase):
         CommercialTermsPolicy.objects.create(
             policy_code="SYNTH", valid_from=date(2020, 1, 1), margin_percent=D("16.67"),
             margin_method="TARGET_GROSS_MARGIN", import_caf_percent=D("5.00"), export_caf_percent=D("10.00"),
-            gst_standard_percent=D("10.00"), caf_method="UPLIFT_AFTER_FX", fx_side_convention="COST_AT_TT_SELL",
+            gst_standard_percent=D("10.00"), **APPROVED,
             fx_max_age_days=5, fx_primary_source="TEST", fx_fallback_source="MANUAL", is_active=True,
         )
         FxMarketRate.objects.all().delete()
@@ -48,27 +52,48 @@ class ApprovedConventionFixture(TestCase):
 
 
 class TestConversionConventions(ApprovedConventionFixture):
-    def test_fcy_cost_to_pgk_uses_tt_sell_then_caf_uplift(self):
+    def test_fcy_cost_to_pgk_uses_tt_buy_with_the_caf_reducing_the_rate(self):
         e = engine()
-        # pure: 100 AUD x 2.60 = 260.00 PGK ; CAF: 260.00 x 1.05 = 273.00
-        assert e._convert_fcy_to_pgk(D("100"), "AUD") == D("273.00")
+        # BSP: FCY to PGK uses TT BUY; import CAF reduces the published rate: 100 x 2.50 / 0.95 = 263.16
+        assert e._convert_fcy_to_pgk(D("100"), "AUD") == D("263.16")
         conversion = e._conversions[0]
-        assert conversion["pure_market_amount"] == "260.00"
-        assert conversion["caf_amount"] == "13.00"
+        assert conversion["pure_market_amount"] == "250.00"
+        assert conversion["caf_amount"] == "13.16"
+        assert conversion["caf_operation"] == "PUBLISHED_RATE_REDUCED"
+        assert conversion["legs"][0]["side"] == "TT_BUY" and D(str(conversion["legs"][0]["rate"])) == D("2.50")
+
+    def test_import_caf_is_a_rate_reduction_not_an_uplift_on_the_amount(self):
+        e = engine()
+        pgk = e._convert_fcy_to_pgk(D("100"), "AUD")
+        # / 0.95 is not x 1.05: 250.00 x 1.05 = 262.50, and the legacy rate adjustment gave 250 x 0.95 = 237.50
+        assert pgk == D("263.16") and pgk not in (D("262.50"), D("237.50"))
+        assert D(str(e._conversions[0]["legs"][0]["rate"])) == D("2.50")  # the market leg is recorded untouched
+        assert D(e._conversions[0]["effective_rate_after_caf"]) == (D("2.50") / D("0.95")).quantize(D("0.00000001"))
+
+    def test_pgk_to_customer_fcy_uses_tt_sell_then_export_caf_uplift(self):
+        e = engine()
+        # pure: 260.00 / 2.60 = 100.00 AUD ; export CAF uplift (policy 10%) 100.00 x 1.10 = 110.00
+        assert e._convert_pgk_to_fcy(D("260.00"), "AUD") == D("110.00")
+        conversion = e._conversions[0]
         assert conversion["legs"][0]["side"] == "TT_SELL" and D(str(conversion["legs"][0]["rate"])) == D("2.60")
+        assert (conversion["pure_market_amount"], conversion["caf_operation"]) == ("100.00", "UPLIFTED_AFTER_FX")
+        assert D(conversion["caf_percent"]) == D("10")
 
-    def test_caf_is_never_deducted_from_or_folded_into_the_fx_rate(self):
-        e = engine()
-        e._convert_fcy_to_pgk(D("100"), "AUD")
-        # the recorded FX leg is the market rate untouched; legacy behaviour would have used 2.50 x 0.95
-        assert D(str(e._conversions[0]["legs"][0]["rate"])) == D("2.60")
+    def test_superseded_cost_at_tt_sell_policy_fails_closed_on_conversion(self):
+        from pricing_v4.services.fx_conventions import SupersededFxConventionError
 
-    def test_pgk_to_customer_fcy_uses_tt_buy_then_caf(self):
-        e = engine()
-        # pure: 260.00 / 2.50 = 104.00 AUD ; CAF 104.00 x 1.05 = 109.20
-        assert e._convert_pgk_to_fcy(D("260.00"), "AUD") == D("109.20")
-        assert e._conversions[0]["legs"][0]["side"] == "TT_BUY"
+        with pytest.raises(SupersededFxConventionError):
+            engine(**SUPERSEDED)._convert_fcy_to_pgk(D("100"), "AUD")
+        with pytest.raises(SupersededFxConventionError):
+            engine(**SUPERSEDED)._convert_pgk_to_fcy(D("100"), "AUD")
 
+    def test_fcy_to_fcy_has_no_approved_rule_and_fails_closed(self):
+        FxMarketRate.objects.create(
+            base_currency="USD", quote_currency="PGK", effective_date=TODAY, tt_buy_rate=D("3.50"),
+            tt_sell_rate=D("3.70"), mid_rate=D("3.60"), source="TEST",
+        )
+        with pytest.raises(MissingCommercialPolicyError, match="fails closed"):
+            engine()._convert_cross_currency(D("100"), "AUD", "USD")
     def test_fcy_sell_amount_to_pgk_has_no_approved_side_and_fails_closed(self):
         with pytest.raises(MissingCommercialPolicyError, match="fails closed"):
             engine()._convert_cross_currency(D("100"), "AUD", "PGK", role="SELL")
@@ -98,7 +123,7 @@ class TestConversionConventions(ApprovedConventionFixture):
 
     def test_rate_five_days_old_is_accepted(self):
         FxMarketRate.objects.all().update(effective_date=TODAY - timedelta(days=5))
-        assert engine()._convert_fcy_to_pgk(D("100"), "AUD") == D("273.00")
+        assert engine()._convert_fcy_to_pgk(D("100"), "AUD") == D("263.16")
 
 
 class TestMarginConvention(ApprovedConventionFixture):

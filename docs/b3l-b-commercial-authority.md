@@ -3,6 +3,15 @@
 Status: implemented behind a policy version. Nothing here changes any quote until the new policy
 version is applied by an operator (see "Apply plan"). No FX rate was seeded and no tariff changed.
 
+> **Superseded in part by Pilot Gate B3M-E (2026-10-14).** The FX sides and the import CAF method below
+> were wrong. BSP's calculator converts FCY to PGK at **TT BUY** (import CAF 5% *reduces the published TT
+> Buy*: PGK = FCY ÷ (TT Buy × 0.95)) and PGK to FCY at **TT SELL** (export CAF 10% uplift after
+> conversion). Policy `COMMERCIAL-POLICY-2026-10-11` (`UPLIFT_AFTER_FX` / `COST_AT_TT_SELL`) is kept as
+> history; a conversion under it now fails closed. The approved rule is policy version
+> `COMMERCIAL-POLICY-2026-10-14` (`TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT` /
+> `FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL`). See `docs/b3l-c-bsp-fx-mapping.md` and
+> `pricing_v4/services/fx_conventions.py`. Margin, GST and FX source/age decisions are unchanged.
+
 ## Approved decisions (source: Gate B3L-A decision pack, operator-approved)
 
 | Decision | Value |
@@ -20,8 +29,8 @@ The calculation conventions are data on the policy row, not code constants:
 
 | Field on `CommercialTermsPolicy` | Legacy default | Approved value |
 |---|---|---|
-| `caf_method` | `LEGACY_RATE_ADJUSTMENT` | `UPLIFT_AFTER_FX` |
-| `fx_side_convention` | `LEGACY_COST_AT_TT_BUY` | `COST_AT_TT_SELL` |
+| `caf_method` | `LEGACY_RATE_ADJUSTMENT` | `UPLIFT_AFTER_FX` (superseded B3M-E by `TO_PGK_RATE_REDUCTION_FROM_PGK_UPLIFT`) |
+| `fx_side_convention` | `LEGACY_COST_AT_TT_BUY` | `COST_AT_TT_SELL` (superseded B3M-E by `FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL`) |
 | `fx_max_age_days` | null (no limit) | 5 |
 | `fx_primary_source` / `fx_fallback_source` | blank | `bsp_html` / `MANUAL` |
 | `margin_method` / `margin_percent` | `MARKUP_ON_COST` / 20.00 | `TARGET_GROSS_MARGIN` / 16.67 |
@@ -44,7 +53,8 @@ applied.
   ambiguous or incomplete. `quotes.tax_policy.PNG_GST_REFERENCE_RATE` is a named reference value only;
   the engines, adapter and PDF fallback no longer use a literal 10%.
 
-Worked example (synthetic, AUD 100 supplier cost, TT SELL 2.60, CAF 5%, margin 16.67%):
+Worked example as originally approved (synthetic; **superseded B3M-E**, the side and CAF method are wrong;
+the corrected import result for AUD 100 at stored TT BUY 2.50 is 100 × 2.50 ÷ 0.95 = 263.16 PGK):
 
 ```
 pure FX      100.00 AUD x 2.60             = 260.00 PGK

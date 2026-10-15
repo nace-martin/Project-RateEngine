@@ -2,6 +2,11 @@
 
 Status: mapping confirmed from source evidence; loader and provider corrected. No rate was loaded.
 
+> **Corrected in Pilot Gate B3M-E (2026-10-14).** The stored values below are right and unchanged. The
+> *conversion sides* this page originally named were reversed. BSP's own calculator (screenshots dated
+> 2026-10-14, AUD TT Buy 0.3215 / TT Sell 0.3065) converts **PGK to AUD at TT Sell** and **AUD to PGK at
+> TT Buy**. See "Conversion sides (corrected)" below and `pricing_v4/services/fx_conventions.py`.
+
 ## What BSP publishes
 
 The BSP exchange-rate page is headed "Exchange rates for Kina" and lists, per currency, five figures as
@@ -27,10 +32,10 @@ figures' numeric order alone.
 
 Inverting FCY-per-PGK reverses the numeric order but not the bank side:
 
-| Normalized | Source | AUD value | Used for |
+| Normalized | Source | AUD value | Used for (corrected B3M-E) |
 |---|---|---|---|
-| TT BUY (bank buys FCY) | 1 / TT Buy | 3.10945274 | PGK amount to FCY customer quote (÷ TT BUY) |
-| TT SELL (bank sells FCY) | 1 / TT Sell | 3.26157860 | FCY supplier cost to PGK (× TT SELL) |
+| TT BUY (bank buys FCY) | 1 / TT Buy | 3.10945274 | FCY to PGK (× TT BUY, import CAF reduces the rate) |
+| TT SELL (bank sells FCY) | 1 / TT Sell | 3.26157860 | PGK to FCY (÷ TT SELL, then export CAF uplift) |
 
 `tt_sell >= tt_buy` therefore holds for genuine BSP data and the loader guard is correct.
 
@@ -53,8 +58,32 @@ data, and no real BSP rate could be loaded. The guard did its job; the mapping w
 - `core/management/commands/fetch_fx.py`: PGK:FCY rows invert without swapping sides.
 - Tests: `pricing_v4/tests/test_b3lc_bsp_fx_mapping.py`.
 
-No schema change. The pricing engine and resolver were already correct for bank-side storage (supplier
-cost at stored `tt_sell`, customer quote at stored `tt_buy`; inverse pairs swap sides explicitly).
+No schema change. The resolver was already correct for bank-side storage (inverse pairs swap sides
+explicitly, so PGK/AUD TT BUY = 1 / stored AUD/PGK TT SELL and the economics of both orientations agree).
+
+The original note here said the engine was correct with supplier cost at stored `tt_sell` and customer
+quote at stored `tt_buy`. That was wrong; see the next section.
+
+## Conversion sides (corrected, Pilot Gate B3M-E)
+
+Source: BSP published AUD rates and the BSP calculator, 2026-10-14. Published: TT Buy 0.3215, TT Sell
+0.3065 AUD per PGK. Stored (unchanged rule): TT BUY = 1 / 0.3215 = 3.11041991; TT SELL = 1 / 0.3065 =
+3.26264274.
+
+| Conversion | Side | Published orientation | Stored (PGK per FCY) | CAF |
+|---|---|---|---|---|
+| PGK to FCY | TT SELL | FCY = PGK × TT Sell | FCY = PGK ÷ TT SELL | export CAF +10% after conversion |
+| FCY to PGK | TT BUY | PGK = FCY ÷ (TT Buy × 0.95) | PGK = FCY × TT BUY ÷ 0.95 | import CAF 5% reduces the published rate |
+
+Worked examples (tested in `test_b3lc_bsp_fx_mapping.py::TestBspCalculatorWorkedExamples`):
+
+- PGK 1,000 to AUD: 1000 × 0.3065 = 306.50; × 1.10 = **AUD 337.15**.
+- AUD 100 to PGK: 0.3215 × 0.95 = 0.305425; 100 ÷ 0.305425 = **K 327.41**. This is a rate reduction; a
+  pure conversion × 1.05 (K 326.59) is not equivalent.
+
+The loader and stored values are unchanged; no side was swapped in storage. The policy convention that
+encoded the reversed sides (`COST_AT_TT_SELL`) is superseded by `FCY_TO_PGK_AT_TT_BUY_PGK_TO_FCY_AT_TT_SELL`
+through a new policy version (see `docs/b3m-e-export-production-wiring.md`).
 
 ## Residual points for human awareness
 

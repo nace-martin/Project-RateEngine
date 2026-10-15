@@ -411,6 +411,13 @@ SPOT_ALLOWED_NON_PNG_LANES = [
     lane.strip().upper() for lane in _spot_non_png.split(',') if lane.strip()
 ]
 
+# Rate Matrix export pricing (Pilot Gate B3M-E). OFF unless the variable is exactly "true". When ON, only
+# AIR / EXPORT General Cargo POM->BNE and POM->SYD (A2A, D2A) price through the Rate Matrix, with no
+# fallback to legacy rates; every other shipment keeps the legacy export engine.
+RATE_MATRIX_EXPORT_PRICING_ENABLED = (
+    os.environ.get('RATE_MATRIX_EXPORT_PRICING_ENABLED', '').strip().lower() == 'true'
+)
+
 # =============================================================================
 # LOGGING CONFIGURATION
 # =============================================================================

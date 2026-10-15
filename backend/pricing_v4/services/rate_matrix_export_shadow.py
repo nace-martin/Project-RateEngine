@@ -13,7 +13,7 @@ Locked commercial rules (Commercial Manager, 2026-10-12) that this harness prove
 
 - Export SELL tariffs are **PGK only**. No AUD SELL tariff exists or is created.
 - A PGK quote has no conversion, so it needs no FX and carries no CAF.
-- An AUD quote converts each explicit PGK SELL line once: ``AUD = (PGK / TT BUY) * (1 + export CAF)``,
+- An AUD quote converts each explicit PGK SELL line once: ``AUD = (PGK / TT SELL) * (1 + export CAF)`` (TT SELL stored as PGK per AUD; BSP: PGK to FCY uses TT Sell),
   FX from ``FxMarketRate`` through the policy-driven resolver (source priority, age limit, fail closed).
   The CAF is a separate uplift after pure FX and is applied only because a conversion occurred.
 - An explicit SELL tariff receives no additional margin.
@@ -25,9 +25,12 @@ an approved registry entry exactly, and re-pricing with the legacy native facts 
 the legacy amount. Anything else is ``UNEXPLAINED_DIFFERENCE``. The same fail-closed principle as the
 import shadow applies; nothing is forced to MATCH.
 
-The production export engine does not yet implement these conventions (it applies margin, then divides
-by TT SELL x (1 + CAF) for COLLECT). That gap is reported per AUD scenario as ``NOT_COMPARABLE``; this
-module does not change production behaviour.
+Since Pilot Gate B3M-E the production Rate Matrix export engine
+(``pricing_v4.services.rate_matrix_export_pricing``, behind the OFF-by-default
+``RATE_MATRIX_EXPORT_PRICING_ENABLED`` flag) implements these conventions. Every scenario is also priced
+through that production engine and must reproduce the shadow exactly (``production_rate_matrix_parity``);
+any divergence is UNEXPLAINED. The legacy engine remains the comparison baseline. This module does not
+change production behaviour.
 
 Safety: diagnostic only; runs in a read-only, rolled-back transaction; writes nothing; invents no rate,
 FX, CAF or margin; any missing, stale or ambiguous input is ``BLOCKED`` for the scenario.
@@ -67,7 +70,9 @@ DEFAULT_LANES = (("POM", "BNE"), ("POM", "SYD"))
 DEFAULT_WEIGHTS = tuple(Decimal(w) for w in ("30", "45", "100", "200", "500", "999", "1000", "1001"))
 DEFAULT_SCOPES = ("A2A", "D2A")
 DEFAULT_CURRENCIES = ("PGK", "AUD")
-NOT_APPROVED = "EXPORT CAF AND CONVENTIONS PER LOCKED RULE 2026-10-12. NOT LIVE. NOT WIRED INTO PRODUCTION."
+NOT_APPROVED = (
+    "EXPORT CAF AND CONVENTIONS PER LOCKED RULE 2026-10-12. PRODUCTION PATH IS FLAG-CONTROLLED AND OFF BY DEFAULT."
+)
 NONE_TEXT = "none"
 # Native facts compared between a legacy row and a Rate Matrix tariff. Validity and source metadata
 # cannot change an amount and are not compared here.
@@ -308,10 +313,15 @@ def _shadow_rate(tariff: resolver.ResolvedTariff, *, supplier: str | None) -> Sh
 
 
 class _MatrixLookup:
-    """Resolves PGK Rate Matrix tariffs for one scenario. Fails closed on anything that is not exact."""
+    """Resolves Rate Matrix tariffs for one scenario. Fails closed on anything that is not exact.
 
-    def __init__(self, scenario: Scenario, quote_date: date, using: str):
+    ``sell_currency`` is the only SELL currency resolved: PGK for the PGK pass, or the quote currency for
+    the native-SELL pass (no fallback between them inside one lookup).
+    """
+
+    def __init__(self, scenario: Scenario, quote_date: date, using: str, sell_currency: str = "PGK"):
         self.s, self.quote_date, self.using = scenario, quote_date, using
+        self.sell_currency = sell_currency
         self._cache: dict[tuple[str, str], ShadowRate | None] = {}
         self._supplier: tuple[Any, str] | None = None
 
@@ -384,12 +394,12 @@ class _MatrixLookup:
     def sell(self, pc: ProductCode) -> ShadowRate | None:
         key = ("SELL", pc.code)
         if key not in self._cache:
-            # PGK native tariffs only. A payment term is not part of the lookup: export SELL tariffs are
-            # term-independent and the resolver treats a blank applicability as ANY.
+            # Native tariffs in ``sell_currency`` only. A payment term is not part of the lookup: export SELL
+            # tariffs are term-independent and the resolver treats a blank applicability as ANY.
             self._cache[key] = self._resolve(pc, resolver.ResolutionContext(
                 rate_type=resolver.SELL, direction="EXPORT", effective_date=self.quote_date,
                 product_code=pc.code, origin_iata=self.s.origin, destination_iata=self.s.destination,
-                quote_currency="PGK", chargeable_weight=self.s.weight,
+                quote_currency=self.sell_currency, chargeable_weight=self.s.weight,
             ), None)
         return self._cache[key]
 
@@ -458,6 +468,13 @@ class MatrixShadowExportEngine(ExportPricingEngine):
             return super()._get_sell_rate(product_code_id)
         return self._matrix.sell(pc)
 
+    def _convert_amount_to_pgk(self, amount, currency):
+        # The native-SELL pass prices lines in the quote currency; only its lines are read, never its PGK
+        # totals, so no FX is resolved for them. Every other pass is the production conversion unchanged.
+        if self._matrix.sell_currency != "PGK" and currency == self._matrix.sell_currency:
+            return amount
+        return super()._convert_amount_to_pgk(amount, currency)
+
     def _calculate_amount(self, rate):
         if isinstance(rate, ShadowRate) and rate.weight_breaks and any("min_charge" in b for b in rate.weight_breaks):
             return evaluate_tiered_break_rule(
@@ -474,16 +491,16 @@ def _q(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def convert_pgk_to_aud(amount: Decimal, tt_buy: Decimal, caf_rate: Decimal) -> tuple[Decimal, Decimal, Decimal]:
-    """Locked export rule: pure FX at TT BUY first (rounded), then the CAF as a separate uplift (rounded).
+def convert_pgk_to_aud(amount: Decimal, tt_sell: Decimal, caf_rate: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+    """Locked export rule: pure FX at TT SELL first (rounded), then the CAF as a separate uplift (rounded).
 
     Returns (pure, caf, commercial). The CAF is never folded into the rate.
     """
     if amount == 0:
         return Decimal("0.00"), Decimal("0.00"), Decimal("0.00")
-    if tt_buy <= 0:
-        raise ExportShadowBlocked("FX_NOT_POSITIVE", "TT BUY must be strictly positive.")
-    pure = _q(amount / tt_buy)
+    if tt_sell <= 0:
+        raise ExportShadowBlocked("FX_NOT_POSITIVE", "TT SELL must be strictly positive.")
+    pure = _q(amount / tt_sell)
     commercial = _q(pure * (Decimal("1") + caf_rate))
     return pure, commercial - pure, commercial
 
@@ -550,7 +567,7 @@ class _ExportShadow:
     # ---------------------------------------------------------------- pricing
 
     def _price_pgk(self, engine_class, scenario: Scenario, *, matrix: bool, legacy_buy=frozenset(),
-                   legacy_sell=frozenset()) -> Priced:
+                   legacy_sell=frozenset(), sell_currency: str = "PGK") -> Priced:
         kwargs = {
             "quote_date": self.quote_date, "origin": scenario.origin, "destination": scenario.destination,
             "chargeable_weight_kg": scenario.weight, "payment_term": PaymentTerm.PREPAID,
@@ -558,7 +575,7 @@ class _ExportShadow:
             "destination_currency": "PGK",
         }
         if matrix:
-            kwargs["matrix"] = _MatrixLookup(scenario, self.quote_date, self.using)
+            kwargs["matrix"] = _MatrixLookup(scenario, self.quote_date, self.using, sell_currency=sell_currency)
             kwargs["legacy_buy"], kwargs["legacy_sell"] = legacy_buy, legacy_sell
         engine = engine_class(**kwargs)
         ids = ExportPricingEngine.get_product_codes(
@@ -586,7 +603,7 @@ class _ExportShadow:
                 is_rate_missing=bool(getattr(item, "is_rate_missing", False)),
                 provenance=sell_rate.provenance if sell_rate is not None else "",
             )
-        return Priced(lines, _totals(lines), "PGK", facts=facts)
+        return Priced(lines, _totals(lines), sell_currency, facts=facts)
 
     def _pgk_pair(self, scenario: Scenario) -> tuple[Priced, Priced]:
         """Legacy and matrix PGK pricing for a scenario's lane, weight and scope (shared across currencies)."""
@@ -603,13 +620,42 @@ class _ExportShadow:
             raise cached
         return cached
 
-    def _to_aud(self, priced: Priced, policy, tt_buy: Decimal) -> Priced:
-        """Apply the locked conversion to every explicit PGK SELL line. No margin; GST on the converted amount."""
+    def _native(self, scenario: Scenario) -> Priced:
+        """Rate Matrix pricing from native quote-currency SELL tariffs only (the production precedence)."""
+        key = ("native", scenario.lane, scenario.weight, scenario.scope, scenario.currency)
+        if key not in self._pgk_cache:
+            self._pgk_cache[key] = self._price_pgk(
+                MatrixShadowExportEngine, scenario, matrix=True, sell_currency=scenario.currency
+            )
+        return self._pgk_cache[key]
+
+    def _to_aud(self, priced: Priced, policy, tt_sell: Decimal, native: Priced | None = None) -> Priced:
+        """Apply the production SELL precedence to an AUD quote.
+
+        A line with a native AUD SELL tariff (``native``) is used as is: no FX, no CAF, no margin. Every other
+        explicit PGK SELL line is converted under the locked rule; GST is on the quote-currency amount. A
+        percentage dependant whose base is in the other currency fails closed, as in production.
+        """
+        native_codes = {
+            code for (side, code), _facts in (native.facts if native else {}).items() if side == "SELL"
+        }
+        priced_codes = set(priced.lines) | set(native.lines if native else {})
+        for product in ProductCode.objects.using(self.using).filter(
+            code__in=priced_codes, percent_of_product_code__isnull=False
+        ).select_related("percent_of_product_code"):
+            base = product.percent_of_product_code.code
+            if base in priced_codes and (base in native_codes) != (product.code in native_codes):
+                raise ExportShadowBlocked(
+                    "NATIVE_CURRENCY_MIX", f"{product.code} and its base {base} have SELL tariffs in different currencies."
+                )
         converted: dict[str, Line] = {}
         conversions: list[dict[str, Any]] = []
         caf = policy.export_caf_rate
         for code, line in priced.lines.items():
-            pure, caf_amount, commercial = convert_pgk_to_aud(line.sell_amount, tt_buy, caf)
+            if code in native_codes and code in native.lines:
+                converted[code] = native.lines[code]
+                continue
+            pure, caf_amount, commercial = convert_pgk_to_aud(line.sell_amount, tt_sell, caf)
             gst = _q(commercial * line.gst_rate)
             evidence = None
             if line.sell_amount != 0:
@@ -617,7 +663,7 @@ class _ExportShadow:
                     "product_code": code, "role": "SELL", "from_currency": "PGK", "to_currency": "AUD",
                     "amount_in": str(line.sell_amount), "pure_market_amount": str(pure),
                     "caf_percent": str(caf * 100), "caf_amount": str(caf_amount), "commercial_amount": str(commercial),
-                    "side": "TT_BUY",
+                    "side": "TT_SELL",
                 }
                 conversions.append(evidence)
             converted[code] = Line(
@@ -626,20 +672,23 @@ class _ExportShadow:
                 gst_rate=line.gst_rate, is_rate_missing=line.is_rate_missing, provenance=line.provenance,
                 conversion=evidence,
             )
+        for code in sorted(native_codes - set(priced.lines)):
+            if code in native.lines:  # a native AUD tariff with no PGK counterpart is still priced, natively
+                converted[code] = native.lines[code]
         return Priced(converted, _totals(converted), "AUD", conversions, priced.facts)
 
     def _fx(self, policy) -> Any:
         pair = resolve_market_fx_pair("AUD", "PGK", self.quote_date)
         if pair.is_inverse or pair.is_cross:
-            # The locked rule names TT BUY of the stored AUD/PGK market fact. A rate that exists only as the
+            # The locked rule names TT SELL of the stored AUD/PGK market fact. A rate that exists only as the
             # reverse pair, or only through a cross, is never inferred into it.
             raise ExportShadowBlocked(
                 "FX_NOT_DIRECT",
                 "AUD/PGK resolved only as an inverse or cross pair; the locked export rule requires the stored "
-                "AUD/PGK TT BUY.",
+                "AUD/PGK TT SELL.",
             )
         info = {
-            "pair": "AUD/PGK", "side": "TT_BUY", "rate": str(pair.tt_buy), "source": pair.source,
+            "pair": "AUD/PGK", "side": "TT_SELL", "rate": str(pair.tt_sell), "source": pair.source,
             "source_role": pair.source_role, "effective_date": pair.effective_date.isoformat(),
             "age_days": pair.age_days, "max_age_days": pair.max_age_days, "policy_code": pair.policy_code,
             "export_caf_percent": str(policy.export_caf_percent), "status": NOT_APPROVED,
@@ -651,16 +700,17 @@ class _ExportShadow:
     def _scenario(self, s: Scenario, policy) -> None:
         try:
             legacy, shadow = self._pgk_pair(s)
-            tt_buy = None
+            tt_sell = None
             if s.currency == "AUD":
-                tt_buy = self._fx(policy).tt_buy
+                tt_sell = self._fx(policy).tt_sell
             elif s.currency != "PGK":
                 raise ExportShadowBlocked("CURRENCY_UNSUPPORTED", f"Currency {s.currency} has no approved export rule.")
             explained = self._explain(s, legacy, shadow)
             counterfactual = self._counterfactual(s, explained)
             if s.currency == "AUD":
-                counterfactual = self._to_aud(counterfactual, policy, tt_buy) if counterfactual else None
-                legacy, shadow = self._to_aud(legacy, policy, tt_buy), self._to_aud(shadow, policy, tt_buy)
+                counterfactual = self._to_aud(counterfactual, policy, tt_sell) if counterfactual else None
+                legacy = self._to_aud(legacy, policy, tt_sell)
+                shadow = self._to_aud(shadow, policy, tt_sell, native=self._native(s))
         except ExportShadowBlocked as blocked:
             self._emit(s, "-", "scenario", BLOCKED, reason=f"{blocked.code}: {blocked.message}")
             return
@@ -668,8 +718,7 @@ class _ExportShadow:
             self._emit(s, "-", "scenario", BLOCKED, reason=f"{type(exc).__name__}: {exc}")
             return
         self._compare(s, legacy, shadow, explained, counterfactual)
-        if s.currency == "AUD":
-            self._production_note(s, shadow)
+        self._production_parity(s, shadow, policy)
 
     # ---------------------------------------------------------------- approved-authority evidence
 
@@ -833,29 +882,57 @@ class _ExportShadow:
                 self._emit(s, "TOTAL", name, UNEXPLAINED_DIFFERENCE, a, b, ccy, "totals",
                            "Approved line differences do not reproduce the legacy total.")
 
-    def _production_note(self, s: Scenario, approved: Priced) -> None:
-        """The production COLLECT engine does not implement the locked AUD rule; report, never reconcile."""
+    def _production_parity(self, s: Scenario, shadow: Priced, policy) -> None:
+        """The flagged production Rate Matrix engine must reproduce the shadow's locked-rule result exactly.
+
+        Compares the charge set and, per charge, sell, GST, sell including GST and cost. Any difference is
+        UNEXPLAINED: the shadow's own native-fact evidence is not an excuse for the production path to
+        diverge from it.
+        """
+        from pricing_v4.services.rate_matrix_export_pricing import (
+            RateMatrixExportPricingEngine,
+            RateMatrixExportPricingError,
+        )
+
+        label = "production Rate Matrix engine vs shadow"
+        term = PaymentTerm.COLLECT if s.currency == "AUD" else PaymentTerm.PREPAID
         try:
-            engine = ExportPricingEngine(
+            engine = RateMatrixExportPricingEngine(
                 quote_date=self.quote_date, origin=s.origin, destination=s.destination,
-                chargeable_weight_kg=s.weight, payment_term=PaymentTerm.COLLECT, destination_currency="AUD",
+                chargeable_weight_kg=s.weight, payment_term=term, quote_currency=s.currency,
+                caf_rate=policy.export_caf_rate, policy_code=policy.policy_code, using=self.using,
             )
             ids = ExportPricingEngine.get_product_codes(
                 is_dg=False, service_scope=s.scope, origin=s.origin, destination=s.destination,
-                payment_term="COLLECT", quote_date=self.quote_date,
+                payment_term=term.value, quote_date=self.quote_date,
             )
             result = engine.calculate_quote(ids, service_scope=s.scope)
-            legacy_total = _q(sum((item.sell_amount for item in result.line_items), Decimal("0")))
-            reason = (
-                "Production COLLECT uses native AUD tariffs where they exist and otherwise margin then "
-                "PGK / (TT SELL x (1 + CAF)); the locked rule is PGK SELL / TT BUY x 1.10 with no margin. "
-                "Not reconciled; wiring is a separate gate."
-            )
-        except Exception as exc:
-            legacy_total = None
-            reason = f"Production COLLECT AUD could not be priced ({type(exc).__name__}: {exc}). Not reconciled."
-        self._emit(s, "TOTAL", "production_collect_total_sell", NOT_COMPARABLE, legacy_total,
-                   approved.totals["total_sell"], "AUD", "production engine vs locked export rule", reason)
+        except (RateMatrixExportPricingError, FxResolutionError, MissingCommercialPolicyError, ValueError) as exc:
+            self._emit(s, "TOTAL", "production_rate_matrix_parity", UNEXPLAINED_DIFFERENCE, None,
+                       shadow.totals["total_sell"], s.currency, label,
+                       f"The production Rate Matrix path could not price a scenario the shadow priced: "
+                       f"{type(exc).__name__}: {exc}")
+            return
+        production = {item.product_code: item for item in result.line_items}
+        problems = []
+        for code in sorted(set(production) | set(shadow.lines)):
+            left, right = production.get(code), shadow.lines.get(code)
+            if left is None or right is None:
+                problems.append(f"{code}: charge present only in the {'shadow' if left is None else 'production path'}")
+                continue
+            for aspect in ("sell_amount", "gst_amount", "sell_incl_gst", "cost_amount"):
+                if getattr(left, aspect) != getattr(right, aspect):
+                    problems.append(f"{code} {aspect}: production {getattr(left, aspect)} != shadow {getattr(right, aspect)}")
+        production_total = sum((item.sell_amount for item in result.line_items), Decimal("0.00"))
+        shadow_total = shadow.totals["total_sell"]
+        if production_total != shadow_total:
+            problems.append(f"total_sell: production {production_total} != shadow {shadow_total}")
+        if problems:
+            self._emit(s, "TOTAL", "production_rate_matrix_parity", UNEXPLAINED_DIFFERENCE, shadow_total,
+                       production_total, s.currency, label, "; ".join(problems))
+        else:
+            self._emit(s, "TOTAL", "production_rate_matrix_parity", MATCH, shadow_total, production_total,
+                       s.currency, label)
 
 
 def run_export_shadow(
